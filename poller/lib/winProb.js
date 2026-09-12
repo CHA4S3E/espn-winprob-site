@@ -46,18 +46,23 @@ function getStatPoints(player, statSourceId) {
   return entry ? entry.appliedTotal || 0 : 0;
 }
 
-// Sums the starting lineup only (bench/IR excluded), returning both the
-// expected total and whether every starter's real game has finished.
+// Sums the starting lineup only (bench/IR excluded), returning the expected
+// total, the summed *actual* live points (per-player, not ESPN's team-level
+// totalPoints field which can lag/stay stale mid-game), and whether every
+// starter's real game has finished.
 function teamExpected(roster, nflStatusMap) {
   let expected = 0;
+  let actual = 0;
   let allDone = true;
   for (const entry of roster || []) {
     if (entry.lineupSlotId === LINEUP_SLOT_BENCH || entry.lineupSlotId === LINEUP_SLOT_IR) continue;
-    const { expected: playerPts, done } = playerExpected(entry.playerPoolEntry.player, nflStatusMap);
+    const player = entry.playerPoolEntry.player;
+    const { expected: playerPts, done } = playerExpected(player, nflStatusMap);
     expected += playerPts;
+    actual += getStatPoints(player, STAT_SOURCE_ACTUAL);
     if (!done) allDone = false;
   }
-  return { expected, allDone };
+  return { expected, actual, allDone };
 }
 
 // Variance shrinks as fewer starters remain in play. Scales stddev by
