@@ -1,30 +1,40 @@
 name: Poll ESPN win probabilities
-
+ 
 on:
   schedule:
     # Every 5 minutes, GitHub's shortest supported interval.
-    # Actual runs may lag a few minutes during high platform load,
-    # especially Sunday afternoons -- expected and harmless for this chart.
-    - cron: '*/5 * * * *'
+    # Offset from :00/:05/:10... (the default nearly everyone uses) so this
+    # lands in a less-contested slot on GitHub's shared runner queue instead
+    # of piling up with everyone else's cron jobs at the round-number marks.
+    # Actual runs may still lag during high platform load, especially
+    # Sunday afternoons -- expected and harmless for this chart.
+    - cron: '3-59/5 * * * *'
   workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
-
+ 
 jobs:
   poll:
     runs-on: ubuntu-latest
+    # Caps a single run well under the 5-minute interval so a slow/stuck
+    # ESPN request can't still be "in progress" when the next tick fires --
+    # GitHub skips (rather than queues) a scheduled run if the previous one
+    # hasn't finished, so an unbounded run can silently cascade into
+    # dropped ticks on top of normal platform lag.
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
-
+ 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
+ 
       - name: Install dependencies
         working-directory: poller
         run: npm ci
-
+ 
       - name: Run poller
         working-directory: poller
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: node poll.js
+        
