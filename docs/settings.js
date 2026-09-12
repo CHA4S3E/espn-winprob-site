@@ -4,7 +4,46 @@ const sb = window.supabase.createClient(url, anonKey);
 const leagueSelect = document.getElementById('leagueSelect');
 const teamList = document.getElementById('teamList');
 const savedNote = document.getElementById('savedNote');
+const lockNote = document.getElementById('lockNote');
+const lockText = document.getElementById('lockText');
+const unlockBtn = document.getElementById('unlockBtn');
 let saveTimeout;
+
+// Simple shared-PIN gate -- not real security (anyone can view the JS/config),
+// just enough friction to stop a random visitor with the link from casually
+// editing team names/colors. Unlock state is remembered for this browser tab
+// session only (sessionStorage), so it re-locks on a fresh visit/new tab.
+const REQUIRED_PIN = window.SETTINGS_PIN || '1234';
+let unlocked = sessionStorage.getItem('settingsUnlocked') === 'true';
+
+function updateLockUI() {
+  if (unlocked) {
+    lockText.textContent = '🔓 Unlocked -- edits will save';
+    unlockBtn.textContent = 'Lock';
+  } else {
+    lockText.textContent = '🔒 Locked -- enter the PIN to edit';
+    unlockBtn.textContent = 'Unlock';
+  }
+  teamList.querySelectorAll('input').forEach((el) => (el.disabled = !unlocked));
+}
+
+unlockBtn.addEventListener('click', () => {
+  if (unlocked) {
+    unlocked = false;
+    sessionStorage.removeItem('settingsUnlocked');
+    updateLockUI();
+    return;
+  }
+  const entered = prompt('Enter the league PIN to edit team colors/names:');
+  if (entered === null) return; // cancelled
+  if (entered === REQUIRED_PIN) {
+    unlocked = true;
+    sessionStorage.setItem('settingsUnlocked', 'true');
+    updateLockUI();
+  } else {
+    alert('Incorrect PIN.');
+  }
+});
 
 async function loadLeagues() {
   const { data, error } = await sb.from('leagues').select('id, name').order('name');
@@ -41,10 +80,15 @@ async function loadTeams() {
     const teamId = row.dataset.teamId;
     const colorInput = row.querySelector('.color-input');
     const nameInput = row.querySelector('.name-input');
-    const save = () => saveTeamSettings(teamId, colorInput.value, nameInput.value);
+    const save = () => {
+      if (!unlocked) return; // extra guard even if disabled attr is bypassed
+      saveTeamSettings(teamId, colorInput.value, nameInput.value);
+    };
     colorInput.addEventListener('input', save);
     nameInput.addEventListener('input', save);
   });
+
+  updateLockUI(); // apply current lock state to the freshly rendered inputs
 }
 
 async function saveTeamSettings(teamId, color, displayName) {
