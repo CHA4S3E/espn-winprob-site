@@ -13,19 +13,36 @@
   .team-row .espn-name { flex: 1; color: #777; font-size: 13px; }
   .team-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; }
   .team-row input[type="color"] { width: 40px; height: 32px; border: 1px solid #ccc; border-radius: 4px; padding: 2px; }
+  .team-row input:disabled, .team-row input[type="color"]:disabled { opacity: 0.5; cursor: not-allowed; }
   #savedNote { font-size: 12px; color: #888; height: 18px; margin-top: 10px; }
   a.back { display: block; margin-top: 24px; font-size: 13px; color: #1a3fa0; }
+  #lockNote {
+    font-size: 13px; color: #a04000; background: #fff6ec; border: 1px solid #ffe0b2;
+    border-radius: 6px; padding: 10px 14px; margin-bottom: 18px; display: flex;
+    align-items: center; justify-content: space-between; gap: 10px;
+  }
+  #unlockBtn {
+    font-size: 13px; padding: 5px 12px; border-radius: 5px; border: 1px solid #a04000;
+    background: #fff; color: #a04000; cursor: pointer;
+  }
+  #unlockBtn:hover { background: #fff0e0; }
 </style>
 </head>
 <body>
   <h2>Team Colors & Names</h2>
   <div class="sub">Set once per team -- every week's matchup chart for this league reuses these automatically.</div>
+
+  <div id="lockNote">
+    <span id="lockText">🔒 Locked -- enter the PIN to edit</span>
+    <button id="unlockBtn">Unlock</button>
+  </div>
+
   <select id="leagueSelect"></select>
   <div id="teamList"></div>
   <div id="savedNote"></div>
   <a class="back" href="index.html">&larr; Back to charts</a>
 
 <script src="config.js"></script>
-<script src="settings.js"></script>
+<script src="settings.js?v=3"></script>
 </body>
 </html>
