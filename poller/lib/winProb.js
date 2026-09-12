@@ -7,7 +7,16 @@ const LINEUP_SLOT_IR = 21;
 const STAT_SOURCE_PROJECTED = 1;
 const STAT_SOURCE_ACTUAL = 0;
 
-const DEFAULT_STDDEV = 10;
+// Based on an analysis of full half-PPR starting lineups (~117 avg points,
+// ~21.7 stddev per team per week -- see
+// https://dynastynerds.com/fantasy-football-wins-above-replacement-the-theory/).
+// The previous value of 10 here was too small for a full team's weekly
+// score spread, which made the model overconfident in general -- most
+// visible early in a week when a single player's routine boom/bust (a
+// 15-20 point swing off projection is completely normal for one skill
+// player) got compared against a stddev far smaller than real full-team
+// variance, producing 90%+ results before most rosters had even played.
+const DEFAULT_STDDEV = 21;
 const MIN_STDDEV = 1.5; // safety floor so variance never hits ~0 and breaks the CDF
 
 // Standard normal CDF via Abramowitz & Stegun erf approximation.
@@ -27,17 +36,29 @@ function normalCdf(z) {
   return 0.5 * (1 + erf);
 }
 
-// Per-player expected contribution: if their real NFL game is over, only
-// their actual points count (leftover projection is gone). Otherwise use
-// whichever is higher of actual-so-far or pre-game projection.
+// Per-player expected contribution. Three real states, not two:
+//   - their NFL game is FINISHED ('post')      -> locked in: actual only.
+//   - their NFL game is upcoming/in progress    -> max(actual so far, projection).
+//   - they have NO game at all this week (bye)  -> also locked in, since
+//     there's nothing left to resolve -- treating this the same as
+//     "in progress" would mean a bye-week player mistakenly left in a
+//     starting slot could NEVER count as done, permanently blocking
+//     all_starters_done from going true and permanently inflating the
+//     "remaining" pool computeDynamicStddev uses.
+// This assumes fetchNflGameStatusMap() only includes teams with an actual
+// game this week (true for ESPN's public scoreboard endpoint, which simply
+// has no event for a bye team) -- if that assumption ever changes, this is
+// the first place to revisit.
 function playerExpected(player, nflStatusMap) {
   const proTeamAbbrev = player.proTeamAbbrev;
-  const gameOver = nflStatusMap ? nflStatusMap[proTeamAbbrev] === 'post' : false;
-
+  const status = nflStatusMap ? nflStatusMap[proTeamAbbrev] : undefined;
   const actual = getStatPoints(player, STAT_SOURCE_ACTUAL);
   const projected = getStatPoints(player, STAT_SOURCE_PROJECTED);
 
-  if (gameOver) return { expected: actual, done: true };
+  const isFinished = status === 'post';
+  const isBye = status === undefined; // no game found for their team this week
+
+  if (isFinished || isBye) return { expected: actual, done: true };
   return { expected: Math.max(actual, projected), done: false };
 }
 
@@ -48,38 +69,98 @@ function getStatPoints(player, statSourceId) {
 
 // Sums the starting lineup only (bench/IR excluded), returning the expected
 // total, the summed *actual* live points (per-player, not ESPN's team-level
-// totalPoints field which can lag/stay stale mid-game), and whether every
-// starter's real game has finished.
+// totalPoints field which can lag/stay stale mid-game), whether every
+// starter's real game has finished, and player counts (used by
+// computeDynamicStddev to avoid over-reacting to a single early result --
+// see its comment for why point-value alone isn't a reliable "how much of
+// the game is decided yet" signal).
 function teamExpected(roster, nflStatusMap) {
   let expected = 0;
   let actual = 0;
   let allDone = true;
+  let totalCount = 0;
+  let doneCount = 0;
   for (const entry of roster || []) {
     if (entry.lineupSlotId === LINEUP_SLOT_BENCH || entry.lineupSlotId === LINEUP_SLOT_IR) continue;
+    totalCount++;
     const player = entry.playerPoolEntry.player;
     const { expected: playerPts, done } = playerExpected(player, nflStatusMap);
     expected += playerPts;
     actual += getStatPoints(player, STAT_SOURCE_ACTUAL);
-    if (!done) allDone = false;
+    if (done) doneCount++;
+    else allDone = false;
   }
-  return { expected, actual, allDone };
+  return { expected, actual, allDone, totalCount, doneCount };
 }
 
-// Variance shrinks as fewer starters remain in play. Scales stddev by
-// sqrt(remaining projected / total projected) across both teams combined,
-// floored so it never collapses to (near) zero.
-function computeDynamicStddev(totalProjectedBoth, remainingProjectedBoth, baseStddev = DEFAULT_STDDEV) {
+// Variance shrinks as the week plays out, but NOT based on point-value
+// resolved alone. Point-value is a misleading signal early in a week: if
+// only 1 of e.g. 18 total starters (both teams combined) has played, that
+// one player's own personal bust/boom can resolve 10-15% of the total
+// *projected points* almost by chance (a single skill player being 15-20
+// points off their own projection is completely ordinary), which would
+// make the points-based ratio shrink stddev noticeably even though 17 of
+// 18 players' outcomes -- the vast majority of the week's real uncertainty
+// -- haven't happened yet. That combination (one early outlier + a
+// prematurely shrunk stddev) is exactly what produces a 90%+ win
+// probability before most of the week has even started.
+//
+// Fix: compute BOTH a points-based remaining fraction and a player-count-
+// based remaining fraction, and use whichever is LARGER (i.e. whichever
+// signal says more uncertainty is still outstanding). Player-count barely
+// moves after just one game, so it correctly keeps the model conservative
+// until a real portion of both rosters has actually played -- without
+// requiring a full per-player-variance/correlation model.
+function computeDynamicStddev(
+  totalProjectedBoth,
+  remainingProjectedBoth,
+  baseStddev = DEFAULT_STDDEV,
+  playerCounts = null // optional: { totalPlayersBoth, remainingPlayersBoth }
+) {
   if (totalProjectedBoth <= 0) return MIN_STDDEV;
-  const ratio = Math.max(remainingProjectedBoth / totalProjectedBoth, 0);
-  const scaled = baseStddev * Math.sqrt(ratio);
+
+  const pointsRemainingFraction = Math.max(remainingProjectedBoth / totalProjectedBoth, 0);
+
+  let ratio = pointsRemainingFraction;
+  if (playerCounts && playerCounts.totalPlayersBoth > 0) {
+    const playersRemainingFraction = Math.max(
+      playerCounts.remainingPlayersBoth / playerCounts.totalPlayersBoth,
+      0
+    );
+    ratio = Math.max(pointsRemainingFraction, playersRemainingFraction);
+  }
+
+  const scaled = baseStddev * Math.sqrt(Math.min(ratio, 1));
   return Math.max(scaled, MIN_STDDEV);
 }
 
 // expectedA/expectedB are each team's expected final score; stddev is the
 // (possibly dynamic) spread. Returns team A's win probability, 0-100.
+// Clamped defensively -- the erf approximation is accurate to ~1e-7 in
+// practice, but nothing here depends on trusting that blindly.
 function winProbability(expectedA, expectedB, stddev = DEFAULT_STDDEV) {
   const z = (expectedA - expectedB) / (stddev * Math.SQRT2);
-  return normalCdf(z) * 100;
+  const pct = normalCdf(z) * 100;
+  return Math.max(0, Math.min(100, pct));
+}
+
+// The entry point poll.js should actually call. Once every starter on both
+// teams is locked in (allDone), the outcome is a known fact, not a random
+// variable -- there is no more uncertainty left to model. Running a
+// finished blowout through the normal-distribution formula would still cap
+// it around 90-99% (MIN_STDDEV keeps stddev slightly above zero), which is
+// wrong: a concluded matchup should show the actual winner at (essentially)
+// 100%, not "very likely." This bypasses the probabilistic model entirely
+// once both teams are done, and uses the *actual* (not expected) scores,
+// since those are now the same thing but actual is the more defensible
+// source of truth for a final result.
+function matchupWinProbability({ homeExpected, awayExpected, homeActual, awayActual, allDone, stddev }) {
+  if (allDone) {
+    if (homeActual > awayActual) return 100;
+    if (homeActual < awayActual) return 0;
+    return 50; // exact tie, no more randomness left, and no rule to break it here
+  }
+  return winProbability(homeExpected, awayExpected, stddev);
 }
 
 module.exports = {
@@ -88,6 +169,7 @@ module.exports = {
   teamExpected,
   computeDynamicStddev,
   winProbability,
+  matchupWinProbability,
   DEFAULT_STDDEV,
   MIN_STDDEV,
 };
