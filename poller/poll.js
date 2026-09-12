@@ -99,11 +99,16 @@ async function pollLeague(league) {
       for (const entry of side.rosterForCurrentScoringPeriod?.entries || []) {
         attachProTeamAbbrev(entry.playerPoolEntry.player);
       }
-      const { expected, allDone } = teamExpected(
+      // actual now comes from summing each starter's live per-player
+      // statSourceId===0 points (same source `expected` already uses),
+      // not ESPN's team-level totalPoints field -- that field can lag or
+      // stay stale mid-game, which was causing actual_score to read 0
+      // even when players had already scored real points.
+      const { expected, actual, allDone } = teamExpected(
         side.rosterForCurrentScoringPeriod?.entries,
         nflStatusMap
       );
-      return { side, isHome, expected, allDone, actual: side.totalPoints || 0 };
+      return { side, isHome, expected, allDone, actual };
     });
 
     const totalProjectedBoth = computed.reduce((sum, c) => sum + c.expected, 0);
