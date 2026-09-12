@@ -13,7 +13,7 @@ let saveTimeout;
 // just enough friction to stop a random visitor with the link from casually
 // editing team names/colors. Unlock state is remembered for this browser tab
 // session only (sessionStorage), so it re-locks on a fresh visit/new tab.
-const REQUIRED_PIN = window.SETTINGS_PIN || '1102';
+const REQUIRED_PIN = window.SETTINGS_PIN || '1234';
 let unlocked = sessionStorage.getItem('settingsUnlocked') === 'true';
 
 function updateLockUI() {
