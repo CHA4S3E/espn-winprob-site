@@ -1,5 +1,5 @@
 const { url, anonKey } = window.SUPABASE_CONFIG;
-const supabase = window.supabase.createClient(url, anonKey);
+const sb = window.supabase.createClient(url, anonKey);
 
 const leagueSelect = document.getElementById('leagueSelect');
 const yearSelect = document.getElementById('yearSelect');
@@ -11,13 +11,13 @@ const charts = {}; // matchupId -> Chart instance
 let refreshTimer = null;
 
 async function loadLeagues() {
-  const { data, error } = await supabase.from('leagues').select('id, slug, name').order('name');
+  const { data, error } = await sb.from('leagues').select('id, slug, name').order('name');
   if (error) { statusEl.textContent = 'Failed to load leagues: ' + error.message; return; }
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
 }
 
 async function loadYearsWeeks(leagueId) {
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('snapshots')
     .select('year, week')
     .eq('league_id', leagueId);
@@ -162,8 +162,8 @@ async function loadMatchups() {
   Object.values(charts).forEach((c) => c.destroy());
 
   const [{ data: snaps, error: snapErr }, { data: teams, error: teamErr }] = await Promise.all([
-    supabase.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts'),
-    supabase.from('teams').select('id, espn_team_name, team_settings(color, display_name)').eq('league_id', leagueId),
+    sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts'),
+    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name)').eq('league_id', leagueId),
   ]);
 
   if (snapErr || teamErr) {
