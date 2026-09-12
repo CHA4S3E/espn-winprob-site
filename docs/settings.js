@@ -1,5 +1,5 @@
 const { url, anonKey } = window.SUPABASE_CONFIG;
-const supabase = window.supabase.createClient(url, anonKey);
+const sb = window.supabase.createClient(url, anonKey);
 
 const leagueSelect = document.getElementById('leagueSelect');
 const teamList = document.getElementById('teamList');
@@ -7,7 +7,7 @@ const savedNote = document.getElementById('savedNote');
 let saveTimeout;
 
 async function loadLeagues() {
-  const { data, error } = await supabase.from('leagues').select('id, name').order('name');
+  const { data, error } = await sb.from('leagues').select('id, name').order('name');
   if (error) return;
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
   leagueSelect.onchange = loadTeams;
@@ -16,7 +16,7 @@ async function loadLeagues() {
 
 async function loadTeams() {
   const leagueId = leagueSelect.value;
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('teams')
     .select('id, espn_team_name, team_settings(color, display_name)')
     .eq('league_id', leagueId)
@@ -48,7 +48,7 @@ async function loadTeams() {
 }
 
 async function saveTeamSettings(teamId, color, displayName) {
-  const { error } = await supabase
+  const { error } = await sb
     .from('team_settings')
     .upsert({ team_id: teamId, color, display_name: displayName }, { onConflict: 'team_id' });
 
