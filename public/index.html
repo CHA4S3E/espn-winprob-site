@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fantasy Win Probability</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; background: #fff; margin: 0; padding: 30px; color: #222; }
+  #wrap { max-width: 760px; margin: 0 auto; }
+  h2 { text-align: center; margin-bottom: 4px; }
+  .sub { text-align: center; color: #888; font-size: 13px; margin-bottom: 20px; }
+  #controls {
+    display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 18px;
+  }
+  select {
+    padding: 6px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; background: #fafafa;
+  }
+  #matchups { display: flex; flex-direction: column; gap: 34px; }
+  .matchup-card { border: 1px solid #eee; border-radius: 10px; padding: 16px 18px; }
+  .matchup-title { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
+  .matchup-title .live { color: #c0392b; font-weight: 600; }
+  .chartBox { position: relative; height: 300px; width: 100%; }
+  a.settings-link { display: block; text-align: center; margin-top: 26px; font-size: 13px; color: #1a3fa0; }
+  #status { text-align: center; color: #999; font-size: 13px; margin: 10px 0; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h2>Fantasy Win Probability</h2>
+  <div class="sub">Updates automatically every ~5 minutes while games are live.</div>
+
+  <div id="controls">
+    <select id="leagueSelect"></select>
+    <select id="yearSelect"></select>
+    <select id="weekSelect"></select>
+  </div>
+
+  <div id="status"></div>
+  <div id="matchups"></div>
+
+  <a class="settings-link" href="settings.html">Team colors & names &rarr;</a>
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

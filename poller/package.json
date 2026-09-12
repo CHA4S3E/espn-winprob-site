@@ -1,0 +1,15 @@
+{
+  "name": "espn-winprob-poller",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scheduled poller that writes ESPN fantasy win-probability snapshots to Supabase",
+  "main": "poll.js",
+  "scripts": {
+    "poll": "node poll.js",
+    "add-league": "node addLeague.js",
+    "test": "node lib/winProb.test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Team Settings</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 30px; color: #222; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #888; font-size: 13px; margin-bottom: 20px; }
+  select { padding: 6px 10px; font-size: 14px; margin-bottom: 20px; border-radius: 6px; border: 1px solid #ccc; }
+  .team-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
+  .team-row .espn-name { flex: 1; color: #777; font-size: 13px; }
+  .team-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; }
+  .team-row input[type="color"] { width: 40px; height: 32px; border: 1px solid #ccc; border-radius: 4px; padding: 2px; }
+  #savedNote { font-size: 12px; color: #888; height: 18px; margin-top: 10px; }
+  a.back { display: block; margin-top: 24px; font-size: 13px; color: #1a3fa0; }
+</style>
+</head>
+<body>
+  <h2>Team Colors & Names</h2>
+  <div class="sub">Set once per team -- every week's matchup chart for this league reuses these automatically.</div>
+  <select id="leagueSelect"></select>
+  <div id="teamList"></div>
+  <div id="savedNote"></div>
+  <a class="back" href="index.html">&larr; Back to charts</a>
+
+<script src="config.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>
