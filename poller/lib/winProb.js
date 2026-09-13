@@ -38,13 +38,17 @@ function normalCdf(z) {
 
 // Per-player expected contribution. Three real states, not two:
 //   - their NFL game is FINISHED ('post')      -> locked in: actual only.
-//   - their NFL game is upcoming/in progress    -> max(actual so far, projection).
 //   - they have NO game at all this week (bye)  -> also locked in, since
-//     there's nothing left to resolve -- treating this the same as
-//     "in progress" would mean a bye-week player mistakenly left in a
-//     starting slot could NEVER count as done, permanently blocking
-//     all_starters_done from going true and permanently inflating the
-//     "remaining" pool computeDynamicStddev uses.
+//     there's nothing left to resolve.
+//   - their NFL game is upcoming/in progress    -> actual so far, PLUS
+//     whatever's left of (projected - actual), scaled down proportionally
+//     to how much of THEIR specific game clock remains (remainingFraction,
+//     from espnClient.js's estimateRemainingFraction). This is what makes
+//     "expected" move continuously throughout a game -- the previous
+//     version used max(actual, projected), which stayed frozen at the
+//     static pre-game projection for as long as a player's actual hadn't
+//     yet exceeded it, producing long flat/stuck stretches in the chart
+//     even while real points were accumulating.
 // This assumes fetchNflGameStatusMap() only includes teams with an actual
 // game this week (true for ESPN's public scoreboard endpoint, which simply
 // has no event for a bye team) -- if that assumption ever changes, this is
@@ -55,11 +59,14 @@ function playerExpected(player, nflStatusMap) {
   const actual = getStatPoints(player, STAT_SOURCE_ACTUAL);
   const projected = getStatPoints(player, STAT_SOURCE_PROJECTED);
 
-  const isFinished = status === 'post';
+  const isFinished = status?.state === 'post';
   const isBye = status === undefined; // no game found for their team this week
 
   if (isFinished || isBye) return { expected: actual, done: true };
-  return { expected: Math.max(actual, projected), done: false };
+
+  const remainingFraction = status.remainingFraction ?? 1;
+  const expected = actual + Math.max(projected - actual, 0) * remainingFraction;
+  return { expected, done: false };
 }
 
 function getStatPoints(player, statSourceId) {
