@@ -7,28 +7,80 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   body { font-family: -apple-system, Arial, sans-serif; background: #fff; margin: 0; padding: 30px; color: #222; }
-  #wrap { max-width: 760px; margin: 0 auto; }
+  #wrap { max-width: 900px; margin: 0 auto; }
   h2 { text-align: center; margin-bottom: 4px; }
-  .sub { text-align: center; color: #888; font-size: 13px; margin-bottom: 20px; }
+  .sub { text-align: center; color: #888; font-size: 13px; margin-bottom: 18px; }
+
   #controls {
-    display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 18px;
+    display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px;
   }
   select {
     padding: 6px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; background: #fafafa;
   }
-  #matchups { display: flex; flex-direction: column; gap: 34px; }
+
+  #viewToggle {
+    display: flex; justify-content: center; gap: 6px; margin-bottom: 22px;
+  }
+  .view-btn {
+    padding: 6px 14px; font-size: 13px; border: 1px solid #ddd; border-radius: 20px;
+    background: #fff; color: #555; cursor: pointer; transition: all 0.15s;
+  }
+  .view-btn:hover { background: #f5f5f5; }
+  .view-btn.active { background: #1a3fa0; color: #fff; border-color: #1a3fa0; }
+
+  #status { text-align: center; color: #999; font-size: 13px; margin: 10px 0; }
+
+  /* ---- Timeline view (stacked line charts) ---- */
+  #matchups.view-timeline { display: flex; flex-direction: column; gap: 34px; }
   .matchup-card { border: 1px solid #eee; border-radius: 10px; padding: 16px 18px; }
   .matchup-title { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
   .matchup-title .live { color: #c0392b; font-weight: 600; }
   .chartBox { position: relative; height: 300px; width: 100%; }
+
+  /* ---- Shared status pill (postcard + needle) ---- */
+  .postcard-status { font-size: 11px; color: #999; text-align: right; margin-bottom: 6px; }
+  .postcard-status.live { color: #c0392b; font-weight: 600; }
+
+  /* ---- Postcard view (compact grid) ---- */
+  #matchups.view-postcard {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px;
+  }
+  .postcard {
+    border: 1px solid #eee; border-radius: 12px; padding: 14px 16px; background: #fff;
+  }
+  .postcard-team { display: flex; justify-content: space-between; align-items: baseline; margin: 4px 0; }
+  .postcard-name { font-size: 13px; font-weight: 600; }
+  .postcard-pct { font-size: 15px; font-weight: 700; }
+  .postcard-bar {
+    position: relative; height: 8px; border-radius: 4px; background: #eee; margin: 8px 0; overflow: hidden;
+  }
+  .postcard-bar-mid {
+    position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #ccc; z-index: 2;
+  }
+  .postcard-bar-fill {
+    position: absolute; top: 0; bottom: 0; border-radius: 4px; transition: width 0.3s, left 0.3s;
+  }
+
+  /* ---- Needle view (gauge grid) ---- */
+  #matchups.view-needle {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px;
+  }
+  .needle-card {
+    border: 1px solid #eee; border-radius: 12px; padding: 14px 16px 18px; background: #fff; text-align: center;
+  }
+  .needle-gauge { max-width: 220px; margin: 0 auto; }
+  .needle-svg { width: 100%; height: auto; display: block; }
+  .needle-pointer { transition: transform 0.4s ease; }
+  .needle-verdict { font-size: 16px; font-weight: 800; margin-top: 6px; }
+  .needle-sub { font-size: 12px; color: #888; margin-top: 2px; }
+
   a.settings-link { display: block; text-align: center; margin-top: 26px; font-size: 13px; color: #1a3fa0; }
-  #status { text-align: center; color: #999; font-size: 13px; margin: 10px 0; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <h2>Fantasy Win Probability</h2>
-  <div class="sub">Updates automatically every ~5 minutes while games are live.</div>
+  <div class="sub">Updates automatically every ~1 minute while games are live.</div>
 
   <div id="controls">
     <select id="leagueSelect"></select>
@@ -36,13 +88,19 @@
     <select id="weekSelect"></select>
   </div>
 
+  <div id="viewToggle">
+    <button class="view-btn" data-view="timeline">Timeline</button>
+    <button class="view-btn" data-view="postcard">Postcard</button>
+    <button class="view-btn" data-view="needle">Needle</button>
+  </div>
+
   <div id="status"></div>
-  <div id="matchups"></div>
+  <div id="matchups" class="view-timeline"></div>
 
   <a class="settings-link" href="settings.html">Team colors & names &rarr;</a>
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
