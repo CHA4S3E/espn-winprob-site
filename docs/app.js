@@ -6,9 +6,11 @@ const yearSelect = document.getElementById('yearSelect');
 const weekSelect = document.getElementById('weekSelect');
 const statusEl = document.getElementById('status');
 const matchupsEl = document.getElementById('matchups');
+const viewButtons = document.querySelectorAll('.view-btn');
 
-const charts = {}; // matchupId -> Chart instance
+const charts = {}; // matchupId -> { mode, chart? , el?, needle? } depending on view
 let refreshTimer = null;
+let viewMode = localStorage.getItem('winProbViewMode') || 'timeline'; // 'timeline' | 'postcard' | 'needle'
 
 // Supabase/PostgREST silently caps any query at 1000 rows by default -- no
 // error, it just returns the first 1000 and stops. With frequent polling
@@ -76,153 +78,12 @@ function colorWithAlpha(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-// Insert an exact y=50 point at every crossing so the line pivots color
-// precisely at the true crossing instead of jumping between sides.
-function withCrossings(points) {
-  const out = [];
-  for (let i = 0; i < points.length; i++) {
-    const p = points[i];
-    if (i > 0) {
-      const prev = points[i - 1];
-      const crosses = (prev.y - 50) * (p.y - 50) < 0;
-      if (crosses) {
-        const t = (50 - prev.y) / (p.y - prev.y);
-        out.push({ x: prev.x + t * (p.x - prev.x), y: 50 });
-      }
-    }
-    out.push(p);
-  }
-  return out;
-}
-
 function intensity(y) {
   return Math.min(Math.abs(y - 50) / 50, 1);
 }
 
 function dayLabel(ts) {
   return new Date(ts).toLocaleDateString(undefined, { weekday: 'short' });
-}
-
-// Pure computation, shared by both the initial render and in-place
-// refreshes, so they can never drift out of sync with each other. x = point
-// INDEX, not elapsed real time -- the same technique stock charts use to
-// avoid showing a giant blank gap every weekend: every real data point gets
-// equal visual spacing regardless of how much actual time passed before it.
-function computeChartPoints(homeRows) {
-  const rawPoints = homeRows.map((r, i) => ({ x: i, y: r.win_prob, ts: r.ts }));
-  const points = withCrossings(rawPoints);
-
-  const tickEvery = Math.max(Math.floor(rawPoints.length / 5), 1);
-  const dayTicks = {};
-  rawPoints.forEach((p, i) => { if (i % tickEvery === 0) dayTicks[p.x.toFixed(2)] = dayLabel(p.ts); });
-
-  return { points, dayTicks };
-}
-
-function midY(segCtx) { return (segCtx.p0.parsed.y + segCtx.p1.parsed.y) / 2; }
-
-function renderMatchupChart(canvas, snapshotsForMatchup, homeSettings, awaySettings) {
-  const homeRows = snapshotsForMatchup.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
-  if (!homeRows.length) return null;
-
-  const { points, dayTicks } = computeChartPoints(homeRows);
-
-  // Held in a mutable holder (rather than closing over `dayTicks` directly)
-  // so updateMatchupChart() can swap in fresh tick labels later without
-  // needing to recreate the chart -- the tick callback below reads
-  // state.dayTicks fresh on every render, not a snapshot taken at creation.
-  const state = { dayTicks };
-
-  const chart = new Chart(canvas.getContext('2d'), {
-    type: 'line',
-    data: {
-      datasets: [{
-        data: points,
-        parsing: false,
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.15,
-        fill: { target: { value: 50 } },
-        segment: {
-          borderColor: (c) => (midY(c) >= 50 ? homeSettings.color : awaySettings.color),
-          backgroundColor: (c) => {
-            const above = midY(c) >= 50;
-            const rgb = above ? homeSettings.color : awaySettings.color;
-            const alpha = 0.04 + intensity(midY(c)) * 0.32;
-            return colorWithAlpha(rgb, alpha);
-          },
-        },
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: (item) => {
-              const above = item.parsed.y >= 50;
-              const team = above ? homeSettings.name : awaySettings.name;
-              const pct = above ? item.parsed.y : 100 - item.parsed.y;
-              return `${team}: ${Math.round(pct)}%`;
-            },
-          },
-        },
-      },
-      scales: {
-        y: {
-          min: 0, max: 100,
-          grid: { color: (c) => (c.tick.value === 50 ? '#999' : 'rgba(0,0,0,0.06)'), lineWidth: (c) => (c.tick.value === 50 ? 1.5 : 1) },
-          ticks: { callback: (v) => (v === 0 || v === 50 || v === 100 ? v : ''), color: '#555' },
-        },
-        x: {
-          type: 'linear',
-          grid: { color: 'rgba(0,0,0,0.06)' },
-          ticks: {
-            color: '#555',
-            callback: (v) => state.dayTicks[Number(v).toFixed(2)] ?? '',
-            autoSkip: false,
-            maxRotation: 0,
-          },
-        },
-      },
-    },
-  });
-
-  chart._state = state;
-  return chart;
-}
-
-// Updates an EXISTING chart's data in place -- no DOM changes, no destroy/
-// recreate, so nothing about the page's height changes and the browser has
-// no reason to touch scroll position. This is what the 30s auto-refresh
-// uses instead of the old "wipe #matchups and rebuild everything" approach,
-// which was the original cause of the page jumping to the top on refresh:
-// clearing a tall container's innerHTML briefly collapses the page's
-// scrollable height, forcing the browser to clamp scrollY back up to fit.
-function updateMatchupChart(chart, snapshotsForMatchup) {
-  const homeRows = snapshotsForMatchup.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
-  if (!homeRows.length) return;
-
-  const { points, dayTicks } = computeChartPoints(homeRows);
-  chart.data.datasets[0].data = points;
-  chart._state.dayTicks = dayTicks;
-  chart.update('none'); // no animation on a background refresh -- avoids visual jank every 30s
-}
-
-function buildMatchupCard(home, away, allDone) {
-  const card = document.createElement('div');
-  card.className = 'matchup-card';
-  card.innerHTML = `
-    <div class="matchup-title">
-      <span><b style="color:${home.color}">${home.name}</b> vs <b style="color:${away.color}">${away.name}</b></span>
-      <span class="${allDone ? '' : 'live'}">${allDone ? 'Final' : '\u25CF Live'}</span>
-    </div>
-    <div class="chartBox"><canvas></canvas></div>
-  `;
-  return card;
 }
 
 async function fetchMatchupData(leagueId, year, week) {
@@ -251,11 +112,317 @@ async function fetchMatchupData(leagueId, year, week) {
   return { byMatchup, teamInfo };
 }
 
+// ============================== TIMELINE VIEW ==============================
+// The original line-chart-per-matchup view, stacked vertically.
+
+// Insert an exact y=50 point at every crossing so the line pivots color
+// precisely at the true crossing instead of jumping between sides.
+function withCrossings(points) {
+  const out = [];
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    if (i > 0) {
+      const prev = points[i - 1];
+      const crosses = (prev.y - 50) * (p.y - 50) < 0;
+      if (crosses) {
+        const t = (50 - prev.y) / (p.y - prev.y);
+        out.push({ x: prev.x + t * (p.x - prev.x), y: 50 });
+      }
+    }
+    out.push(p);
+  }
+  return out;
+}
+
+// Pure computation, shared by both the initial render and in-place
+// refreshes. x = point INDEX, not elapsed real time -- the same technique
+// stock charts use to avoid showing a giant blank gap every weekend: every
+// real data point gets equal visual spacing regardless of how much actual
+// time passed before it.
+function computeChartPoints(homeRows) {
+  const rawPoints = homeRows.map((r, i) => ({ x: i, y: r.win_prob, ts: r.ts }));
+  const points = withCrossings(rawPoints);
+
+  const tickEvery = Math.max(Math.floor(rawPoints.length / 5), 1);
+  const dayTicks = {};
+  rawPoints.forEach((p, i) => { if (i % tickEvery === 0) dayTicks[p.x.toFixed(2)] = dayLabel(p.ts); });
+
+  return { points, dayTicks };
+}
+
+function midY(segCtx) { return (segCtx.p0.parsed.y + segCtx.p1.parsed.y) / 2; }
+
+function renderTimelineCard(rows, home, away, allDone) {
+  const card = document.createElement('div');
+  card.className = 'matchup-card';
+  card.innerHTML = `
+    <div class="matchup-title">
+      <span><b style="color:${home.color}">${home.name}</b> vs <b style="color:${away.color}">${away.name}</b></span>
+      <span class="${allDone ? '' : 'live'}">${allDone ? 'Final' : '\u25CF Live'}</span>
+    </div>
+    <div class="chartBox"><canvas></canvas></div>
+  `;
+
+  const homeRows = rows.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (!homeRows.length) return { card, entry: null };
+
+  const { points, dayTicks } = computeChartPoints(homeRows);
+  const state = { dayTicks };
+  const canvas = card.querySelector('canvas');
+
+  const chart = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      datasets: [{
+        data: points,
+        parsing: false,
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.15,
+        fill: { target: { value: 50 } },
+        segment: {
+          borderColor: (c) => (midY(c) >= 50 ? home.color : away.color),
+          backgroundColor: (c) => {
+            const above = midY(c) >= 50;
+            const rgb = above ? home.color : away.color;
+            const alpha = 0.04 + intensity(midY(c)) * 0.32;
+            return colorWithAlpha(rgb, alpha);
+          },
+        },
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const above = item.parsed.y >= 50;
+              const team = above ? home.name : away.name;
+              const pct = above ? item.parsed.y : 100 - item.parsed.y;
+              return `${team}: ${Math.round(pct)}%`;
+            },
+          },
+        },
+      },
+      scales: {
+        y: {
+          min: 0, max: 100,
+          grid: { color: (c) => (c.tick.value === 50 ? '#999' : 'rgba(0,0,0,0.06)'), lineWidth: (c) => (c.tick.value === 50 ? 1.5 : 1) },
+          ticks: { callback: (v) => (v === 0 || v === 50 || v === 100 ? v : ''), color: '#555' },
+        },
+        x: {
+          type: 'linear',
+          grid: { color: 'rgba(0,0,0,0.06)' },
+          ticks: {
+            color: '#555',
+            callback: (v) => state.dayTicks[Number(v).toFixed(2)] ?? '',
+            autoSkip: false,
+            maxRotation: 0,
+          },
+        },
+      },
+    },
+  });
+  chart._state = state;
+
+  return { card, entry: { mode: 'timeline', chart } };
+}
+
+function updateTimelineCard(entry, rows, home, away, allDone) {
+  const homeRows = rows.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (!homeRows.length || !entry.chart) return;
+
+  const { points, dayTicks } = computeChartPoints(homeRows);
+  entry.chart.data.datasets[0].data = points;
+  entry.chart._state.dayTicks = dayTicks;
+  entry.chart.update('none');
+
+  const badge = entry.chart.canvas.closest('.matchup-card')?.querySelector('.matchup-title span:last-child');
+  if (badge) {
+    badge.textContent = allDone ? 'Final' : '\u25CF Live';
+    badge.className = allDone ? '' : 'live';
+  }
+}
+
+// ============================== POSTCARD VIEW ==============================
+// A compact grid tile per matchup: names, current split, a simple two-color
+// bar instead of a full history chart. For a quick at-a-glance overview of
+// every game at once rather than reading one big line chart at a time.
+
+function latestPct(rows) {
+  const homeRow = rows.filter((r) => r.is_home).sort((a, b) => new Date(b.ts) - new Date(a.ts))[0];
+  return homeRow ? homeRow.win_prob : 50;
+}
+
+function renderPostcardBar(barFill, homePct, home, away) {
+  const homeSide = homePct >= 50;
+  barFill.style.background = homeSide ? home.color : away.color;
+  barFill.style.width = `${homeSide ? homePct : 100 - homePct}%`;
+  barFill.style.left = homeSide ? '50%' : `${homePct}%`;
+}
+
+function renderPostcardCard(rows, home, away, allDone) {
+  const homePct = latestPct(rows);
+  const card = document.createElement('div');
+  card.className = 'postcard';
+  card.innerHTML = `
+    <div class="postcard-status ${allDone ? '' : 'live'}">${allDone ? 'Final' : '\u25CF Live'}</div>
+    <div class="postcard-team">
+      <span class="postcard-name" style="color:${home.color}">${home.name}</span>
+      <span class="postcard-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
+    </div>
+    <div class="postcard-bar"><div class="postcard-bar-mid"></div><div class="postcard-bar-fill"></div></div>
+    <div class="postcard-team">
+      <span class="postcard-name" style="color:${away.color}">${away.name}</span>
+      <span class="postcard-pct" style="color:${away.color}">${Math.round(100 - homePct)}%</span>
+    </div>
+  `;
+  renderPostcardBar(card.querySelector('.postcard-bar-fill'), homePct, home, away);
+  return { card, entry: { mode: 'postcard', el: card } };
+}
+
+function updatePostcardCard(entry, rows, home, away, allDone) {
+  const homePct = latestPct(rows);
+  const card = entry.el;
+  card.querySelector('.postcard-status').textContent = allDone ? 'Final' : '\u25CF Live';
+  card.querySelector('.postcard-status').className = `postcard-status ${allDone ? '' : 'live'}`;
+  const pctEls = card.querySelectorAll('.postcard-pct');
+  pctEls[0].textContent = `${Math.round(homePct)}%`;
+  pctEls[1].textContent = `${Math.round(100 - homePct)}%`;
+  renderPostcardBar(card.querySelector('.postcard-bar-fill'), homePct, home, away);
+}
+
+// ============================== NEEDLE VIEW ==============================
+// A semicircle gauge, styled after election-night "needle" charts: bands
+// from VERY LIKELY through TOSSUP, with a needle pointing at the current
+// win probability. Uses each matchup's own team colors rather than a fixed
+// blue/red scheme, so it stays consistent with the rest of the site.
+
+const NEEDLE_BANDS = [
+  { min: 0, max: 20, label: 'VERY LIKELY' },
+  { min: 20, max: 35, label: 'LIKELY' },
+  { min: 35, max: 45, label: 'LEANING' },
+  { min: 45, max: 55, label: 'TOSSUP' },
+  { min: 55, max: 65, label: 'LEANING' },
+  { min: 65, max: 80, label: 'LIKELY' },
+  { min: 80, max: 100, label: 'VERY LIKELY' },
+];
+const NEEDLE_CX = 120, NEEDLE_CY = 120, NEEDLE_R_OUTER = 110, NEEDLE_R_INNER = 78, NEEDLE_R_LABEL = 94;
+
+function pctToAngle(pct) { return 180 - (pct / 100) * 180; }
+function polarToXY(cx, cy, r, angleDeg) {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: cx + r * Math.cos(rad), y: cy - r * Math.sin(rad) };
+}
+function describeBandPath(angleStart, angleEnd) {
+  const p1 = polarToXY(NEEDLE_CX, NEEDLE_CY, NEEDLE_R_OUTER, angleStart);
+  const p2 = polarToXY(NEEDLE_CX, NEEDLE_CY, NEEDLE_R_OUTER, angleEnd);
+  const p3 = polarToXY(NEEDLE_CX, NEEDLE_CY, NEEDLE_R_INNER, angleEnd);
+  const p4 = polarToXY(NEEDLE_CX, NEEDLE_CY, NEEDLE_R_INNER, angleStart);
+  return `M ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} A ${NEEDLE_R_OUTER} ${NEEDLE_R_OUTER} 0 0 1 ${p2.x.toFixed(2)} ${p2.y.toFixed(2)} ` +
+    `L ${p3.x.toFixed(2)} ${p3.y.toFixed(2)} A ${NEEDLE_R_INNER} ${NEEDLE_R_INNER} 0 0 0 ${p4.x.toFixed(2)} ${p4.y.toFixed(2)} Z`;
+}
+
+function needleVerdict(homePct, home, away) {
+  const side = homePct >= 50 ? home : away;
+  const pct = homePct >= 50 ? homePct : 100 - homePct;
+  if (pct >= 95) return { text: `${side.name} wins`, color: side.color };
+  if (pct >= 80) return { text: `Very likely ${side.name}`, color: side.color };
+  if (pct >= 65) return { text: `Likely ${side.name}`, color: side.color };
+  if (pct >= 55) return { text: `Leaning ${side.name}`, color: side.color };
+  return { text: 'Toss-up', color: '#666' };
+}
+
+function buildNeedleSvg(home, away) {
+  // Bands are colored by side: bands with max <= 50 are "away" side
+  // (shaded with away's color), bands with min >= 50 are "home" side.
+  const bandPaths = NEEDLE_BANDS.map((band) => {
+    const isHomeSide = band.min >= 50;
+    const rgb = isHomeSide ? home.color : away.color;
+    // Distance-from-center drives shade intensity, same convention as the
+    // timeline view's fill.
+    const mid = (band.min + band.max) / 2;
+    const alpha = 0.08 + intensity(mid) * 0.55;
+    const d = describeBandPath(pctToAngle(band.min), pctToAngle(band.max));
+    const labelAngle = pctToAngle(mid);
+    const labelPos = polarToXY(NEEDLE_CX, NEEDLE_CY, NEEDLE_R_LABEL, labelAngle);
+    return `
+      <path d="${d}" fill="${colorWithAlpha(rgb, alpha)}" stroke="#fff" stroke-width="1"></path>
+      <text x="${labelPos.x.toFixed(2)}" y="${labelPos.y.toFixed(2)}" font-size="8" fill="#555" text-anchor="middle">${band.label}</text>
+    `;
+  }).join('');
+
+  return `
+    <svg viewBox="0 0 240 150" class="needle-svg">
+      ${bandPaths}
+      <line class="needle-pointer" x1="${NEEDLE_CX}" y1="${NEEDLE_CY}" x2="${NEEDLE_CX}" y2="${NEEDLE_CY - NEEDLE_R_OUTER + 4}"
+            stroke="#333" stroke-width="3" stroke-linecap="round"
+            style="transform-origin: ${NEEDLE_CX}px ${NEEDLE_CY}px;"></line>
+      <circle cx="${NEEDLE_CX}" cy="${NEEDLE_CY}" r="6" fill="#333"></circle>
+    </svg>
+  `;
+}
+
+function needleRotationDeg(homePct) {
+  // The pointer is drawn pointing straight up (toward 50%) by default, so
+  // the CSS rotation needed is the difference between that and the real
+  // angle for this percentage.
+  return 90 - pctToAngle(homePct);
+}
+
+function renderNeedleCard(rows, home, away, allDone) {
+  const homePct = latestPct(rows);
+  const verdict = needleVerdict(homePct, home, away);
+
+  const card = document.createElement('div');
+  card.className = 'needle-card';
+  card.innerHTML = `
+    <div class="postcard-status ${allDone ? '' : 'live'}">${allDone ? 'Final' : '\u25CF Live'}</div>
+    <div class="needle-gauge">${buildNeedleSvg(home, away)}</div>
+    <div class="needle-verdict" style="color:${verdict.color}">${verdict.text}</div>
+    <div class="needle-sub">${home.name} vs ${away.name}</div>
+  `;
+
+  const needle = card.querySelector('.needle-pointer');
+  if (needle) needle.style.transform = `rotate(${needleRotationDeg(homePct)}deg)`;
+
+  return { card, entry: { mode: 'needle', el: card } };
+}
+
+function updateNeedleCard(entry, rows, home, away, allDone) {
+  const homePct = latestPct(rows);
+  const verdict = needleVerdict(homePct, home, away);
+  const card = entry.el;
+
+  card.querySelector('.postcard-status').textContent = allDone ? 'Final' : '\u25CF Live';
+  card.querySelector('.postcard-status').className = `postcard-status ${allDone ? '' : 'live'}`;
+  const verdictEl = card.querySelector('.needle-verdict');
+  verdictEl.textContent = verdict.text;
+  verdictEl.style.color = verdict.color;
+  const needle = card.querySelector('.needle-pointer');
+  if (needle) needle.style.transform = `rotate(${needleRotationDeg(homePct)}deg)`;
+}
+
+// ============================== SHARED LOADING ==============================
+
+const VIEW_RENDERERS = {
+  timeline: { render: renderTimelineCard, update: updateTimelineCard },
+  postcard: { render: renderPostcardCard, update: updatePostcardCard },
+  needle: { render: renderNeedleCard, update: updateNeedleCard },
+};
+
+function destroyEntry(entry) {
+  if (entry?.mode === 'timeline' && entry.chart) entry.chart.destroy();
+}
+
 // preserveCharts=true (used by the 30s auto-refresh timer) updates existing
-// charts' data in place and never touches the DOM structure or scroll
-// position. preserveCharts=false (used on initial load and whenever the
-// league/year/week selection changes) does a full rebuild, since the actual
-// set of matchups can legitimately differ in that case.
+// cards in place and never touches the DOM structure or scroll position.
+// preserveCharts=false (used on initial load, view mode switches, or
+// whenever the league/year/week selection changes) does a full rebuild.
 async function loadMatchups({ preserveCharts = false } = {}) {
   const leagueId = leagueSelect.value;
   const year = Number(yearSelect.value);
@@ -269,15 +436,15 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     ({ byMatchup, teamInfo } = await fetchMatchupData(leagueId, year, week));
   } catch (err) {
     if (!preserveCharts) statusEl.textContent = 'Error loading data: ' + err.message;
-    // On a routine auto-refresh, a transient fetch error shouldn't wipe
-    // whatever's already on screen -- just skip this cycle silently.
-    return;
+    return; // don't wipe an existing view over a transient refresh error
   }
+
+  const { render, update } = VIEW_RENDERERS[viewMode];
 
   if (Object.keys(byMatchup).length === 0) {
     if (!preserveCharts) {
       matchupsEl.innerHTML = '';
-      Object.values(charts).forEach((c) => c.destroy());
+      Object.values(charts).forEach(destroyEntry);
       for (const key of Object.keys(charts)) delete charts[key];
       statusEl.textContent = 'No data yet for this week -- the poller may not have run yet.';
     }
@@ -285,9 +452,9 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   }
 
   if (!preserveCharts || Object.keys(charts).length === 0) {
-    // Full rebuild: initial load, or the league/year/week selection changed.
     matchupsEl.innerHTML = '';
-    Object.values(charts).forEach((c) => c.destroy());
+    matchupsEl.className = `view-${viewMode}`;
+    Object.values(charts).forEach(destroyEntry);
     for (const key of Object.keys(charts)) delete charts[key];
 
     statusEl.textContent = '';
@@ -301,40 +468,47 @@ async function loadMatchups({ preserveCharts = false } = {}) {
       const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b' };
       const allDone = rows.every((r) => r.all_starters_done);
 
-      const card = buildMatchupCard(home, away, allDone);
+      const { card, entry } = render(rows, home, away, allDone);
       matchupsEl.appendChild(card);
-      const canvas = card.querySelector('canvas');
-      charts[matchupId] = renderMatchupChart(canvas, rows, home, away);
+      if (entry) charts[matchupId] = entry;
     }
     return;
   }
 
   // Incremental update: same matchup set as before (true on every routine
-  // 30s refresh, since a week's matchups don't change once the schedule is
-  // set) -- update each existing chart's data and "Live"/"Final" badge in
-  // place, with zero DOM structure changes.
+  // 30s refresh) -- update each existing card in place.
   statusEl.textContent = '';
   for (const [matchupId, rows] of Object.entries(byMatchup)) {
-    const existing = charts[matchupId];
-    if (!existing) {
-      // A matchup appeared that wasn't rendered before -- shouldn't happen
-      // during a routine refresh, but fall back to a full rebuild once
-      // rather than silently dropping it.
-      return loadMatchups({ preserveCharts: false });
+    const homeRow = rows.find((r) => r.is_home);
+    const awayRow = rows.find((r) => !r.is_home);
+    if (!homeRow || !awayRow) continue;
+
+    const entry = charts[matchupId];
+    if (!entry || entry.mode !== viewMode) {
+      return loadMatchups({ preserveCharts: false }); // matchup set or mode changed -- fall back once
     }
 
-    updateMatchupChart(existing, rows);
-
+    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0' };
+    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b' };
     const allDone = rows.every((r) => r.all_starters_done);
-    const badge = existing.canvas.closest('.matchup-card')?.querySelector('.matchup-title span:last-child');
-    if (badge) {
-      badge.textContent = allDone ? 'Final' : '\u25CF Live';
-      badge.className = allDone ? '' : 'live';
-    }
+    update(entry, rows, home, away, allDone);
   }
 }
 
+function setViewMode(mode) {
+  if (mode === viewMode) return;
+  viewMode = mode;
+  localStorage.setItem('winProbViewMode', mode);
+  viewButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.view === mode));
+  loadMatchups({ preserveCharts: false });
+}
+
 async function init() {
+  viewButtons.forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.view === viewMode);
+    btn.addEventListener('click', () => setViewMode(btn.dataset.view));
+  });
+
   await loadLeagues();
   leagueSelect.onchange = async () => { await loadYearsWeeks(leagueSelect.value); await loadMatchups(); };
   weekSelect.onchange = loadMatchups;
@@ -344,9 +518,9 @@ async function init() {
   }
 
   // Auto-refresh every 30s -- cheap read-only query, fine even if the
-  // underlying poller only writes every ~5 min. Updates existing charts in
-  // place (see loadMatchups/updateMatchupChart) instead of rebuilding the
-  // DOM, so this can no longer disturb scroll position.
+  // underlying poller only writes every ~5 min. Updates existing cards in
+  // place instead of rebuilding the DOM, so this can't disturb scroll
+  // position.
   refreshTimer = setInterval(() => loadMatchups({ preserveCharts: true }), 30000);
 }
 
