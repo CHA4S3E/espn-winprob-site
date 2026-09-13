@@ -24,7 +24,13 @@ async function fetchLeagueWeek({ espnLeagueId, espnS2, swid, year, week }) {
   return res.json();
 }
 
-// Returns a map of NFL team abbreviation -> game state ('pre' | 'in' | 'post')
+// Returns:
+//   statusMap  -- NFL team abbreviation -> game state ('pre' | 'in' | 'post'), same as before.
+//   weekStart  -- Date of that week's EARLIEST kickoff (whatever day that
+//                 actually falls on -- usually Thursday, but this reads it
+//                 from ESPN's real schedule rather than assuming), or null
+//                 if no events were found. Used to gate the Thursday-Monday
+//                 plotting window in poll.js without hardcoding a weekday.
 async function fetchNflGameStatusMap({ year, week }) {
   const url = `${NFL_SCOREBOARD}?year=${year}&week=${week}&seasontype=2`;
   const res = await fetch(url, { headers: { Accept: 'application/json' } });
@@ -32,15 +38,26 @@ async function fetchNflGameStatusMap({ year, week }) {
     throw new Error(`ESPN NFL scoreboard ${res.status} ${res.statusText}`);
   }
   const data = await res.json();
-  const map = {};
+
+  const statusMap = {};
+  let weekStart = null;
+
   for (const event of data.events || []) {
     const state = event.status?.type?.state; // 'pre' | 'in' | 'post'
     for (const competitor of event.competitions?.[0]?.competitors || []) {
       const abbrev = competitor.team?.abbreviation;
-      if (abbrev) map[abbrev] = state;
+      if (abbrev) statusMap[abbrev] = state;
+    }
+
+    if (event.date) {
+      const eventDate = new Date(event.date);
+      if (!isNaN(eventDate) && (!weekStart || eventDate < weekStart)) {
+        weekStart = eventDate;
+      }
     }
   }
-  return map;
+
+  return { statusMap, weekStart };
 }
 
 module.exports = { fetchLeagueWeek, fetchNflGameStatusMap };
