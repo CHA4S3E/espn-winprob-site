@@ -10,6 +10,29 @@ const matchupsEl = document.getElementById('matchups');
 const charts = {}; // matchupId -> Chart instance
 let refreshTimer = null;
 
+// Supabase/PostgREST silently caps any query at 1000 rows by default -- no
+// error, it just returns the first 1000 and stops. With frequent polling
+// (every 1 min) a single week's snapshots blow past that within a few
+// hours of live games, and since queries below order by `ts` ascending,
+// that meant getting stuck on the OLDEST 1000 rows forever, no matter how
+// hard you refreshed -- it wasn't a caching issue, the query itself never
+// asked for more than page 1. This pages through .range() until a page
+// comes back with fewer than PAGE_SIZE rows (i.e. we've reached the end).
+const PAGE_SIZE = 1000;
+async function fetchAllRows(buildQuery) {
+  let all = [];
+  let from = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data, error } = await buildQuery(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return all;
+}
+
 async function loadLeagues() {
   const { data, error } = await sb.from('leagues').select('id, slug, name').order('name');
   if (error) { statusEl.textContent = 'Failed to load leagues: ' + error.message; return; }
@@ -17,11 +40,16 @@ async function loadLeagues() {
 }
 
 async function loadYearsWeeks(leagueId) {
-  const { data, error } = await sb
-    .from('snapshots')
-    .select('year, week')
-    .eq('league_id', leagueId);
-  if (error || !data.length) {
+  let data;
+  try {
+    data = await fetchAllRows((from, to) =>
+      sb.from('snapshots').select('year, week').eq('league_id', leagueId).order('id').range(from, to)
+    );
+  } catch (err) {
+    data = [];
+  }
+
+  if (!data.length) {
     const now = new Date();
     yearSelect.innerHTML = `<option value="${now.getFullYear()}">${now.getFullYear()}</option>`;
     weekSelect.innerHTML = `<option value="1">Week 1</option>`;
@@ -161,22 +189,32 @@ async function loadMatchups() {
   matchupsEl.innerHTML = '';
   Object.values(charts).forEach((c) => c.destroy());
 
-  const [{ data: snaps, error: snapErr }, { data: teams, error: teamErr }] = await Promise.all([
-    sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts'),
-    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name)').eq('league_id', leagueId),
-  ]);
-
-  if (snapErr || teamErr) {
-    statusEl.textContent = 'Error loading data: ' + (snapErr || teamErr).message;
+  let snaps, teams;
+  try {
+    [snaps, { data: teams }] = await Promise.all([
+      fetchAllRows((from, to) =>
+        sb.from('snapshots')
+          .select('*')
+          .eq('league_id', leagueId)
+          .eq('year', year)
+          .eq('week', week)
+          .order('ts')
+          .range(from, to)
+      ),
+      sb.from('teams').select('id, espn_team_name, team_settings(color, display_name)').eq('league_id', leagueId),
+    ]);
+  } catch (err) {
+    statusEl.textContent = 'Error loading data: ' + err.message;
     return;
   }
+
   if (!snaps.length) {
     statusEl.textContent = 'No data yet for this week -- the poller may not have run yet.';
     return;
   }
 
   const teamInfo = {};
-  for (const t of teams) {
+  for (const t of teams || []) {
     const settings = t.team_settings || {};
     teamInfo[t.id] = {
       name: settings.display_name || t.espn_team_name,
