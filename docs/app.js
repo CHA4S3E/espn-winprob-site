@@ -5,6 +5,7 @@ const leagueSelect = document.getElementById('leagueSelect');
 const yearSelect = document.getElementById('yearSelect');
 const weekSelect = document.getElementById('weekSelect');
 const statusEl = document.getElementById('status');
+const lastCheckedEl = document.getElementById('lastChecked');
 const matchupsEl = document.getElementById('matchups');
 
 const charts = {}; // matchupId -> Chart instance
@@ -243,8 +244,16 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     ({ byMatchup, teamInfo } = await fetchMatchupData(leagueId, year, week));
   } catch (err) {
     statusEl.textContent = 'Error loading data: ' + err.message;
+    console.error('[win-prob] refresh failed:', err);
     return;
   }
+
+  // Stamped on every successful fetch, whether or not anything in the data
+  // actually changed -- this is how to tell "refresh is running but nothing
+  // is live right now" apart from "refresh silently stopped."
+  const checkedAt = new Date();
+  lastCheckedEl.textContent = `Last checked: ${checkedAt.toLocaleTimeString()}`;
+  console.log(`[win-prob] refresh ok @ ${checkedAt.toLocaleTimeString()}, ${Object.keys(byMatchup).length} matchup(s)`);
 
   if (Object.keys(byMatchup).length === 0) {
     if (!preserveCharts) {
