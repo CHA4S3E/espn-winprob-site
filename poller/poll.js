@@ -1,17 +1,15 @@
-// Main poller entry point. Run on a schedule (GitHub Actions cron) instead
-// of chrome.alarms -- works whether or not any browser is open.
+// Main poller entry point. Run on a schedule (GitHub Actions cron / an
+// external workflow_dispatch caller) instead of chrome.alarms -- works
+// whether or not any browser is open.
 //
 // For every league stored in Supabase:
 //   1. Pull current-week matchup + roster data from ESPN (private, via cookies)
-//   2. Pull real NFL game states so we know which players are "done"
+//   2. Pull real NFL game states so we know which players are "done", and
+//      that week's earliest kickoff date (used to gate plotting -- see below)
 //   3. Compute each team's expected score + win probability (see lib/winProb.js)
-//   4. Upsert teams, then insert one snapshot row per team per matchup --
-//      but ONLY if that team's numbers actually changed since its last
-//      recorded snapshot. Without this, a poll that runs every 5 minutes
-//      all week (not just during games) would insert an identical row on
-//      every single tick, even with zero players active -- the same
-//      problem the Chrome extension's content.js/background.js avoided by
-//      only appending a chart point when the percentage actually moved.
+//   4. Atomically insert one snapshot row per team, per matchup -- but only
+//      if (a) the fantasy week's plotting window has actually opened, and
+//      (b) the values actually changed since that team's last snapshot.
 
 const { createClient } = require('@supabase/supabase-js');
 const { fetchLeagueWeek, fetchNflGameStatusMap } = require('./lib/espnClient');
@@ -27,17 +25,6 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-
-// How many decimal places matter for "did this actually change?" -- matches
-// the 1-decimal-place precision the UI displays, so we don't insert a new
-// row over float noise that wouldn't even be visible on the chart.
-const WIN_PROB_PRECISION = 1;
-const SCORE_PRECISION = 1;
-
-function round(value, precision) {
-  const factor = 10 ** precision;
-  return Math.round((value || 0) * factor) / factor;
-}
 
 // Figures out the current NFL week number from ESPN's own scoreboard
 // response so we don't have to hardcode a schedule.
@@ -78,49 +65,13 @@ async function upsertTeam(leagueId, espnTeam) {
   return data.id;
 }
 
-// Fetches the single most recent snapshot row per team for this
-// league/year/week, in ONE query (rather than one query per team), and
-// returns a Map keyed by team_id. Used to decide whether a freshly computed
-// value actually differs from what's already stored.
-async function fetchLatestSnapshotsByTeam(leagueId, year, week) {
-  const { data, error } = await supabase
-    .from('snapshots')
-    .select('team_id, win_prob, actual_score, expected_score, all_starters_done, id')
-    .eq('league_id', leagueId)
-    .eq('year', year)
-    .eq('week', week)
-    .order('id', { ascending: false });
-
-  if (error) throw error;
-
-  const latestByTeam = new Map();
-  for (const row of data || []) {
-    // Rows come back newest-first, so the first time we see a given
-    // team_id is its most recent snapshot -- skip any older duplicates.
-    if (!latestByTeam.has(row.team_id)) {
-      latestByTeam.set(row.team_id, row);
-    }
-  }
-  return latestByTeam;
-}
-
-function hasChanged(prevRow, nextRow) {
-  if (!prevRow) return true; // no prior snapshot this week -- always record the first one
-  return (
-    round(prevRow.win_prob, WIN_PROB_PRECISION) !== round(nextRow.win_prob, WIN_PROB_PRECISION) ||
-    round(prevRow.actual_score, SCORE_PRECISION) !== round(nextRow.actual_score, SCORE_PRECISION) ||
-    round(prevRow.expected_score, SCORE_PRECISION) !== round(nextRow.expected_score, SCORE_PRECISION) ||
-    !!prevRow.all_starters_done !== !!nextRow.all_starters_done
-  );
-}
-
 async function pollLeague(league) {
   const year = new Date().getFullYear();
   const week = await currentNflWeek(year);
 
   console.log(`[${league.slug}] polling year=${year} week=${week}`);
 
-  const [leagueData, nflStatusMap, latestByTeam] = await Promise.all([
+  const [leagueData, nflGameData] = await Promise.all([
     fetchLeagueWeek({
       espnLeagueId: league.espn_league_id,
       espnS2: league.espn_s2,
@@ -129,8 +80,26 @@ async function pollLeague(league) {
       week,
     }),
     fetchNflGameStatusMap({ year, week }),
-    fetchLatestSnapshotsByTeam(league.id, year, week),
   ]);
+
+  const { statusMap: nflStatusMap, weekStart } = nflGameData;
+
+  // Thursday-Monday plotting window, determined from ESPN's actual game
+  // dates rather than assuming "the week number changed" is enough. We
+  // still fetch and compute everything below regardless (so roster changes
+  // during Tue/Wed are visible in logs and nothing here depends on this
+  // flag to function) -- it ONLY gates whether we write snapshot rows.
+  // Fails OPEN (keeps the previous always-on behavior) if we can't
+  // determine a start date for some reason, rather than silently losing
+  // data over an edge case in the schedule response.
+  const now = new Date();
+  const plottingOpen = !weekStart || now >= weekStart;
+  if (!plottingOpen) {
+    console.log(
+      `[${league.slug}] week ${week}'s plotting window hasn't opened yet ` +
+        `(starts ${weekStart.toISOString()}) -- computing but not writing snapshots`
+    );
+  }
 
   const teamIdByEspnId = {};
   for (const t of leagueData.teams || []) {
@@ -141,8 +110,8 @@ async function pollLeague(league) {
     (m) => m.matchupPeriodId === week && m.away // skip byes
   );
 
-  const rows = [];
-  let skippedUnchanged = 0;
+  let insertedCount = 0;
+  let skippedCount = 0;
 
   for (const matchup of schedule) {
     const sides = [
@@ -154,11 +123,6 @@ async function pollLeague(league) {
       for (const entry of side.rosterForCurrentScoringPeriod?.entries || []) {
         attachProTeamAbbrev(entry.playerPoolEntry.player);
       }
-      // actual now comes from summing each starter's live per-player
-      // statSourceId===0 points (same source `expected` already uses),
-      // not ESPN's team-level totalPoints field -- that field can lag or
-      // stay stale mid-game, which was causing actual_score to read 0
-      // even when players had already scored real points.
       const { expected, actual, allDone, totalCount, doneCount } = teamExpected(
         side.rosterForCurrentScoringPeriod?.entries,
         nflStatusMap
@@ -167,15 +131,10 @@ async function pollLeague(league) {
     });
 
     const totalProjectedBoth = computed.reduce((sum, c) => sum + c.expected, 0);
-    // "Remaining" proxy: expected total minus actual-so-far, summed both sides.
     const remainingProjectedBoth = computed.reduce(
       (sum, c) => sum + Math.max(c.expected - c.actual, 0),
       0
     );
-    // Also track remaining-by-PLAYER-COUNT (not just points) -- see
-    // computeDynamicStddev's comment for why this matters: it stops one
-    // early player's bust/boom from being treated as more predictive of
-    // the whole matchup than it actually is.
     const totalPlayersBoth = computed.reduce((sum, c) => sum + c.totalCount, 0);
     const remainingPlayersBoth = computed.reduce(
       (sum, c) => sum + (c.totalCount - c.doneCount),
@@ -197,43 +156,45 @@ async function pollLeague(league) {
       stddev,
     });
 
+    if (!plottingOpen) continue; // computed above for visibility; not written
+
     for (const c of computed) {
       const teamId = teamIdByEspnId[c.side.teamId];
       if (!teamId) continue;
       const winProb = c.isHome ? homeWinProb : 100 - homeWinProb;
 
-      const nextRow = {
-        league_id: league.id,
-        year,
-        week,
-        matchup_id: matchup.id,
-        team_id: teamId,
-        is_home: c.isHome,
-        actual_score: c.actual,
-        expected_score: c.expected,
-        win_prob: winProb,
-        all_starters_done: allStartersDone,
-      };
+      // Atomic: reads this team's latest snapshot and inserts the new one
+      // (if changed) in a single locked transaction, so two overlapping
+      // poller runs can't both read the same stale "latest" row and both
+      // decide to insert -- see db/002_atomic_snapshot_insert.sql.
+      const { data: didInsert, error: rpcError } = await supabase.rpc('insert_snapshot_if_changed', {
+        p_league_id: league.id,
+        p_year: year,
+        p_week: week,
+        p_matchup_id: matchup.id,
+        p_team_id: teamId,
+        p_is_home: c.isHome,
+        p_actual_score: c.actual,
+        p_expected_score: c.expected,
+        p_win_prob: winProb,
+        p_all_starters_done: allStartersDone,
+      });
 
-      if (hasChanged(latestByTeam.get(teamId), nextRow)) {
-        rows.push(nextRow);
-      } else {
-        skippedUnchanged++;
-      }
+      if (rpcError) throw rpcError;
+      if (didInsert) insertedCount++;
+      else skippedCount++;
     }
   }
 
-  if (rows.length) {
-    const { error } = await supabase.from('snapshots').insert(rows);
-    if (error) throw error;
-    console.log(
-      `[${league.slug}] inserted ${rows.length} changed snapshot row(s)` +
-        (skippedUnchanged ? `, skipped ${skippedUnchanged} unchanged` : '')
-    );
+  if (!plottingOpen) {
+    console.log(`[${league.slug}] plotting window closed -- 0 snapshots written this poll`);
   } else if (schedule.length === 0) {
     console.log(`[${league.slug}] no active matchups found (bye week?)`);
   } else {
-    console.log(`[${league.slug}] nothing changed since last poll -- skipped all ${skippedUnchanged} team(s)`);
+    console.log(
+      `[${league.slug}] inserted ${insertedCount} changed snapshot row(s)` +
+        (skippedCount ? `, skipped ${skippedCount} unchanged` : '')
+    );
   }
 }
 
