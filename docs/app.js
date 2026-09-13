@@ -75,10 +75,10 @@ function dayLabel(ts) {
   return new Date(ts).toLocaleDateString(undefined, { weekday: 'short' });
 }
 
-function renderMatchupChart(canvas, snapshotsForMatchup, homeSettings, awaySettings) {
-  const homeRows = snapshotsForMatchup.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
-  if (!homeRows.length) return null;
-
+// Pure computation, shared by both initial render and in-place updates, so
+// a periodic refresh and a from-scratch render can never drift out of sync
+// with each other.
+function computeChartPoints(homeRows) {
   const t0 = new Date(homeRows[0].ts).getTime();
   const rawPoints = homeRows.map((r) => ({
     x: (new Date(r.ts).getTime() - t0) / 60000, // minutes since first poll
@@ -91,7 +91,24 @@ function renderMatchupChart(canvas, snapshotsForMatchup, homeSettings, awaySetti
   const dayTicks = {};
   rawPoints.forEach((p, i) => { if (i % tickEvery === 0) dayTicks[p.x.toFixed(2)] = dayLabel(p.ts); });
 
-  return new Chart(canvas.getContext('2d'), {
+  return { points, dayTicks };
+}
+
+function midY(segCtx) { return (segCtx.p0.parsed.y + segCtx.p1.parsed.y) / 2; }
+
+function renderMatchupChart(canvas, snapshotsForMatchup, homeSettings, awaySettings) {
+  const homeRows = snapshotsForMatchup.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (!homeRows.length) return null;
+
+  const { points, dayTicks } = computeChartPoints(homeRows);
+
+  // Held in a mutable holder (rather than closing over `dayTicks` directly)
+  // so updateMatchupChart() can swap in fresh tick labels later without
+  // needing to recreate the chart -- the tick callback below reads
+  // state.dayTicks fresh on every render, not a snapshot taken at creation.
+  const state = { dayTicks };
+
+  const chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: {
       datasets: [{
@@ -140,7 +157,7 @@ function renderMatchupChart(canvas, snapshotsForMatchup, homeSettings, awaySetti
           grid: { color: 'rgba(0,0,0,0.06)' },
           ticks: {
             color: '#555',
-            callback: (v) => dayTicks[Number(v).toFixed(2)] ?? '',
+            callback: (v) => state.dayTicks[Number(v).toFixed(2)] ?? '',
             autoSkip: false,
             maxRotation: 0,
           },
@@ -148,35 +165,51 @@ function renderMatchupChart(canvas, snapshotsForMatchup, homeSettings, awaySetti
       },
     },
   });
+
+  chart._state = state;
+  return chart;
 }
-function midY(segCtx) { return (segCtx.p0.parsed.y + segCtx.p1.parsed.y) / 2; }
 
-async function loadMatchups() {
-  const leagueId = leagueSelect.value;
-  const year = Number(yearSelect.value);
-  const week = Number(weekSelect.value);
-  if (!leagueId || !year || !week) return;
+// Updates an EXISTING chart's data in place -- no DOM changes, no destroy/
+// recreate, so nothing about the page's height changes and the browser has
+// no reason to touch scroll position. This is what the 30s auto-refresh
+// uses instead of the old "wipe #matchups and rebuild everything" approach,
+// which was the actual cause of the page jumping to the top on refresh:
+// clearing a tall container's innerHTML briefly collapses the page's
+// scrollable height, forcing the browser to clamp scrollY back up to fit.
+function updateMatchupChart(chart, snapshotsForMatchup) {
+  const homeRows = snapshotsForMatchup.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (!homeRows.length) return;
 
-  statusEl.textContent = 'Loading...';
-  matchupsEl.innerHTML = '';
-  Object.values(charts).forEach((c) => c.destroy());
+  const { points, dayTicks } = computeChartPoints(homeRows);
+  chart.data.datasets[0].data = points;
+  chart._state.dayTicks = dayTicks;
+  chart.update('none'); // no animation on a background refresh -- avoids visual jank every 30s
+}
 
+function buildMatchupCard(matchupId, rows, home, away) {
+  const allDone = rows.every((r) => r.all_starters_done);
+  const card = document.createElement('div');
+  card.className = 'matchup-card';
+  card.innerHTML = `
+    <div class="matchup-title">
+      <span><b style="color:${home.color}">${home.name}</b> vs <b style="color:${away.color}">${away.name}</b></span>
+      <span class="${allDone ? '' : 'live'}">${allDone ? 'Final' : '\u25CF Live'}</span>
+    </div>
+    <div class="chartBox"><canvas></canvas></div>
+  `;
+  return card;
+}
+
+async function fetchMatchupData(leagueId, year, week) {
   const [{ data: snaps, error: snapErr }, { data: teams, error: teamErr }] = await Promise.all([
     sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts'),
     sb.from('teams').select('id, espn_team_name, team_settings(color, display_name)').eq('league_id', leagueId),
   ]);
-
-  if (snapErr || teamErr) {
-    statusEl.textContent = 'Error loading data: ' + (snapErr || teamErr).message;
-    return;
-  }
-  if (!snaps.length) {
-    statusEl.textContent = 'No data yet for this week -- the poller may not have run yet.';
-    return;
-  }
+  if (snapErr || teamErr) throw snapErr || teamErr;
 
   const teamInfo = {};
-  for (const t of teams) {
+  for (const t of teams || []) {
     const settings = t.team_settings || {};
     teamInfo[t.id] = {
       name: settings.display_name || t.espn_team_name,
@@ -185,33 +218,94 @@ async function loadMatchups() {
   }
 
   const byMatchup = {};
-  for (const s of snaps) {
+  for (const s of snaps || []) {
     (byMatchup[s.matchup_id] ||= []).push(s);
   }
 
+  return { byMatchup, teamInfo };
+}
+
+// preserveCharts=true (used by the 30s auto-refresh timer) updates existing
+// charts' data in place and never touches the DOM structure or scroll
+// position. preserveCharts=false (used on initial load and whenever the
+// league/year/week selection changes) does a full rebuild, since the actual
+// set of matchups can legitimately differ in that case.
+async function loadMatchups({ preserveCharts = false } = {}) {
+  const leagueId = leagueSelect.value;
+  const year = Number(yearSelect.value);
+  const week = Number(weekSelect.value);
+  if (!leagueId || !year || !week) return;
+
+  if (!preserveCharts) statusEl.textContent = 'Loading...';
+
+  let byMatchup, teamInfo;
+  try {
+    ({ byMatchup, teamInfo } = await fetchMatchupData(leagueId, year, week));
+  } catch (err) {
+    statusEl.textContent = 'Error loading data: ' + err.message;
+    return;
+  }
+
+  if (Object.keys(byMatchup).length === 0) {
+    if (!preserveCharts) {
+      matchupsEl.innerHTML = '';
+      Object.values(charts).forEach((c) => c.destroy());
+      for (const key of Object.keys(charts)) delete charts[key];
+      statusEl.textContent = 'No data yet for this week -- the poller may not have run yet.';
+    }
+    // On a routine auto-refresh, if a week that previously had data somehow
+    // returns none, leave whatever's already on screen alone rather than
+    // wiping it -- that's almost certainly a transient fetch hiccup, not an
+    // actual "the data disappeared" situation.
+    return;
+  }
+
+  if (!preserveCharts || Object.keys(charts).length === 0) {
+    // Full rebuild: initial load, or the league/year/week selection changed.
+    matchupsEl.innerHTML = '';
+    Object.values(charts).forEach((c) => c.destroy());
+    for (const key of Object.keys(charts)) delete charts[key];
+
+    statusEl.textContent = '';
+
+    for (const [matchupId, rows] of Object.entries(byMatchup)) {
+      const homeRow = rows.find((r) => r.is_home);
+      const awayRow = rows.find((r) => !r.is_home);
+      if (!homeRow || !awayRow) continue;
+
+      const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0' };
+      const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b' };
+
+      const card = buildMatchupCard(matchupId, rows, home, away);
+      matchupsEl.appendChild(card);
+      const canvas = card.querySelector('canvas');
+      charts[matchupId] = renderMatchupChart(canvas, rows, home, away);
+    }
+    return;
+  }
+
+  // Incremental update: same matchup set as before (true on every routine
+  // 30s refresh, since a week's matchups don't change once the schedule is
+  // set) -- update each existing chart's data and "Live"/"Final" badge in
+  // place, with zero DOM structure changes.
   statusEl.textContent = '';
-
   for (const [matchupId, rows] of Object.entries(byMatchup)) {
-    const homeRow = rows.find((r) => r.is_home);
-    const awayRow = rows.find((r) => !r.is_home);
-    if (!homeRow || !awayRow) continue;
+    const existing = charts[matchupId];
+    if (!existing) {
+      // A matchup appeared that wasn't rendered before -- shouldn't happen
+      // during a routine refresh, but fall back to a full rebuild once
+      // rather than silently dropping it.
+      return loadMatchups({ preserveCharts: false });
+    }
 
-    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0' };
-    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b' };
+    updateMatchupChart(existing, rows);
+
     const allDone = rows.every((r) => r.all_starters_done);
-
-    const card = document.createElement('div');
-    card.className = 'matchup-card';
-    card.innerHTML = `
-      <div class="matchup-title">
-        <span><b style="color:${home.color}">${home.name}</b> vs <b style="color:${away.color}">${away.name}</b></span>
-        <span class="${allDone ? '' : 'live'}">${allDone ? 'Final' : '\u25CF Live'}</span>
-      </div>
-      <div class="chartBox"><canvas></canvas></div>
-    `;
-    matchupsEl.appendChild(card);
-    const canvas = card.querySelector('canvas');
-    charts[matchupId] = renderMatchupChart(canvas, rows, home, away);
+    const badge = existing.canvas.closest('.matchup-card')?.querySelector('.matchup-title span:last-child');
+    if (badge) {
+      badge.textContent = allDone ? 'Final' : '\u25CF Live';
+      badge.className = allDone ? '' : 'live';
+    }
   }
 }
 
@@ -225,8 +319,10 @@ async function init() {
   }
 
   // Auto-refresh every 30s -- cheap read-only query, fine even if the
-  // underlying poller only writes every ~5 min.
-  refreshTimer = setInterval(loadMatchups, 30000);
+  // underlying poller only writes every ~5 min. Updates existing charts in
+  // place (see loadMatchups/updateMatchupChart) instead of rebuilding the
+  // DOM, so this can no longer disturb scroll position.
+  refreshTimer = setInterval(() => loadMatchups({ preserveCharts: true }), 30000);
 }
 
 init();
