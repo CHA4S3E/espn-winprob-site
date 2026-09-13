@@ -78,16 +78,22 @@ function colorWithAlpha(hex, alpha) {
 
 // Insert an exact y=50 point at every crossing so the line pivots color
 // precisely at the true crossing instead of jumping between sides.
+// Skips any pair involving a null point (the gap-break markers from
+// insertGapBreaks) -- JS coerces null to 0 in arithmetic, so without this
+// guard the crossing math below would misfire around every gap and insert
+// a bogus connecting point exactly where a break was supposed to be.
 function withCrossings(points) {
   const out = [];
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
     if (i > 0) {
       const prev = points[i - 1];
-      const crosses = (prev.y - 50) * (p.y - 50) < 0;
-      if (crosses) {
-        const t = (50 - prev.y) / (p.y - prev.y);
-        out.push({ x: prev.x + t * (p.x - prev.x), y: 50 });
+      if (prev.y !== null && p.y !== null) {
+        const crosses = (prev.y - 50) * (p.y - 50) < 0;
+        if (crosses) {
+          const t = (50 - prev.y) / (p.y - prev.y);
+          out.push({ x: prev.x + t * (p.x - prev.x), y: 50 });
+        }
       }
     }
     out.push(p);
@@ -113,7 +119,7 @@ function renderMatchupChart(canvas, snapshotsForMatchup, homeSettings, awaySetti
     y: r.win_prob,
     ts: r.ts,
   }));
-  const points = withCrossings(rawPoints);
+  const points = withCrossings(insertGapBreaks(rawPoints));
 
   const tickEvery = Math.max(Math.floor(rawPoints.length / 5), 1);
   const dayTicks = {};
@@ -178,6 +184,30 @@ function renderMatchupChart(canvas, snapshotsForMatchup, homeSettings, awaySetti
   });
 }
 function midY(segCtx) { return (segCtx.p0.parsed.y + segCtx.p1.parsed.y) / 2; }
+
+// Inserts a null-valued point in the middle of any unusually large time gap
+// between two real data points. Chart.js draws no line through/around a
+// null point, so this makes the chart show a genuine break (no line) during
+// a stretch where nobody on the team was in an active game, rather than
+// drawing one straight segment across the whole gap -- which would
+// visually look like continuous flat activity that never happened. The
+// line simply resumes once real data starts coming in again.
+const GAP_THRESHOLD_MINUTES = 20;
+function insertGapBreaks(rawPoints) {
+  const out = [];
+  for (let i = 0; i < rawPoints.length; i++) {
+    if (i > 0) {
+      const prev = rawPoints[i - 1];
+      const cur = rawPoints[i];
+      const gapMinutes = (new Date(cur.ts).getTime() - new Date(prev.ts).getTime()) / 60000;
+      if (gapMinutes > GAP_THRESHOLD_MINUTES) {
+        out.push({ x: (prev.x + cur.x) / 2, y: null });
+      }
+    }
+    out.push(rawPoints[i]);
+  }
+  return out;
+}
 
 async function loadMatchups() {
   const leagueId = leagueSelect.value;
