@@ -113,9 +113,15 @@ function renderMatchupChart(canvas, snapshotsForMatchup, homeSettings, awaySetti
   const homeRows = snapshotsForMatchup.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length) return null;
 
-  const t0 = new Date(homeRows[0].ts).getTime();
-  const rawPoints = homeRows.map((r) => ({
-    x: (new Date(r.ts).getTime() - t0) / 60000, // minutes since first poll
+  // x = point INDEX, not elapsed real time. This is the same technique
+  // stock charts use to avoid showing a giant blank gap every weekend --
+  // every real data point gets equal visual spacing regardless of how much
+  // actual time passed before it, so a 3-day gap between Thursday's game
+  // and Sunday's takes up the same tiny sliver of width as a normal 1-min
+  // gap between live polls, instead of squeezing the two games' worth of
+  // real movement into narrow slivers at opposite edges of the chart.
+  const rawPoints = homeRows.map((r, i) => ({
+    x: i,
     y: r.win_prob,
     ts: r.ts,
   }));
