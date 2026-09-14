@@ -122,6 +122,9 @@
     margin: 2px 0 10px; line-height: 1.4;
   }
 
+  #matchups { transition: opacity 180ms ease; }
+  #matchups.view-fading { opacity: 0; }
+
   /* ---- Timeline view (stacked line charts) ---- */
   #matchups.view-timeline { display: flex; flex-direction: column; gap: 34px; }
   .matchup-card { border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; background: var(--card-bg); }
@@ -208,6 +211,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>
