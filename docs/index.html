@@ -143,8 +143,9 @@
   /* ---- ESPN view (dotted line, persistent marker, static top/bottom rows) ---- */
   #matchups.view-espn { display: flex; flex-direction: column; gap: 28px; }
   .espn-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; background: var(--card-bg); }
-  .espn-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-  .espn-header .postcard-status { margin-bottom: 0; }
+  .espn-header { display: flex; align-items: center; margin-bottom: 6px; }
+  .espn-header .postcard-status { margin-bottom: 0; margin-left: auto; }
+  .espn-header .why-blurb { margin: 0 0 0 10px; flex: 1; }
   .espn-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
   .espn-emoji { font-size: 20px; line-height: 1; min-width: 1.2em; text-align: center; }
   .espn-name { font-size: 14px; font-weight: 700; }
@@ -201,6 +202,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>
