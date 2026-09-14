@@ -893,6 +893,17 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
 // persistent vertical marker + dot pinned at the latest point instead of an
 // interactive tooltip.
 
+// Sets the top/bottom percentage labels directly via the DOM (not through
+// Chart.js) -- used both for the normal "current value" display and for
+// showing the hovered point's value while the mouse is over the chart.
+function setEspnPctLabels(canvas, homePct) {
+  const card = canvas.closest('.espn-card');
+  if (!card) return;
+  const pcts = card.querySelectorAll('.espn-pct');
+  if (pcts[0]) pcts[0].textContent = `${Math.round(homePct)}%`;
+  if (pcts[1]) pcts[1].textContent = `${Math.round(100 - homePct)}%`;
+}
+
 function renderEspnCard(rows, home, away, allDone) {
   const homePct = latestPct(rows);
   const card = document.createElement('div');
@@ -918,9 +929,11 @@ function renderEspnCard(rows, home, away, allDone) {
   if (!homeRows.length) return { card, entry: null };
 
   const { points, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
-  const state = { dayTicks };
+  // currentHomePct is kept in sync on every refresh (see updateEspnCard) so
+  // that moving the mouse away always snaps back to the real live value,
+  // never a stale one captured back when this chart was first created.
+  const state = { dayTicks, currentHomePct: homePct };
   const canvas = card.querySelector('canvas');
-  const latestPoint = points[points.length - 1];
 
   const chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
@@ -930,7 +943,6 @@ function renderEspnCard(rows, home, away, allDone) {
           data: points,
           parsing: false,
           borderWidth: 2,
-          borderDash: [3, 3],
           pointRadius: 0,
           tension: 0.15,
           fill: { target: { value: 50 } },
@@ -945,10 +957,10 @@ function renderEspnCard(rows, home, away, allDone) {
           },
         },
         {
-          // Persistent vertical guide line at the latest point -- this is
-          // what replaces needing to hover: the "current" position is
-          // always visibly marked, not just revealed on interaction.
-          data: [{ x: latestPoint.x, y: 0 }, { x: latestPoint.x, y: 100 }],
+          // Vertical guide line -- hidden until hovered (see the mousemove
+          // listener below), not shown persistently.
+          data: [],
+          hidden: true,
           parsing: false,
           borderWidth: 1.5,
           borderColor: themeVar('#222', '#ddd'),
@@ -958,8 +970,9 @@ function renderEspnCard(rows, home, away, allDone) {
         },
         {
           // The dot, drawn last so it sits on top of both the line and the
-          // vertical guide.
-          data: [latestPoint],
+          // vertical guide. Also hidden until hovered.
+          data: [],
+          hidden: true,
           parsing: false,
           showLine: false,
           pointRadius: 7,
@@ -972,8 +985,12 @@ function renderEspnCard(rows, home, away, allDone) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      // No hover/tooltip in this view -- the current values are always
-      // visible in the top/bottom rows instead.
+      // Chart.js's own tooltip/hover system is turned off entirely --
+      // hovering is handled manually below via native mouse events on the
+      // canvas, which gives full control over exactly what shows (the
+      // marker line/dot and the DOM percentage labels) without fighting
+      // Chart.js's interaction modes across three differently-sized
+      // datasets.
       plugins: { legend: { display: false }, tooltip: { enabled: false } },
       events: [],
       scales: {
@@ -1002,6 +1019,41 @@ function renderEspnCard(rows, home, away, allDone) {
   });
   chart._state = state;
 
+  // Manual hover handling: find the nearest real data point to the mouse's
+  // x position, show the marker line + dot there, and show that point's
+  // percentages in the top/bottom labels. Reads datasets[0].data fresh each
+  // time (not a closed-over `points` variable) so this keeps working
+  // correctly after a background refresh replaces the chart's data.
+  canvas.addEventListener('mousemove', (evt) => {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = evt.clientX - rect.left;
+    const xValue = chart.scales.x.getValueForPixel(mouseX);
+    if (xValue == null) return;
+    const currentPoints = chart.data.datasets[0].data;
+    if (!currentPoints.length) return;
+
+    let nearest = currentPoints[0];
+    let minDist = Infinity;
+    for (const p of currentPoints) {
+      const d = Math.abs(p.x - xValue);
+      if (d < minDist) { minDist = d; nearest = p; }
+    }
+
+    chart.data.datasets[1].data = [{ x: nearest.x, y: 0 }, { x: nearest.x, y: 100 }];
+    chart.data.datasets[1].hidden = false;
+    chart.data.datasets[2].data = [nearest];
+    chart.data.datasets[2].hidden = false;
+    chart.update('none');
+    setEspnPctLabels(canvas, nearest.y);
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    chart.data.datasets[1].hidden = true;
+    chart.data.datasets[2].hidden = true;
+    chart.update('none');
+    setEspnPctLabels(canvas, chart._state.currentHomePct);
+  });
+
   return { card, entry: { mode: 'espn', chart } };
 }
 
@@ -1010,22 +1062,20 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length || !entry.chart) return;
 
+  const chart = entry.chart;
   const { points, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
-  const latestPoint = points[points.length - 1];
-  const datasets = entry.chart.data.datasets;
-  datasets[0].data = points;
-  datasets[1].data = [{ x: latestPoint.x, y: 0 }, { x: latestPoint.x, y: 100 }];
-  datasets[2].data = [latestPoint];
-  entry.chart._state.dayTicks = dayTicks;
-  entry.chart.options.scales.x.max = maxX;
-  entry.chart.update('none');
+  chart.data.datasets[0].data = points;
+  chart._state.dayTicks = dayTicks;
+  chart._state.currentHomePct = latestPct(rows);
+  chart.options.scales.x.max = maxX;
+  chart.update('none');
 
-  const homePct = latestPct(rows);
-  const card = entry.chart.canvas.closest('.espn-card');
-  if (card) {
-    const pcts = card.querySelectorAll('.espn-pct');
-    if (pcts[0]) pcts[0].textContent = `${Math.round(homePct)}%`;
-    if (pcts[1]) pcts[1].textContent = `${Math.round(100 - homePct)}%`;
+  // Only refresh the visible labels if the marker isn't currently being
+  // shown via hover -- otherwise a background refresh would yank the
+  // numbers out from under someone mid-hover.
+  const isHovering = chart.data.datasets[1].hidden === false;
+  if (!isHovering) {
+    setEspnPctLabels(chart.canvas, chart._state.currentHomePct);
   }
 }
 
