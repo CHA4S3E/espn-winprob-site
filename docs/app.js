@@ -1029,10 +1029,24 @@ function renderEspnCard(rows, home, away, allDone) {
           pointRadius: 0,
           fill: false,
           tension: 0,
+          // Tells Chart.js not to reserve extra padding to keep this
+          // dataset's own rendering from being clipped -- without this,
+          // the FIRST time this dataset actually contains a point (i.e.
+          // the first hover), Chart.js recalculates the plot area to
+          // protect it from edge-clipping and keeps that recalculated,
+          // very slightly smaller plot area from then on -- exactly the
+          // "chart shrinks once on first hover, then stays that size"
+          // symptom. Since this line always runs from y:0 to y:100 inside
+          // the existing scale bounds, it never needed that protection.
+          clip: false,
         },
         {
           // The dot, drawn last so it sits on top of both the line and the
-          // vertical guide. Also hidden until hovered.
+          // vertical guide. Also hidden until hovered. Same clip:false
+          // reasoning as the line above -- this is the dataset most likely
+          // to trigger that one-time padding recalculation, since it has a
+          // real pixel radius (7px + a 2px border) that Chart.js would
+          // otherwise reserve edge padding to avoid clipping.
           data: [],
           hidden: true,
           parsing: false,
@@ -1041,6 +1055,7 @@ function renderEspnCard(rows, home, away, allDone) {
           pointBackgroundColor: themeVar('#111', '#eee'),
           pointBorderColor: themeVar('#fff', '#111'),
           pointBorderWidth: 2,
+          clip: false,
         },
       ],
     },
