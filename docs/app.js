@@ -358,6 +358,14 @@ function computeBiggestSwing(byMatchup, teamInfo) {
     const awayRow = rows.find((r) => !r.is_home);
     if (!homeRow || !awayRow) continue;
 
+    // Skip matchups that have gone stale (same freshness check that gates
+    // the "Live" badge -- see isRecentlyActive). Without this, a matchup
+    // that finished last night keeps comparing its same two final points
+    // forever, since nothing about its "latest" row ever changes once the
+    // game is over -- surfacing last night's swing indefinitely instead of
+    // disappearing once it's no longer actually happening.
+    if (!isRecentlyActive(rows)) continue;
+
     const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
     if (homeRows.length < 2) continue;
 
