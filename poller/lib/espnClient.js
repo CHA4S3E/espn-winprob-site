@@ -47,10 +47,24 @@ async function fetchNflGameStatusMap({ year, week }) {
   }
   const data = await res.json();
 
+  // A 200 OK with zero events is a real failure mode, not a legitimate
+  // state -- during the season there should always be multiple games in a
+  // given week. Without this check, an empty (but "successful") response
+  // silently produces an empty statusMap, which downstream code has no way
+  // to distinguish from "every player happens to be on a bye" -- locking
+  // every player's score in immediately at whatever they'd scored so far,
+  // regardless of whether their real game had even started. Throwing here
+  // instead lets the existing per-league try/catch in poll.js's main()
+  // skip this cycle entirely, rather than writing a snapshot built on a
+  // false "everyone's done" assumption.
+  if (!data.events || data.events.length === 0) {
+    throw new Error('ESPN NFL scoreboard returned zero events -- treating as a failed fetch, not an empty week');
+  }
+
   const statusMap = {};
   let weekStart = null;
 
-  for (const event of data.events || []) {
+  for (const event of data.events) {
     const state = event.status?.type?.state; // 'pre' | 'in' | 'post'
     const remainingFraction = estimateRemainingFraction(state, event.status?.period, event.status?.displayClock);
 
