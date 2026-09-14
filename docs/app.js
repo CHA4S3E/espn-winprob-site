@@ -376,6 +376,68 @@ function latestPct(rows) {
   return homeRow ? homeRow.win_prob : 50;
 }
 
+function latestRow(rows, isHome) {
+  return rows.filter((r) => r.is_home === isHome).sort((a, b) => new Date(b.ts) - new Date(a.ts))[0];
+}
+
+// Plain-language "why is this the number" sentence, built entirely from
+// aggregate data already on the page (each team's current actual/expected
+// score and win_prob) -- no per-player roster data is fetched by the
+// frontend, so this deliberately stays at the team level rather than trying
+// to name specific players.
+function explainMatchup(rows, home, away, allDone) {
+  const homeRow = latestRow(rows, true);
+  const awayRow = latestRow(rows, false);
+  if (!homeRow || !awayRow) return 'Not enough data yet to explain this matchup.';
+
+  if (allDone) {
+    if (homeRow.actual_score === awayRow.actual_score) return 'Final: this one ended in an exact tie.';
+    const homeWon = homeRow.actual_score > awayRow.actual_score;
+    const winner = homeWon ? home : away, loser = homeWon ? away : home;
+    const margin = Math.abs(homeRow.actual_score - awayRow.actual_score).toFixed(1);
+    return `Final: ${winner.name} beat ${loser.name} by ${margin} points.`;
+  }
+
+  const homePct = homeRow.win_prob;
+  const homeFavored = homePct >= 50;
+  const favored = homeFavored ? home : away;
+  const underdog = homeFavored ? away : home;
+  const favoredPct = Math.round(homeFavored ? homePct : 100 - homePct);
+
+  if (favoredPct < 55) {
+    return `Toss-up right now -- ${home.name} and ${away.name} are projected within a few points of each other.`;
+  }
+
+  const actualMargin = Math.abs(homeRow.actual_score - awayRow.actual_score);
+  const favoredRow = homeFavored ? homeRow : awayRow;
+  const underdogRow = homeFavored ? awayRow : homeRow;
+  const favoredIsAhead = favoredRow.actual_score >= underdogRow.actual_score;
+  const favoredRemaining = Math.max(favoredRow.expected_score - favoredRow.actual_score, 0);
+  const underdogRemaining = Math.max(underdogRow.expected_score - underdogRow.actual_score, 0);
+  const favoredMoreLockedIn = favoredRemaining <= underdogRemaining;
+
+  if (actualMargin < 0.5) {
+    return `${home.name} and ${away.name} are even on the scoreboard right now, but ${favored.name} is favored with ${favoredMoreLockedIn ? 'fewer points left on the table' : 'a stronger projection the rest of the way'}.`;
+  }
+  if (favoredIsAhead && favoredMoreLockedIn) {
+    return `${favored.name} leads by ${actualMargin.toFixed(1)} and has more points already locked in, leaving ${underdog.name} less room to catch up.`;
+  }
+  if (favoredIsAhead && !favoredMoreLockedIn) {
+    return `${favored.name} leads by ${actualMargin.toFixed(1)} right now, and still has more projected points left to add too.`;
+  }
+  if (!favoredIsAhead && favoredMoreLockedIn) {
+    return `${underdog.name} leads by ${actualMargin.toFixed(1)} right now, but ${favored.name} has fewer points left on the table and is favored to finish ahead.`;
+  }
+  return `${underdog.name} leads by ${actualMargin.toFixed(1)} right now, but ${favored.name} is favored with more projected points still to come.`;
+}
+
+function wireWhyButton(card) {
+  const btn = card.querySelector('.why-btn');
+  const blurb = card.querySelector('.why-blurb');
+  if (!btn || !blurb) return;
+  btn.addEventListener('click', () => { blurb.hidden = !blurb.hidden; });
+}
+
 // ============================== TIMELINE + POSTCARD VIEWS ==============================
 // Both render the exact same win-probability line chart -- Postcard is just
 // the compact, gridded version. Kept as one shared implementation so they
@@ -394,11 +456,15 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
   const isLive = !allDone && isRecentlyActive(rows);
   card.innerHTML = `
     <div class="${titleClass}">
-      <span><b style="color:${home.color}">${home.name}</b> vs <b style="color:${away.color}">${away.name}</b></span>
+      <span><b style="color:${home.color}">${home.name}</b> vs <b style="color:${away.color}">${away.name}</b>
+        <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
+      </span>
       <span class="${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</span>
     </div>
+    <div class="why-blurb" hidden>${explainMatchup(rows, home, away, allDone)}</div>
     <div class="${chartBoxClass}"><canvas></canvas></div>
   `;
+  wireWhyButton(card);
 
   const homeRows = rows.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
@@ -505,6 +571,9 @@ function updateLineChartCard(entry, rows, home, away, allDone) {
     badge.textContent = allDone ? 'Final' : '\u25CF Live';
     badge.className = (!allDone && isRecentlyActive(rows)) ? 'live' : '';
   }
+
+  const blurb = entry.chart.canvas.closest('.matchup-card, .postcard')?.querySelector('.why-blurb');
+  if (blurb) blurb.textContent = explainMatchup(rows, home, away, allDone);
 }
 
 function renderTimelineCard(rows, home, away, allDone) {
@@ -610,8 +679,12 @@ function renderNeedleCard(rows, home, away, allDone) {
     <div class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</div>
     <div class="needle-gauge">${buildNeedleSvg(home, away)}</div>
     <div class="needle-verdict" style="color:${verdict.color}">${verdict.text}</div>
-    <div class="needle-sub">${home.name} vs ${away.name}</div>
+    <div class="needle-sub">${home.name} vs ${away.name}
+      <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
+    </div>
+    <div class="why-blurb" hidden>${explainMatchup(rows, home, away, allDone)}</div>
   `;
+  wireWhyButton(card);
 
   const needle = card.querySelector('.needle-pointer');
   if (needle) needle.style.transform = `rotate(${needleRotationDeg(homePct)}deg)`;
@@ -631,6 +704,9 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
   verdictEl.style.color = verdict.color;
   const needle = card.querySelector('.needle-pointer');
   if (needle) needle.style.transform = `rotate(${needleRotationDeg(homePct)}deg)`;
+
+  const blurb = card.querySelector('.why-blurb');
+  if (blurb) blurb.textContent = explainMatchup(rows, home, away, allDone);
 }
 
 // ============================== SHARED LOADING ==============================
