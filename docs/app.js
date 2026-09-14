@@ -158,6 +158,23 @@ function themeVar(lightVal, darkVal) {
   return theme === 'dark' ? darkVal : lightVal;
 }
 
+// "Live" (all_starters_done = false) only glows if the matchup has actually
+// produced a new snapshot recently. This is a reliable signal specifically
+// because of how the poller's dedupe works: expected_score keeps drifting
+// on its own (from the pace-based remaining-time decay) for as long as
+// anyone is genuinely mid-game, even through a scoring lull -- so a long
+// stretch with zero new rows really does mean nobody in this matchup is
+// currently playing (between game windows, bye-week stragglers, etc.), not
+// just "nothing happened for a few minutes." A matchup in that state is
+// still technically "Live" (not Final), but shouldn't visually pulse like
+// something is actively happening right now.
+const LIVE_STALE_MS = 20 * 60 * 1000; // 20 minutes, generous over ~1-min polling
+function isRecentlyActive(rows) {
+  if (!rows.length) return false;
+  const latestTs = rows.reduce((max, r) => Math.max(max, new Date(r.ts).getTime()), 0);
+  return Date.now() - latestTs < LIVE_STALE_MS;
+}
+
 function setTheme(next) {
   if (next === theme) return;
   theme = next;
@@ -374,10 +391,11 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
   card.className = compact ? 'postcard' : 'matchup-card';
   const titleClass = compact ? 'postcard-title' : 'matchup-title';
   const chartBoxClass = compact ? 'postcard-chartBox' : 'chartBox';
+  const isLive = !allDone && isRecentlyActive(rows);
   card.innerHTML = `
     <div class="${titleClass}">
       <span><b style="color:${home.color}">${home.name}</b> vs <b style="color:${away.color}">${away.name}</b></span>
-      <span class="${allDone ? '' : 'live'}">${allDone ? 'Final' : '\u25CF Live'}</span>
+      <span class="${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</span>
     </div>
     <div class="${chartBoxClass}"><canvas></canvas></div>
   `;
@@ -485,7 +503,7 @@ function updateLineChartCard(entry, rows, home, away, allDone) {
   const badge = entry.chart.canvas.closest('.matchup-card, .postcard')?.querySelector(`.${entry.titleClass} span:last-child`);
   if (badge) {
     badge.textContent = allDone ? 'Final' : '\u25CF Live';
-    badge.className = allDone ? '' : 'live';
+    badge.className = (!allDone && isRecentlyActive(rows)) ? 'live' : '';
   }
 }
 
@@ -584,11 +602,12 @@ function needleRotationDeg(homePct) {
 function renderNeedleCard(rows, home, away, allDone) {
   const homePct = latestPct(rows);
   const verdict = needleVerdict(homePct, home, away);
+  const isLive = !allDone && isRecentlyActive(rows);
 
   const card = document.createElement('div');
   card.className = 'needle-card';
   card.innerHTML = `
-    <div class="postcard-status ${allDone ? '' : 'live'}">${allDone ? 'Final' : '\u25CF Live'}</div>
+    <div class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</div>
     <div class="needle-gauge">${buildNeedleSvg(home, away)}</div>
     <div class="needle-verdict" style="color:${verdict.color}">${verdict.text}</div>
     <div class="needle-sub">${home.name} vs ${away.name}</div>
@@ -606,7 +625,7 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
   const card = entry.el;
 
   card.querySelector('.postcard-status').textContent = allDone ? 'Final' : '\u25CF Live';
-  card.querySelector('.postcard-status').className = `postcard-status ${allDone ? '' : 'live'}`;
+  card.querySelector('.postcard-status').className = `postcard-status ${(!allDone && isRecentlyActive(rows)) ? 'live' : ''}`;
   const verdictEl = card.querySelector('.needle-verdict');
   verdictEl.textContent = verdict.text;
   verdictEl.style.color = verdict.color;
