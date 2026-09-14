@@ -112,6 +112,7 @@ async function pollLeague(league) {
 
   let insertedCount = 0;
   let skippedCount = 0;
+  let rejectedCount = 0;
 
   for (const matchup of schedule) {
     const sides = [
@@ -155,35 +156,51 @@ async function pollLeague(league) {
       allDone: allStartersDone,
       stddev,
     });
+    const awayWinProb = 100 - homeWinProb;
 
     if (!plottingOpen) continue; // computed above for visibility; not written
 
-    for (const c of computed) {
-      const teamId = teamIdByEspnId[c.side.teamId];
-      if (!teamId) continue;
-      const winProb = c.isHome ? homeWinProb : 100 - homeWinProb;
+    const homeTeamId = teamIdByEspnId[homeC.side.teamId];
+    const awayTeamId = teamIdByEspnId[awayC.side.teamId];
+    if (!homeTeamId || !awayTeamId) continue;
 
-      // Atomic: reads this team's latest snapshot and inserts the new one
-      // (if changed) in a single locked transaction, so two overlapping
-      // poller runs can't both read the same stale "latest" row and both
-      // decide to insert -- see db/002_atomic_snapshot_insert.sql.
-      const { data: didInsert, error: rpcError } = await supabase.rpc('insert_snapshot_if_changed', {
-        p_league_id: league.id,
-        p_year: year,
-        p_week: week,
-        p_matchup_id: matchup.id,
-        p_team_id: teamId,
-        p_is_home: c.isHome,
-        p_actual_score: c.actual,
-        p_expected_score: c.expected,
-        p_win_prob: winProb,
-        p_all_starters_done: allStartersDone,
-      });
+    // Both sides validated and written atomically together -- see
+    // db/005_matchup_level_validation.sql for why this replaced two
+    // separate per-team calls: a bad read for one team's data also
+    // contaminates the OTHER team's win_prob (since it's a joint
+    // computation), so if either side looks implausible, neither side gets
+    // written this cycle, rather than risk writing one correct-looking row
+    // whose win_prob was actually computed from the other side's bad data.
+    const { data: rows, error: rpcError } = await supabase.rpc('insert_matchup_snapshot_if_changed', {
+      p_league_id: league.id,
+      p_year: year,
+      p_week: week,
+      p_matchup_id: matchup.id,
+      p_home_team_id: homeTeamId,
+      p_home_actual_score: homeC.actual,
+      p_home_expected_score: homeC.expected,
+      p_home_win_prob: homeWinProb,
+      p_away_team_id: awayTeamId,
+      p_away_actual_score: awayC.actual,
+      p_away_expected_score: awayC.expected,
+      p_away_win_prob: awayWinProb,
+      p_all_starters_done: allStartersDone,
+    });
 
-      if (rpcError) throw rpcError;
-      if (didInsert) insertedCount++;
-      else skippedCount++;
+    if (rpcError) throw rpcError;
+    const result = rows?.[0];
+    if (!result) continue;
+
+    if (result.rejected) {
+      rejectedCount++;
+      console.warn(
+        `[${league.slug}] matchup ${matchup.id}: rejected this poll's data for BOTH teams -- ` +
+          `one side's actual_score dropped implausibly (likely a bad ESPN read)`
+      );
+      continue;
     }
+    if (result.home_inserted) insertedCount++; else skippedCount++;
+    if (result.away_inserted) insertedCount++; else skippedCount++;
   }
 
   if (!plottingOpen) {
@@ -193,7 +210,8 @@ async function pollLeague(league) {
   } else {
     console.log(
       `[${league.slug}] inserted ${insertedCount} changed snapshot row(s)` +
-        (skippedCount ? `, skipped ${skippedCount} unchanged` : '')
+        (skippedCount ? `, skipped ${skippedCount} unchanged` : '') +
+        (rejectedCount ? `, rejected ${rejectedCount} matchup(s) as implausible` : '')
     );
   }
 }
