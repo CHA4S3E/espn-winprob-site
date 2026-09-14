@@ -422,7 +422,15 @@ function computeChartPoints(homeRows, awayRows) {
   const dayTicks = {};
   rawPoints.forEach((p, i) => { if (i % tickEvery === 0) dayTicks[p.x.toFixed(2)] = dayLabel(p.ts); });
 
-  return { points, dayTicks };
+  // The real data's x-range -- used to pin the x-axis min/max explicitly
+  // (see renderLineChartCard) instead of letting Chart.js auto-calculate a
+  // "nice" rounded range, which can leave a visible gap after the last real
+  // point on a matchup with fewer polls than others, making charts with
+  // different amounts of history look inconsistently sized next to each
+  // other even though they're all meant to fill the same width edge-to-edge.
+  const maxX = rawPoints.length ? rawPoints[rawPoints.length - 1].x : 0;
+
+  return { points, dayTicks, maxX };
 }
 
 function midY(segCtx) { return (segCtx.p0.parsed.y + segCtx.p1.parsed.y) / 2; }
@@ -526,7 +534,7 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length) return { card, entry: null };
 
-  const { points, dayTicks } = computeChartPoints(homeRows, awayRows);
+  const { points, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
   const state = { dayTicks };
   const canvas = card.querySelector('canvas');
 
@@ -596,6 +604,13 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
         },
         x: {
           type: 'linear',
+          // Explicit min/max instead of letting Chart.js auto-calculate a
+          // "nice" rounded range -- otherwise a matchup with fewer polls so
+          // far can end up with visible blank space after its last real
+          // point, making charts with different amounts of history look
+          // inconsistently sized rather than all filling their full width.
+          min: 0,
+          max: maxX,
           grid: { display: !compact, color: themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)') },
           ticks: compact ? { display: false } : {
             color: themeVar('#555', '#aaa'),
@@ -617,9 +632,10 @@ function updateLineChartCard(entry, rows, home, away, allDone) {
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length || !entry.chart) return;
 
-  const { points, dayTicks } = computeChartPoints(homeRows, awayRows);
+  const { points, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
   entry.chart.data.datasets[0].data = points;
   entry.chart._state.dayTicks = dayTicks;
+  entry.chart.options.scales.x.max = maxX; // keep the pinned axis in sync as new points arrive
   entry.chart.update('none');
 
   const badge = entry.chart.canvas.closest('.matchup-card, .postcard')?.querySelector(`.${entry.titleClass} span:last-child`);
