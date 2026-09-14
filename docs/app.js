@@ -300,13 +300,48 @@ function withCrossings(points) {
   return out;
 }
 
+// Finds the row in `sortedRows` (sorted ascending by ts) closest in time to
+// `targetTs`, via binary search. Needed because home/away snapshots don't
+// share identical timestamps -- each team dedupes independently, so a given
+// home row's nearest away row could be a few seconds or a few minutes away,
+// not the same array index.
+function nearestByTs(sortedRows, targetTs) {
+  if (!sortedRows.length) return undefined;
+  const targetTime = new Date(targetTs).getTime();
+  let lo = 0, hi = sortedRows.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (new Date(sortedRows[mid].ts).getTime() < targetTime) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0) {
+    const a = sortedRows[lo], b = sortedRows[lo - 1];
+    const da = Math.abs(new Date(a.ts).getTime() - targetTime);
+    const db = Math.abs(new Date(b.ts).getTime() - targetTime);
+    return db < da ? b : a;
+  }
+  return sortedRows[lo];
+}
+
 // Pure computation, shared by both the initial render and in-place
 // refreshes. x = point INDEX, not elapsed real time -- the same technique
 // stock charts use to avoid showing a giant blank gap every weekend: every
 // real data point gets equal visual spacing regardless of how much actual
-// time passed before it.
-function computeChartPoints(homeRows) {
-  const rawPoints = homeRows.map((r, i) => ({ x: i, y: r.win_prob, ts: r.ts }));
+// time passed before it. Each point also carries both teams' actual/expected
+// scores at that moment (nearest-matched by timestamp), for the tooltip.
+function computeChartPoints(homeRows, awayRows) {
+  const rawPoints = homeRows.map((r, i) => {
+    const awayRow = nearestByTs(awayRows, r.ts);
+    return {
+      x: i,
+      y: r.win_prob,
+      ts: r.ts,
+      homeActual: r.actual_score,
+      homeExpected: r.expected_score,
+      awayActual: awayRow?.actual_score,
+      awayExpected: awayRow?.expected_score,
+    };
+  });
   const points = withCrossings(rawPoints);
 
   const tickEvery = Math.max(Math.floor(rawPoints.length / 5), 1);
@@ -347,9 +382,10 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
   `;
 
   const homeRows = rows.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length) return { card, entry: null };
 
-  const { points, dayTicks } = computeChartPoints(homeRows);
+  const { points, dayTicks } = computeChartPoints(homeRows, awayRows);
   const state = { dayTicks };
   const canvas = card.querySelector('canvas');
 
@@ -388,6 +424,20 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
               const pct = above ? item.parsed.y : 100 - item.parsed.y;
               return `${team}: ${Math.round(pct)}%`;
             },
+            // Underlying model numbers at this point, for the curious --
+            // rounded to 1 decimal since the raw stored values are long
+            // floats (e.g. 148.73891118999998) that would make for an
+            // unreadably long tooltip line otherwise. Synthetic 50%-crossing
+            // points (see withCrossings) don't correspond to a real snapshot,
+            // so they have no underlying scores -- skip the extra lines then.
+            afterLabel: (item) => {
+              const p = item.raw;
+              if (p.homeActual === undefined || p.awayActual === undefined) return undefined;
+              return [
+                `${home.name}: ${p.homeActual.toFixed(1)} actual / ${p.homeExpected.toFixed(1)} proj`,
+                `${away.name}: ${p.awayActual.toFixed(1)} actual / ${p.awayExpected.toFixed(1)} proj`,
+              ];
+            },
           },
         },
       },
@@ -420,9 +470,10 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
 
 function updateLineChartCard(entry, rows, home, away, allDone) {
   const homeRows = rows.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length || !entry.chart) return;
 
-  const { points, dayTicks } = computeChartPoints(homeRows);
+  const { points, dayTicks } = computeChartPoints(homeRows, awayRows);
   entry.chart.data.datasets[0].data = points;
   entry.chart._state.dayTicks = dayTicks;
   entry.chart.update('none');
