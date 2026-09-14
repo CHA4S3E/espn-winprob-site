@@ -1312,7 +1312,78 @@ function setViewMode(mode) {
   }, FADE_MS);
 }
 
+// ============================== DEBUG OVERLAY ==============================
+// Visit the site with ?debug=1 appended to the URL to show a live-updating
+// panel of the exact measurements most likely to explain the "ESPN chart
+// shrinks a couple pixels on hover" issue: viewport/scrollbar width, the
+// canvas's own rendered size, Chart.js's internal chartArea boundaries, and
+// the surrounding container sizes. Watch which number actually changes the
+// moment you hover, rather than guessing at Chart.js internals blindly.
+// Completely inert (adds nothing to the page, costs nothing) without the
+// URL parameter, so it's safe to leave deployed.
+function setupDebugOverlay() {
+  if (!new URLSearchParams(location.search).has('debug')) return;
+
+  const panel = document.createElement('div');
+  panel.id = 'debugPanel';
+  panel.style.cssText =
+    'position:fixed; bottom:10px; right:10px; background:rgba(0,0,0,0.88); color:#7dffb0; ' +
+    'font-family:ui-monospace,monospace; font-size:11px; padding:10px 12px; border-radius:8px; ' +
+    'z-index:99999; max-width:380px; white-space:pre; line-height:1.5; pointer-events:none;';
+  document.body.appendChild(panel);
+
+  function logDebug() {
+    const lines = [];
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    lines.push(`viewport: ${window.innerWidth} x ${window.innerHeight}`);
+    lines.push(`docEl.clientWidth: ${document.documentElement.clientWidth}`);
+    lines.push(`scrollbar width (innerWidth - clientWidth): ${scrollbarWidth}`);
+    lines.push(`documentElement scrollHeight: ${document.documentElement.scrollHeight}`);
+    lines.push(`has vertical scroll: ${document.documentElement.scrollHeight > document.documentElement.clientHeight}`);
+    lines.push('');
+
+    const canvas = document.querySelector('.espn-card canvas');
+    if (!canvas) {
+      lines.push('(no ESPN chart on screen)');
+      panel.textContent = lines.join('\n');
+      return;
+    }
+
+    const canvasRect = canvas.getBoundingClientRect();
+    lines.push(`canvas rect: ${canvasRect.width.toFixed(2)} x ${canvasRect.height.toFixed(2)} @ left=${canvasRect.left.toFixed(2)}`);
+    lines.push(`canvas internal px (canvas.width/height): ${canvas.width} x ${canvas.height}`);
+
+    const box = canvas.closest('.espn-chartBox');
+    if (box) {
+      const r = box.getBoundingClientRect();
+      lines.push(`.espn-chartBox rect: ${r.width.toFixed(2)} x ${r.height.toFixed(2)} @ left=${r.left.toFixed(2)}`);
+    }
+    const card = canvas.closest('.espn-card');
+    if (card) {
+      const r = card.getBoundingClientRect();
+      lines.push(`.espn-card rect: ${r.width.toFixed(2)} @ left=${r.left.toFixed(2)} right=${r.right.toFixed(2)}`);
+    }
+
+    const chartInstance = typeof Chart !== 'undefined' && Chart.getChart ? Chart.getChart(canvas) : null;
+    if (chartInstance) {
+      const ca = chartInstance.chartArea;
+      lines.push(`chartArea: left=${ca.left.toFixed(2)} right=${ca.right.toFixed(2)} width=${(ca.right - ca.left).toFixed(2)}`);
+      lines.push(`chart.width/height (Chart.js's own): ${chartInstance.width} x ${chartInstance.height}`);
+    } else {
+      lines.push('(could not find Chart.js instance for this canvas)');
+    }
+
+    panel.textContent = lines.join('\n');
+  }
+
+  logDebug();
+  setInterval(logDebug, 300);
+  document.addEventListener('mousemove', logDebug, { passive: true });
+}
+
 async function init() {
+  setupDebugOverlay();
+
   if (themeToggle) {
     themeToggle.textContent = theme === 'dark' ? '\u2600\ufe0f Light' : '\ud83c\udf19 Dark';
     themeToggle.addEventListener('click', () => setTheme(theme === 'dark' ? 'light' : 'dark'));
