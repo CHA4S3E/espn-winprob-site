@@ -11,7 +11,7 @@ const themeToggle = document.getElementById('themeToggle');
 
 const charts = {}; // matchupId -> { mode, chart? , el?, needle? } depending on view
 let refreshTimer = null;
-let viewMode = localStorage.getItem('winProbViewMode') || 'timeline'; // 'timeline' | 'postcard' | 'needle'
+let viewMode = localStorage.getItem('winProbViewMode') || 'espn'; // 'timeline' | 'postcard' | 'needle' | 'espn'
 // Respects the OS's prefers-color-scheme on a first visit (no saved
 // preference yet) -- once someone manually toggles via themeToggle, that
 // explicit choice is saved and takes over from then on regardless of what
@@ -270,7 +270,7 @@ async function fetchMatchupData(leagueId, year, week) {
     fetchAllRows((from, to) =>
       sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').range(from, to)
     ),
-    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name)').eq('league_id', leagueId),
+    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji)').eq('league_id', leagueId),
   ]);
   if (teamErr) throw teamErr;
 
@@ -282,6 +282,7 @@ async function fetchMatchupData(leagueId, year, week) {
       name: settings.display_name || t.espn_team_name,
       color,
       wasAdjusted,
+      emoji: settings.emoji || '',
     };
   });
 
@@ -292,7 +293,7 @@ async function fetchMatchupData(leagueId, year, week) {
 
   const teamInfo = {};
   for (const e of rawEntries) {
-    teamInfo[e.id] = { name: e.name, color: deconflicted[e.id] };
+    teamInfo[e.id] = { name: e.name, color: deconflicted[e.id], emoji: e.emoji };
   }
 
   const byMatchup = {};
@@ -442,8 +443,8 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     // partial recap (some games still live) would be misleading.
     if (!homeLatest?.all_starters_done || !awayLatest?.all_starters_done) return null;
 
-    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#888' };
-    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#888' };
+    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#888', emoji: '' };
+    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#888', emoji: '' };
     const homeScore = homeLatest.actual_score;
     const awayScore = awayLatest.actual_score;
     const margin = Math.abs(homeScore - awayScore);
@@ -885,14 +886,158 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
 
 // ============================== SHARED LOADING ==============================
 
+// ============================== ESPN VIEW ==============================
+// Styled after ESPN's win-probability widget: a dotted line with a filled
+// area, each team's emoji/name/current percentage shown statically above
+// and below the chart (so nothing needs to be read via hover), and a
+// persistent vertical marker + dot pinned at the latest point instead of an
+// interactive tooltip.
+
+function renderEspnCard(rows, home, away, allDone) {
+  const homePct = latestPct(rows);
+  const card = document.createElement('div');
+  card.className = 'espn-card';
+  card.innerHTML = `
+    <div class="espn-row espn-row-top">
+      <span class="espn-emoji">${home.emoji || ''}</span>
+      <span class="espn-name" style="color:${home.color}">${home.name}</span>
+      <span class="espn-dash" style="background:${home.color}"></span>
+      <span class="espn-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
+    </div>
+    <div class="espn-chartBox"><canvas></canvas></div>
+    <div class="espn-row espn-row-bottom">
+      <span class="espn-emoji">${away.emoji || ''}</span>
+      <span class="espn-name" style="color:${away.color}">${away.name}</span>
+      <span class="espn-dash" style="background:${away.color}"></span>
+      <span class="espn-pct" style="color:${away.color}">${Math.round(100 - homePct)}%</span>
+    </div>
+  `;
+
+  const homeRows = rows.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (!homeRows.length) return { card, entry: null };
+
+  const { points, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  const state = { dayTicks };
+  const canvas = card.querySelector('canvas');
+  const latestPoint = points[points.length - 1];
+
+  const chart = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          data: points,
+          parsing: false,
+          borderWidth: 2,
+          borderDash: [3, 3],
+          pointRadius: 0,
+          tension: 0.15,
+          fill: { target: { value: 50 } },
+          segment: {
+            borderColor: (c) => (midY(c) >= 50 ? home.color : away.color),
+            backgroundColor: (c) => {
+              const above = midY(c) >= 50;
+              const rgb = above ? home.color : away.color;
+              const alpha = 0.04 + intensity(midY(c)) * 0.32;
+              return colorWithAlpha(rgb, alpha);
+            },
+          },
+        },
+        {
+          // Persistent vertical guide line at the latest point -- this is
+          // what replaces needing to hover: the "current" position is
+          // always visibly marked, not just revealed on interaction.
+          data: [{ x: latestPoint.x, y: 0 }, { x: latestPoint.x, y: 100 }],
+          parsing: false,
+          borderWidth: 1.5,
+          borderColor: themeVar('#222', '#ddd'),
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+        },
+        {
+          // The dot, drawn last so it sits on top of both the line and the
+          // vertical guide.
+          data: [latestPoint],
+          parsing: false,
+          showLine: false,
+          pointRadius: 7,
+          pointBackgroundColor: themeVar('#111', '#eee'),
+          pointBorderColor: themeVar('#fff', '#111'),
+          pointBorderWidth: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      // No hover/tooltip in this view -- the current values are always
+      // visible in the top/bottom rows instead.
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      events: [],
+      scales: {
+        y: {
+          min: 0, max: 100,
+          grid: {
+            color: (c) => (c.tick.value === 50 ? themeVar('#999', '#888') : themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)')),
+            lineWidth: (c) => (c.tick.value === 50 ? 1.5 : 1),
+          },
+          ticks: { callback: (v) => (v === 0 || v === 50 || v === 100 ? v : ''), color: themeVar('#555', '#aaa') },
+        },
+        x: {
+          type: 'linear',
+          min: 0,
+          max: maxX,
+          grid: { color: themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)') },
+          ticks: {
+            color: themeVar('#555', '#aaa'),
+            callback: (v) => state.dayTicks[Number(v).toFixed(2)] ?? '',
+            autoSkip: false,
+            maxRotation: 0,
+          },
+        },
+      },
+    },
+  });
+  chart._state = state;
+
+  return { card, entry: { mode: 'espn', chart } };
+}
+
+function updateEspnCard(entry, rows, home, away, allDone) {
+  const homeRows = rows.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (!homeRows.length || !entry.chart) return;
+
+  const { points, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  const latestPoint = points[points.length - 1];
+  const datasets = entry.chart.data.datasets;
+  datasets[0].data = points;
+  datasets[1].data = [{ x: latestPoint.x, y: 0 }, { x: latestPoint.x, y: 100 }];
+  datasets[2].data = [latestPoint];
+  entry.chart._state.dayTicks = dayTicks;
+  entry.chart.options.scales.x.max = maxX;
+  entry.chart.update('none');
+
+  const homePct = latestPct(rows);
+  const card = entry.chart.canvas.closest('.espn-card');
+  if (card) {
+    const pcts = card.querySelectorAll('.espn-pct');
+    if (pcts[0]) pcts[0].textContent = `${Math.round(homePct)}%`;
+    if (pcts[1]) pcts[1].textContent = `${Math.round(100 - homePct)}%`;
+  }
+}
+
 const VIEW_RENDERERS = {
   timeline: { render: renderTimelineCard, update: updateTimelineCard },
   postcard: { render: renderPostcardCard, update: updatePostcardCard },
   needle: { render: renderNeedleCard, update: updateNeedleCard },
+  espn: { render: renderEspnCard, update: updateEspnCard },
 };
 
 function destroyEntry(entry) {
-  if (entry?.mode === 'timeline' && entry.chart) entry.chart.destroy();
+  if (entry?.chart) entry.chart.destroy();
 }
 
 // preserveCharts=true (used by the 30s auto-refresh timer) updates existing
@@ -943,8 +1088,8 @@ async function loadMatchups({ preserveCharts = false } = {}) {
       const awayRow = rows.find((r) => !r.is_home);
       if (!homeRow || !awayRow) continue;
 
-      const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0' };
-      const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b' };
+      const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0', emoji: '' };
+      const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b', emoji: '' };
       const allDone = !!(latestRow(rows, true)?.all_starters_done && latestRow(rows, false)?.all_starters_done);
 
       const { card, entry } = render(rows, home, away, allDone);
@@ -967,8 +1112,8 @@ async function loadMatchups({ preserveCharts = false } = {}) {
       return loadMatchups({ preserveCharts: false }); // matchup set or mode changed -- fall back once
     }
 
-    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0' };
-    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b' };
+    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0', emoji: '' };
+    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b', emoji: '' };
     const allDone = !!(latestRow(rows, true)?.all_starters_done && latestRow(rows, false)?.all_starters_done);
     update(entry, rows, home, away, allDone);
   }
