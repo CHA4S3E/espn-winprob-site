@@ -4,7 +4,11 @@
 <meta charset="utf-8">
 <title>Display Settings — Fantasy Win Probability</title>
 <script>
-  document.documentElement.setAttribute('data-theme', localStorage.getItem('winProbTheme') || 'light');
+  document.documentElement.setAttribute(
+    'data-theme',
+    localStorage.getItem('winProbTheme') ||
+      (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+  );
 </script>
 <style>
   :root {
