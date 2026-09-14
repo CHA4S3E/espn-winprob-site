@@ -341,6 +341,54 @@ function nearestByTs(sortedRows, targetTs) {
   return sortedRows[lo];
 }
 
+// ============================== BIGGEST SWING BANNER ==============================
+// Finds, across every matchup CURRENTLY LOADED (i.e. whichever league/week
+// is selected -- switching leagues naturally shows that league's own
+// swing, never a mix of both), whichever team gained the most win
+// probability over the last SWING_WINDOW_MS. If a matchup has less history
+// than the window, it gracefully compares against its earliest available
+// point instead of hiding entirely.
+const SWING_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const MIN_SWING_TO_SHOW = 8; // percentage points -- below this, hide the banner rather than show noise
+
+function computeBiggestSwing(byMatchup, teamInfo) {
+  let best = null;
+  for (const rows of Object.values(byMatchup)) {
+    const homeRow = rows.find((r) => r.is_home);
+    const awayRow = rows.find((r) => !r.is_home);
+    if (!homeRow || !awayRow) continue;
+
+    const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+    if (homeRows.length < 2) continue;
+
+    const latest = homeRows[homeRows.length - 1];
+    const targetTs = new Date(new Date(latest.ts).getTime() - SWING_WINDOW_MS).toISOString();
+    const past = nearestByTs(homeRows, targetTs);
+    if (!past || past === latest) continue;
+
+    const delta = latest.win_prob - past.win_prob; // positive = home gained ground
+    if (!best || Math.abs(delta) > Math.abs(best.delta)) {
+      const home = teamInfo[homeRow.team_id] || { name: 'Home' };
+      const away = teamInfo[awayRow.team_id] || { name: 'Away' };
+      best = { delta, gainer: delta > 0 ? home : away };
+    }
+  }
+  return best;
+}
+
+function renderSwingBanner(byMatchup, teamInfo) {
+  const banner = document.getElementById('swingBanner');
+  if (!banner) return;
+  const swing = computeBiggestSwing(byMatchup, teamInfo);
+  if (!swing || Math.abs(swing.delta) < MIN_SWING_TO_SHOW) {
+    banner.hidden = true;
+    return;
+  }
+  const pts = Math.abs(swing.delta).toFixed(1);
+  banner.textContent = `\ud83d\udd25 Biggest swing right now: ${swing.gainer.name} +${pts} pts (last ~15 min)`;
+  banner.hidden = false;
+}
+
 // Pure computation, shared by both the initial render and in-place
 // refreshes. x = point INDEX, not elapsed real time -- the same technique
 // stock charts use to avoid showing a giant blank gap every weekend: every
@@ -740,6 +788,8 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     if (!preserveCharts) statusEl.textContent = 'Error loading data: ' + err.message;
     return; // don't wipe an existing view over a transient refresh error
   }
+
+  renderSwingBanner(byMatchup, teamInfo);
 
   const { render, update } = VIEW_RENDERERS[viewMode];
 
