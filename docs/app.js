@@ -906,9 +906,11 @@ function setEspnPctLabels(canvas, homePct) {
 
 function renderEspnCard(rows, home, away, allDone) {
   const homePct = latestPct(rows);
+  const isLive = !allDone && isRecentlyActive(rows);
   const card = document.createElement('div');
   card.className = 'espn-card';
   card.innerHTML = `
+    <div class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</div>
     <div class="espn-row espn-row-top">
       <span class="espn-emoji">${home.emoji || ''}</span>
       <span class="espn-name" style="color:${home.color}">${home.name}</span>
@@ -1076,6 +1078,12 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   const isHovering = chart.data.datasets[1].hidden === false;
   if (!isHovering) {
     setEspnPctLabels(chart.canvas, chart._state.currentHomePct);
+  }
+
+  const badge = chart.canvas.closest('.espn-card')?.querySelector('.postcard-status');
+  if (badge) {
+    badge.textContent = allDone ? 'Final' : '\u25CF Live';
+    badge.className = `postcard-status ${(!allDone && isRecentlyActive(rows)) ? 'live' : ''}`;
   }
 }
 
