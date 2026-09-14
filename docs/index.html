@@ -140,6 +140,16 @@
   .postcard-status { font-size: 11px; color: var(--muted); text-align: right; margin-bottom: 6px; }
   .postcard-status.live { color: var(--live); font-weight: 600; animation: liveGlow 1.8s ease-in-out infinite; }
 
+  /* ---- ESPN view (dotted line, persistent marker, static top/bottom rows) ---- */
+  #matchups.view-espn { display: flex; flex-direction: column; gap: 28px; }
+  .espn-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; background: var(--card-bg); }
+  .espn-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+  .espn-emoji { font-size: 20px; line-height: 1; min-width: 1.2em; text-align: center; }
+  .espn-name { font-size: 14px; font-weight: 700; }
+  .espn-dash { flex: 1; height: 3px; border-radius: 2px; opacity: 0.4; margin: 0 6px; }
+  .espn-pct { font-size: 22px; font-weight: 800; margin-left: auto; }
+  .espn-chartBox { position: relative; height: 220px; width: 100%; margin: 6px 0; }
+
   /* ---- Needle view (gauge grid) ---- */
   #matchups.view-needle {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px;
@@ -173,13 +183,14 @@
   </div>
 
   <div id="viewToggle">
+    <button class="view-btn" data-view="espn">ESPN</button>
     <button class="view-btn" data-view="timeline">Timeline</button>
     <button class="view-btn" data-view="postcard">Postcard</button>
     <button class="view-btn" data-view="needle">Needle</button>
   </div>
 
   <div id="status"></div>
-  <div id="matchups" class="view-timeline"></div>
+  <div id="matchups" class="view-espn"></div>
 
   <div id="settingsLinks">
     <a class="settings-link" href="settings.html">Team colors & names &rarr;</a>
@@ -188,6 +199,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
