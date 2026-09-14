@@ -896,12 +896,49 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
 // Sets the top/bottom percentage labels directly via the DOM (not through
 // Chart.js) -- used both for the normal "current value" display and for
 // showing the hovered point's value while the mouse is over the chart.
+// Animates a percentage label from its current displayed value to a new
+// one instead of snapping instantly. Cancels any animation already running
+// on that element first (tracked via a property on the element itself), so
+// rapid updates -- e.g. moving the mouse quickly across the chart -- always
+// smoothly retarget toward the latest value instead of fighting a
+// previous, still-running animation.
+function animateEspnPct(el, newValue) {
+  if (!el) return;
+  if (el._animFrame) cancelAnimationFrame(el._animFrame);
+
+  const startValue = el._animCurrent ?? (parseFloat(el.textContent) || newValue);
+  if (Math.abs(startValue - newValue) < 0.5) {
+    el.textContent = `${Math.round(newValue)}%`;
+    el._animCurrent = newValue;
+    return;
+  }
+
+  const duration = 350;
+  const start = performance.now();
+
+  function step(now) {
+    const t = Math.min((now - start) / duration, 1);
+    const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic -- fast start, gentle settle
+    const current = startValue + (newValue - startValue) * eased;
+    el.textContent = `${Math.round(current)}%`;
+    el._animCurrent = current;
+    if (t < 1) {
+      el._animFrame = requestAnimationFrame(step);
+    } else {
+      el.textContent = `${Math.round(newValue)}%`; // land exactly on the true value
+      el._animCurrent = newValue;
+      el._animFrame = null;
+    }
+  }
+  el._animFrame = requestAnimationFrame(step);
+}
+
 function setEspnPctLabels(canvas, homePct) {
   const card = canvas.closest('.espn-card');
   if (!card) return;
   const pcts = card.querySelectorAll('.espn-pct');
-  if (pcts[0]) pcts[0].textContent = `${Math.round(homePct)}%`;
-  if (pcts[1]) pcts[1].textContent = `${Math.round(100 - homePct)}%`;
+  animateEspnPct(pcts[0], homePct);
+  animateEspnPct(pcts[1], 100 - homePct);
 }
 
 function renderEspnCard(rows, home, away, allDone) {
@@ -1173,7 +1210,12 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
   if (!preserveCharts || Object.keys(charts).length === 0) {
     matchupsEl.innerHTML = '';
-    matchupsEl.className = `view-${viewMode}`;
+    // Only touch the view-mode class specifically -- a full className
+    // overwrite here would also wipe out the .view-fading class that
+    // setViewMode adds during a transition, breaking the fade-in half of
+    // the cross-fade before it ever gets a chance to play.
+    matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn');
+    matchupsEl.classList.add(`view-${viewMode}`);
     Object.values(charts).forEach(destroyEntry);
     for (const key of Object.keys(charts)) delete charts[key];
 
@@ -1217,10 +1259,24 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
 function setViewMode(mode) {
   if (mode === viewMode) return;
-  viewMode = mode;
-  localStorage.setItem('winProbViewMode', mode);
   viewButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.view === mode));
-  loadMatchups({ preserveCharts: false });
+
+  // Cross-fade instead of an instant hard cut: fade the current cards out,
+  // swap the DOM once fully transparent (invisible either way, so the swap
+  // itself is never seen), then fade the new view's cards back in.
+  const FADE_MS = 180;
+  matchupsEl.classList.add('view-fading');
+  setTimeout(async () => {
+    viewMode = mode;
+    localStorage.setItem('winProbViewMode', mode);
+    await loadMatchups({ preserveCharts: false });
+    // Force a reflow before removing the class -- otherwise the browser can
+    // coalesce the "add" and "remove" into a single frame and skip the
+    // fade-in transition entirely, since nothing would have visibly
+    // changed in between from its perspective.
+    void matchupsEl.offsetWidth;
+    matchupsEl.classList.remove('view-fading');
+  }, FADE_MS);
 }
 
 async function init() {
