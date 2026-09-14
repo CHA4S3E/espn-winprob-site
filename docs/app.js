@@ -12,7 +12,14 @@ const themeToggle = document.getElementById('themeToggle');
 const charts = {}; // matchupId -> { mode, chart? , el?, needle? } depending on view
 let refreshTimer = null;
 let viewMode = localStorage.getItem('winProbViewMode') || 'timeline'; // 'timeline' | 'postcard' | 'needle'
-let theme = localStorage.getItem('winProbTheme') || 'light'; // 'light' | 'dark'
+// Respects the OS's prefers-color-scheme on a first visit (no saved
+// preference yet) -- once someone manually toggles via themeToggle, that
+// explicit choice is saved and takes over from then on regardless of what
+// the system setting does.
+function systemPrefersDark() {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+let theme = localStorage.getItem('winProbTheme') || (systemPrefersDark() ? 'dark' : 'light'); // 'light' | 'dark'
 let tooltipDetail = localStorage.getItem('winProbTooltipDetail') || 'condensed'; // 'condensed' | 'full' -- set on preferences.html
 document.documentElement.setAttribute('data-theme', theme);
 
@@ -394,6 +401,101 @@ function renderSwingBanner(byMatchup, teamInfo) {
   }
   const pts = Math.abs(swing.delta).toFixed(1);
   banner.textContent = `\ud83d\udd25 Biggest swing right now: ${swing.gainer.name} +${pts} pts (last ~15 min)`;
+  banner.hidden = false;
+}
+
+// ============================== WEEKLY RECAP ==============================
+// Shows once every matchup in the current week is Final -- final scores,
+// the week's single biggest swing (using the same 15-min-window logic as
+// the live swing banner, just scanned across the whole week's history
+// rather than only the latest point), and the closest game by final margin.
+
+function biggestSwingInHistory(homeRows) {
+  let best = null;
+  for (const row of homeRows) {
+    const targetTs = new Date(new Date(row.ts).getTime() - SWING_WINDOW_MS).toISOString();
+    const past = nearestByTs(homeRows, targetTs);
+    if (!past || past === row) continue;
+    const delta = row.win_prob - past.win_prob;
+    if (!best || Math.abs(delta) > Math.abs(best.delta)) best = { delta };
+  }
+  return best;
+}
+
+function computeWeeklyRecap(byMatchup, teamInfo) {
+  const matchupIds = Object.keys(byMatchup);
+  if (!matchupIds.length) return null;
+
+  const summaries = [];
+  let biggestSwing = null;
+  let closestGame = null;
+
+  for (const matchupId of matchupIds) {
+    const rows = byMatchup[matchupId];
+    const homeRow = rows.find((r) => r.is_home);
+    const awayRow = rows.find((r) => !r.is_home);
+    if (!homeRow || !awayRow) return null;
+
+    const homeLatest = latestRow(rows, true);
+    const awayLatest = latestRow(rows, false);
+    // Every matchup must be genuinely Final before showing anything -- a
+    // partial recap (some games still live) would be misleading.
+    if (!homeLatest?.all_starters_done || !awayLatest?.all_starters_done) return null;
+
+    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#888' };
+    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#888' };
+    const homeScore = homeLatest.actual_score;
+    const awayScore = awayLatest.actual_score;
+    const margin = Math.abs(homeScore - awayScore);
+    const winner = homeScore >= awayScore ? home : away;
+    const loser = winner === home ? away : home;
+
+    summaries.push({ winner, loser, winnerScore: Math.max(homeScore, awayScore), loserScore: Math.min(homeScore, awayScore), margin });
+
+    if (!closestGame || margin < closestGame.margin) {
+      closestGame = { winner, loser, margin };
+    }
+
+    const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+    const swing = biggestSwingInHistory(homeRows);
+    if (swing && (!biggestSwing || Math.abs(swing.delta) > Math.abs(biggestSwing.delta))) {
+      biggestSwing = { delta: swing.delta, gainer: swing.delta > 0 ? home : away };
+    }
+  }
+
+  return { summaries, biggestSwing, closestGame };
+}
+
+function renderRecapBanner(byMatchup, teamInfo) {
+  const banner = document.getElementById('recapBanner');
+  if (!banner) return;
+  const recap = computeWeeklyRecap(byMatchup, teamInfo);
+  if (!recap) {
+    banner.hidden = true;
+    return;
+  }
+
+  const scoreLines = recap.summaries
+    .map(
+      (s) =>
+        `<div class="recap-score-line"><b style="color:${s.winner.color}">${s.winner.name}</b> def. ${s.loser.name} ` +
+        `<span class="recap-margin">${s.winnerScore.toFixed(1)} - ${s.loserScore.toFixed(1)}</span></div>`
+    )
+    .join('');
+
+  const swingLine = recap.biggestSwing
+    ? `<div class="recap-highlight">\ud83d\udd25 Biggest swing: <b style="color:${recap.biggestSwing.gainer.color}">${recap.biggestSwing.gainer.name}</b> +${Math.abs(recap.biggestSwing.delta).toFixed(1)} pts in a single stretch</div>`
+    : '';
+  const closestLine = recap.closestGame
+    ? `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.winner.name}</b> over ${recap.closestGame.loser.name} by ${recap.closestGame.margin.toFixed(1)}</div>`
+    : '';
+
+  banner.innerHTML = `
+    <div class="recap-title">Week Recap</div>
+    <div class="recap-scores">${scoreLines}</div>
+    ${swingLine}
+    ${closestLine}
+  `;
   banner.hidden = false;
 }
 
@@ -814,6 +916,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   }
 
   renderSwingBanner(byMatchup, teamInfo);
+  renderRecapBanner(byMatchup, teamInfo);
 
   const { render, update } = VIEW_RENDERERS[viewMode];
 
