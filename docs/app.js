@@ -992,6 +992,11 @@ function renderEspnCard(rows, home, away, allDone) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      // Debounces Chart.js's own container-resize detection -- a second
+      // layer of protection against jitter alongside the mousemove
+      // throttling above, in case anything else nearby ever triggers a
+      // rapid string of resize checks during hover.
+      resizeDelay: 100,
       // Chart.js's own tooltip/hover system is turned off entirely --
       // hovering is handled manually below via native mouse events on the
       // canvas, which gives full control over exactly what shows (the
@@ -1031,6 +1036,16 @@ function renderEspnCard(rows, home, away, allDone) {
   // percentages in the top/bottom labels. Reads datasets[0].data fresh each
   // time (not a closed-over `points` variable) so this keeps working
   // correctly after a background refresh replaces the chart's data.
+  //
+  // Only calls chart.update() when the hovered point actually CHANGES,
+  // rather than on every mousemove event (which fires dozens of times per
+  // second even for tiny mouse movements within the same nearest-point
+  // region). Each call to update() gives Chart.js's responsive-resize
+  // logic a chance to re-measure the container, and enough redundant calls
+  // in quick succession was producing a visible pixel-level jitter in the
+  // canvas -- this removes almost all of those redundant calls at the
+  // source rather than trying to patch around Chart.js's resize behavior.
+  let lastHoverX = null;
   canvas.addEventListener('mousemove', (evt) => {
     const rect = canvas.getBoundingClientRect();
     const mouseX = evt.clientX - rect.left;
@@ -1046,6 +1061,9 @@ function renderEspnCard(rows, home, away, allDone) {
       if (d < minDist) { minDist = d; nearest = p; }
     }
 
+    if (nearest.x === lastHoverX) return; // same point as last event -- nothing to redraw
+    lastHoverX = nearest.x;
+
     chart.data.datasets[1].data = [{ x: nearest.x, y: 0 }, { x: nearest.x, y: 100 }];
     chart.data.datasets[1].hidden = false;
     chart.data.datasets[2].data = [nearest];
@@ -1055,6 +1073,7 @@ function renderEspnCard(rows, home, away, allDone) {
   });
 
   canvas.addEventListener('mouseleave', () => {
+    lastHoverX = null;
     chart.data.datasets[1].hidden = true;
     chart.data.datasets[2].hidden = true;
     chart.update('none');
