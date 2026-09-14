@@ -768,7 +768,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
       const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0' };
       const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b' };
-      const allDone = rows.every((r) => r.all_starters_done);
+      const allDone = !!(latestRow(rows, true)?.all_starters_done && latestRow(rows, false)?.all_starters_done);
 
       const { card, entry } = render(rows, home, away, allDone);
       matchupsEl.appendChild(card);
@@ -792,7 +792,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
     const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0' };
     const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b' };
-    const allDone = rows.every((r) => r.all_starters_done);
+    const allDone = !!(latestRow(rows, true)?.all_starters_done && latestRow(rows, false)?.all_starters_done);
     update(entry, rows, home, away, allDone);
   }
 }
