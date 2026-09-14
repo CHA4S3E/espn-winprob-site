@@ -914,9 +914,11 @@ function renderEspnCard(rows, home, away, allDone) {
     <div class="espn-row espn-row-top">
       <span class="espn-emoji">${home.emoji || ''}</span>
       <span class="espn-name" style="color:${home.color}">${home.name}</span>
+      <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
       <span class="espn-dash" style="background:${home.color}"></span>
       <span class="espn-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
     </div>
+    <div class="why-blurb" hidden>${explainMatchup(rows, home, away, allDone)}</div>
     <div class="espn-chartBox"><canvas></canvas></div>
     <div class="espn-row espn-row-bottom">
       <span class="espn-emoji">${away.emoji || ''}</span>
@@ -925,6 +927,7 @@ function renderEspnCard(rows, home, away, allDone) {
       <span class="espn-pct" style="color:${away.color}">${Math.round(100 - homePct)}%</span>
     </div>
   `;
+  wireWhyButton(card);
 
   const homeRows = rows.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
@@ -1085,6 +1088,9 @@ function updateEspnCard(entry, rows, home, away, allDone) {
     badge.textContent = allDone ? 'Final' : '\u25CF Live';
     badge.className = `postcard-status ${(!allDone && isRecentlyActive(rows)) ? 'live' : ''}`;
   }
+
+  const blurb = chart.canvas.closest('.espn-card')?.querySelector('.why-blurb');
+  if (blurb) blurb.textContent = explainMatchup(rows, home, away, allDone);
 }
 
 const VIEW_RENDERERS = {
