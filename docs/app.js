@@ -1077,7 +1077,19 @@ function renderEspnCard(rows, home, away, allDone) {
       // until the chart is recreated" symptom. Locking padding to a fixed
       // value up front means it can never depend on which datasets happen
       // to be visible at any given moment.
-      layout: { padding: { top: 10, right: 4, bottom: 0, left: 4 } },
+      // Confirmed via the debug overlay: chartArea.right shrinks by
+      // exactly 5px the first time the hover dot renders (left never
+      // moves), while the canvas/container's actual pixel size never
+      // changes at all -- this is Chart.js reserving extra right-side
+      // padding to avoid clipping the dot's point radius, a SEPARATE
+      // mechanism from the `clip` dataset option (which only controls
+      // visual clipping at draw time, not whether this padding gets
+      // reserved in the first place). Setting a fixed right padding
+      // comfortably larger than that ~5px means Chart.js's own
+      // calculation is always smaller than this value and never gets to
+      // add anything on top of it -- the chart area becomes genuinely
+      // constant regardless of hover state.
+      layout: { padding: { top: 10, right: 16, bottom: 0, left: 4 } },
       // Chart.js's own tooltip/hover system is turned off entirely --
       // hovering is handled manually below via native mouse events on the
       // canvas, which gives full control over exactly what shows (the
