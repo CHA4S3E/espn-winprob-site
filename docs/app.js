@@ -933,12 +933,30 @@ function animateEspnPct(el, newValue) {
   el._animFrame = requestAnimationFrame(step);
 }
 
-function setEspnPctLabels(canvas, homePct) {
+function setEspnPctInstant(el, value) {
+  if (!el) return;
+  if (el._animFrame) cancelAnimationFrame(el._animFrame);
+  el._animFrame = null;
+  el.textContent = `${Math.round(value)}%`;
+  el._animCurrent = value;
+}
+
+// animate=true (the default) is for real live data arriving -- the 30s
+// background refresh -- where a count-up reads as "something happened."
+// animate=false is for hover: while scrubbing across history, the number
+// should match the mouse position immediately, not lag behind an
+// animation, since it's you moving, not new data arriving.
+function setEspnPctLabels(canvas, homePct, { animate = true } = {}) {
   const card = canvas.closest('.espn-card');
   if (!card) return;
   const pcts = card.querySelectorAll('.espn-pct');
-  animateEspnPct(pcts[0], homePct);
-  animateEspnPct(pcts[1], 100 - homePct);
+  if (animate) {
+    animateEspnPct(pcts[0], homePct);
+    animateEspnPct(pcts[1], 100 - homePct);
+  } else {
+    setEspnPctInstant(pcts[0], homePct);
+    setEspnPctInstant(pcts[1], 100 - homePct);
+  }
 }
 
 function renderEspnCard(rows, home, away, allDone) {
@@ -1117,7 +1135,7 @@ function renderEspnCard(rows, home, away, allDone) {
     chart.data.datasets[2].data = [nearest];
     chart.data.datasets[2].hidden = false;
     chart.update('none');
-    setEspnPctLabels(canvas, nearest.y);
+    setEspnPctLabels(canvas, nearest.y, { animate: false });
   });
 
   canvas.addEventListener('mouseleave', () => {
@@ -1125,7 +1143,7 @@ function renderEspnCard(rows, home, away, allDone) {
     chart.data.datasets[1].hidden = true;
     chart.data.datasets[2].hidden = true;
     chart.update('none');
-    setEspnPctLabels(canvas, chart._state.currentHomePct);
+    setEspnPctLabels(canvas, chart._state.currentHomePct, { animate: false });
   });
 
   return { card, entry: { mode: 'espn', chart } };
