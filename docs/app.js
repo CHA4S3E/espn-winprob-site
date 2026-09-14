@@ -912,6 +912,7 @@ function renderEspnCard(rows, home, away, allDone) {
   card.innerHTML = `
     <div class="espn-header">
       <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
+      <div class="why-blurb" hidden>${explainMatchup(rows, home, away, allDone)}</div>
       <span class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</span>
     </div>
     <div class="espn-row espn-row-top">
@@ -920,7 +921,6 @@ function renderEspnCard(rows, home, away, allDone) {
       <span class="espn-dash" style="background:${home.color}"></span>
       <span class="espn-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
     </div>
-    <div class="why-blurb" hidden>${explainMatchup(rows, home, away, allDone)}</div>
     <div class="espn-chartBox"><canvas></canvas></div>
     <div class="espn-row espn-row-bottom">
       <span class="espn-emoji">${away.emoji || ''}</span>
