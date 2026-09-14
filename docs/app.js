@@ -997,6 +997,17 @@ function renderEspnCard(rows, home, away, allDone) {
       // throttling above, in case anything else nearby ever triggers a
       // rapid string of resize checks during hover.
       resizeDelay: 100,
+      // Fixed, explicit padding -- without this, Chart.js auto-calculates
+      // padding based on what's actually rendered, to keep points near the
+      // plot edges (like the hover dot, which has real pixel radius) from
+      // being clipped. The FIRST time that dot dataset renders with real
+      // data, Chart.js recalculates that padding once and keeps it from
+      // then on, even after the dataset goes back to hidden -- which is
+      // exactly the "shrinks once on first hover, then stays that way
+      // until the chart is recreated" symptom. Locking padding to a fixed
+      // value up front means it can never depend on which datasets happen
+      // to be visible at any given moment.
+      layout: { padding: { top: 10, right: 4, bottom: 0, left: 4 } },
       // Chart.js's own tooltip/hover system is turned off entirely --
       // hovering is handled manually below via native mouse events on the
       // canvas, which gives full control over exactly what shows (the
