@@ -76,17 +76,79 @@ function hslToRgb(h, s, l) {
 // rather than an invented tint.
 const MIN_LIGHTNESS = 0.20;
 const TARGET_LIGHTNESS = 0.50;
-function themedColor(hex) {
-  if (theme !== 'dark') return hex;
+
+function isTooCloseToBlack(hex) {
   try {
     const { r, g, b } = hexToRgb(hex);
-    const { h, s, l } = rgbToHsl(r, g, b);
-    if (l >= MIN_LIGHTNESS) return hex;
-    const { r: nr, g: ng, b: nb } = hslToRgb(h, s, TARGET_LIGHTNESS);
-    return rgbToHex(nr, ng, nb);
+    return rgbToHsl(r, g, b).l < MIN_LIGHTNESS;
   } catch {
-    return hex; // malformed color -- don't crash the page over it
+    return false;
   }
+}
+
+// Returns { color, wasAdjusted }. wasAdjusted matters for deconflictColors()
+// below -- only colors we ourselves modified are allowed to move further to
+// resolve a collision; a color the user picked that was already fine is
+// never touched, even if it happens to collide with a color we boosted.
+function themedColor(hex) {
+  if (theme !== 'dark' || !isTooCloseToBlack(hex)) return { color: hex, wasAdjusted: false };
+  try {
+    const { r, g, b } = hexToRgb(hex);
+    const { h, s } = rgbToHsl(r, g, b);
+    const { r: nr, g: ng, b: nb } = hslToRgb(h, s, TARGET_LIGHTNESS);
+    return { color: rgbToHex(nr, ng, nb), wasAdjusted: true };
+  } catch {
+    return { color: hex, wasAdjusted: false }; // malformed color -- don't crash the page over it
+  }
+}
+
+// 'redmean' -- a cheap, well-known approximation of perceptual color
+// distance. Good enough to detect "these look basically the same," without
+// needing full Lab-space color math.
+function colorDistance(hex1, hex2) {
+  const c1 = hexToRgb(hex1), c2 = hexToRgb(hex2);
+  const rBar = (c1.r + c2.r) / 2;
+  const dr = c1.r - c2.r, dg = c1.g - c2.g, db = c1.b - c2.b;
+  return Math.sqrt((2 + rBar / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rBar) / 256) * db * db);
+}
+
+function rotateHue(hex, degrees) {
+  const { r, g, b } = hexToRgb(hex);
+  let { h, s, l } = rgbToHsl(r, g, b);
+  h = (((h * 360 + degrees) % 360) + 360) % 360 / 360;
+  const { r: nr, g: ng, b: nb } = hslToRgb(h, s, l);
+  return rgbToHex(nr, ng, nb);
+}
+
+// Boosting every too-dark color to the SAME target lightness (above) can
+// occasionally make two originally-distinguishable colors (different only by
+// darkness) converge on a near-identical hue+lightness once flattened --
+// e.g. a dark forest green and a bright lime green can end up looking almost
+// the same once the dark one is lightened, even though they looked nothing
+// alike before. This checks every pair of team colors actually being shown
+// together and, if any are too close, rotates the hue of whichever one WE
+// already modified (never a color the user picked that was already fine)
+// until it clears a safe distance from everything else.
+const MIN_COLOR_DISTANCE = 150;
+const HUE_NUDGE_STEP = 40;
+const MAX_NUDGE_ATTEMPTS = 8;
+
+function deconflictColors(entries) {
+  // entries: [{ id, color, wasAdjusted }]
+  const finalized = entries.filter((e) => !e.wasAdjusted).map((e) => e.color); // anchors, never moved
+  const out = {};
+  for (const e of entries) {
+    if (!e.wasAdjusted) { out[e.id] = e.color; continue; }
+    let color = e.color;
+    let attempts = 0;
+    while (attempts < MAX_NUDGE_ATTEMPTS && finalized.some((c) => colorDistance(c, color) < MIN_COLOR_DISTANCE)) {
+      color = rotateHue(color, HUE_NUDGE_STEP);
+      attempts++;
+    }
+    out[e.id] = color;
+    finalized.push(color);
+  }
+  return out;
 }
 
 // Small helper for values (chart grid/tick colors) that just need to flip
@@ -187,13 +249,25 @@ async function fetchMatchupData(leagueId, year, week) {
   ]);
   if (teamErr) throw teamErr;
 
-  const teamInfo = {};
-  for (const t of teams || []) {
+  const rawEntries = (teams || []).map((t) => {
     const settings = t.team_settings || {};
-    teamInfo[t.id] = {
+    const { color, wasAdjusted } = themedColor(settings.color || '#1a3fa0');
+    return {
+      id: t.id,
       name: settings.display_name || t.espn_team_name,
-      color: themedColor(settings.color || '#1a3fa0'),
+      color,
+      wasAdjusted,
     };
+  });
+
+  // Deconflict across the WHOLE league's teams at once, not just within one
+  // matchup -- Postcard/Needle views show every matchup on screen together,
+  // so a collision can happen between teams in completely different games.
+  const deconflicted = deconflictColors(rawEntries);
+
+  const teamInfo = {};
+  for (const e of rawEntries) {
+    teamInfo[e.id] = { name: e.name, color: deconflicted[e.id] };
   }
 
   const byMatchup = {};
