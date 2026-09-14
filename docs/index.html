@@ -16,6 +16,19 @@
   );
 </script>
 <style>
+  /* Always reserve space for the vertical scrollbar, whether or not it's
+     currently needed. Without this, any small content-height change (even
+     one unrelated to charts, like a hover-triggered percentage text width
+     change causing a reflow) can cross the threshold for needing a
+     scrollbar, which then eats ~15-17px from the right edge of the
+     viewport. Since this page's layout uses a fixed left offset (body
+     padding) rather than a centered container, that width change only
+     ever shows up on the right side -- exactly the "left edge stays put,
+     right edge shrinks" symptom. Reserving the space permanently means it
+     can never appear/disappear and shift anything.
+  */
+  html { scrollbar-gutter: stable; overflow-y: scroll; }
+
   :root {
     --bg: #ffffff;
     --fg: #222222;
