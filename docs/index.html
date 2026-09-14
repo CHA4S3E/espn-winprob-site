@@ -37,29 +37,20 @@
   .matchup-title .live { color: #c0392b; font-weight: 600; }
   .chartBox { position: relative; height: 300px; width: 100%; }
 
-  /* ---- Shared status pill (postcard + needle) ---- */
-  .postcard-status { font-size: 11px; color: #999; text-align: right; margin-bottom: 6px; }
-  .postcard-status.live { color: #c0392b; font-weight: 600; }
-
-  /* ---- Postcard view (compact grid) ---- */
+  /* ---- Postcard view (compact grid of the same line charts) ---- */
   #matchups.view-postcard {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;
   }
   .postcard {
-    border: 1px solid #eee; border-radius: 12px; padding: 14px 16px; background: #fff;
+    border: 1px solid #eee; border-radius: 10px; padding: 10px 12px; background: #fff;
   }
-  .postcard-team { display: flex; justify-content: space-between; align-items: baseline; margin: 4px 0; }
-  .postcard-name { font-size: 13px; font-weight: 600; }
-  .postcard-pct { font-size: 15px; font-weight: 700; }
-  .postcard-bar {
-    position: relative; height: 8px; border-radius: 4px; background: #eee; margin: 8px 0; overflow: hidden;
-  }
-  .postcard-bar-mid {
-    position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #ccc; z-index: 2;
-  }
-  .postcard-bar-fill {
-    position: absolute; top: 0; bottom: 0; border-radius: 4px; transition: width 0.3s, left 0.3s;
-  }
+  .postcard-title { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+  .postcard-title .live { color: #c0392b; font-weight: 600; }
+  .postcard-chartBox { position: relative; height: 140px; width: 100%; }
+
+  /* ---- Shared status pill (needle view) ---- */
+  .postcard-status { font-size: 11px; color: #999; text-align: right; margin-bottom: 6px; }
+  .postcard-status.live { color: #c0392b; font-weight: 600; }
 
   /* ---- Needle view (gauge grid) ---- */
   #matchups.view-needle {
