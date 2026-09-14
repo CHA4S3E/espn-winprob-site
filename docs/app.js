@@ -152,15 +152,32 @@ function computeChartPoints(homeRows) {
 
 function midY(segCtx) { return (segCtx.p0.parsed.y + segCtx.p1.parsed.y) / 2; }
 
-function renderTimelineCard(rows, home, away, allDone) {
+function latestPct(rows) {
+  const homeRow = rows.filter((r) => r.is_home).sort((a, b) => new Date(b.ts) - new Date(a.ts))[0];
+  return homeRow ? homeRow.win_prob : 50;
+}
+
+// ============================== TIMELINE + POSTCARD VIEWS ==============================
+// Both render the exact same win-probability line chart -- Postcard is just
+// the compact, gridded version. Kept as one shared implementation so they
+// can never visually drift out of sync with each other.
+
+// Shared by both Timeline (full size) and Postcard (compact grid) --
+// they're the exact same win-probability line chart, just sized and
+// labeled differently. `compact` hides axis ticks/labels to keep the grid
+// tile clean, but keeps the 50% reference line since that's meaningful
+// (marks the crossing point), not just decoration.
+function renderLineChartCard(rows, home, away, allDone, compact) {
   const card = document.createElement('div');
-  card.className = 'matchup-card';
+  card.className = compact ? 'postcard' : 'matchup-card';
+  const titleClass = compact ? 'postcard-title' : 'matchup-title';
+  const chartBoxClass = compact ? 'postcard-chartBox' : 'chartBox';
   card.innerHTML = `
-    <div class="matchup-title">
+    <div class="${titleClass}">
       <span><b style="color:${home.color}">${home.name}</b> vs <b style="color:${away.color}">${away.name}</b></span>
       <span class="${allDone ? '' : 'live'}">${allDone ? 'Final' : '\u25CF Live'}</span>
     </div>
-    <div class="chartBox"><canvas></canvas></div>
+    <div class="${chartBoxClass}"><canvas></canvas></div>
   `;
 
   const homeRows = rows.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
@@ -176,7 +193,7 @@ function renderTimelineCard(rows, home, away, allDone) {
       datasets: [{
         data: points,
         parsing: false,
-        borderWidth: 2,
+        borderWidth: compact ? 1.5 : 2,
         pointRadius: 0,
         tension: 0.15,
         fill: { target: { value: 50 } },
@@ -212,12 +229,12 @@ function renderTimelineCard(rows, home, away, allDone) {
         y: {
           min: 0, max: 100,
           grid: { color: (c) => (c.tick.value === 50 ? '#999' : 'rgba(0,0,0,0.06)'), lineWidth: (c) => (c.tick.value === 50 ? 1.5 : 1) },
-          ticks: { callback: (v) => (v === 0 || v === 50 || v === 100 ? v : ''), color: '#555' },
+          ticks: compact ? { display: false } : { callback: (v) => (v === 0 || v === 50 || v === 100 ? v : ''), color: '#555' },
         },
         x: {
           type: 'linear',
-          grid: { color: 'rgba(0,0,0,0.06)' },
-          ticks: {
+          grid: { display: !compact, color: 'rgba(0,0,0,0.06)' },
+          ticks: compact ? { display: false } : {
             color: '#555',
             callback: (v) => state.dayTicks[Number(v).toFixed(2)] ?? '',
             autoSkip: false,
@@ -229,10 +246,10 @@ function renderTimelineCard(rows, home, away, allDone) {
   });
   chart._state = state;
 
-  return { card, entry: { mode: 'timeline', chart } };
+  return { card, entry: { mode: compact ? 'postcard' : 'timeline', chart, titleClass } };
 }
 
-function updateTimelineCard(entry, rows, home, away, allDone) {
+function updateLineChartCard(entry, rows, home, away, allDone) {
   const homeRows = rows.filter((s) => s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length || !entry.chart) return;
 
@@ -241,63 +258,25 @@ function updateTimelineCard(entry, rows, home, away, allDone) {
   entry.chart._state.dayTicks = dayTicks;
   entry.chart.update('none');
 
-  const badge = entry.chart.canvas.closest('.matchup-card')?.querySelector('.matchup-title span:last-child');
+  const badge = entry.chart.canvas.closest('.matchup-card, .postcard')?.querySelector(`.${entry.titleClass} span:last-child`);
   if (badge) {
     badge.textContent = allDone ? 'Final' : '\u25CF Live';
     badge.className = allDone ? '' : 'live';
   }
 }
 
-// ============================== POSTCARD VIEW ==============================
-// A compact grid tile per matchup: names, current split, a simple two-color
-// bar instead of a full history chart. For a quick at-a-glance overview of
-// every game at once rather than reading one big line chart at a time.
-
-function latestPct(rows) {
-  const homeRow = rows.filter((r) => r.is_home).sort((a, b) => new Date(b.ts) - new Date(a.ts))[0];
-  return homeRow ? homeRow.win_prob : 50;
+function renderTimelineCard(rows, home, away, allDone) {
+  return renderLineChartCard(rows, home, away, allDone, false);
 }
-
-function renderPostcardBar(barFill, homePct, home, away) {
-  const homeSide = homePct >= 50;
-  barFill.style.background = homeSide ? home.color : away.color;
-  barFill.style.width = `${homeSide ? homePct : 100 - homePct}%`;
-  barFill.style.left = homeSide ? '50%' : `${homePct}%`;
-}
-
 function renderPostcardCard(rows, home, away, allDone) {
-  const homePct = latestPct(rows);
-  const card = document.createElement('div');
-  card.className = 'postcard';
-  card.innerHTML = `
-    <div class="postcard-status ${allDone ? '' : 'live'}">${allDone ? 'Final' : '\u25CF Live'}</div>
-    <div class="postcard-team">
-      <span class="postcard-name" style="color:${home.color}">${home.name}</span>
-      <span class="postcard-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
-    </div>
-    <div class="postcard-bar"><div class="postcard-bar-mid"></div><div class="postcard-bar-fill"></div></div>
-    <div class="postcard-team">
-      <span class="postcard-name" style="color:${away.color}">${away.name}</span>
-      <span class="postcard-pct" style="color:${away.color}">${Math.round(100 - homePct)}%</span>
-    </div>
-  `;
-  renderPostcardBar(card.querySelector('.postcard-bar-fill'), homePct, home, away);
-  return { card, entry: { mode: 'postcard', el: card } };
+  return renderLineChartCard(rows, home, away, allDone, true);
 }
-
-function updatePostcardCard(entry, rows, home, away, allDone) {
-  const homePct = latestPct(rows);
-  const card = entry.el;
-  card.querySelector('.postcard-status').textContent = allDone ? 'Final' : '\u25CF Live';
-  card.querySelector('.postcard-status').className = `postcard-status ${allDone ? '' : 'live'}`;
-  const pctEls = card.querySelectorAll('.postcard-pct');
-  pctEls[0].textContent = `${Math.round(homePct)}%`;
-  pctEls[1].textContent = `${Math.round(100 - homePct)}%`;
-  renderPostcardBar(card.querySelector('.postcard-bar-fill'), homePct, home, away);
-}
+const updateTimelineCard = updateLineChartCard;
+const updatePostcardCard = updateLineChartCard;
 
 // ============================== NEEDLE VIEW ==============================
 // A semicircle gauge, styled after election-night "needle" charts: bands
+
 // from VERY LIKELY through TOSSUP, with a needle pointing at the current
 // win probability. Uses each matchup's own team colors rather than a fixed
 // blue/red scheme, so it stays consistent with the rest of the site.
