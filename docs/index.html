@@ -74,6 +74,12 @@
 
   #status { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
 
+  #swingBanner {
+    text-align: center; font-size: 13px; font-weight: 600;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px;
+    padding: 6px 16px; margin: 0 auto 16px; max-width: fit-content;
+  }
+
   /* ---- Live/Final status badges -- glow while genuinely live (all_starters_done
      is false, meaning the game could still move at any moment, even through a
      quiet scoring lull), plain gray once a matchup is Final. ---- */
@@ -142,6 +148,8 @@
   <h2>Fantasy Win Probability</h2>
   <div class="sub">Updates automatically every ~1 minute while games are live.</div>
 
+  <div id="swingBanner" hidden></div>
+
   <div id="controls">
     <select id="leagueSelect"></select>
     <select id="yearSelect"></select>
@@ -165,6 +173,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
