@@ -48,6 +48,12 @@
   }
 
   body { font-family: -apple-system, Arial, sans-serif; background: var(--bg); margin: 0; padding: 30px; color: var(--fg); transition: background 0.2s, color 0.2s; }
+  /* Canvases default to display:inline, which reserves a few pixels of
+     invisible "descender" space below them (same as an inline image) --
+     any small reflow nearby (like percentage text changing width on hover)
+     can cause the browser to recompute that gap, making the chart appear to
+     nudge or shrink by a pixel or two. display:block removes it entirely. */
+  canvas { display: block; }
   #wrap { max-width: 900px; margin: 0 auto; }
   h2 { text-align: center; margin-bottom: 4px; }
   .sub { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 18px; }
@@ -202,6 +208,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
