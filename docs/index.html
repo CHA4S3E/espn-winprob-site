@@ -24,6 +24,8 @@
     --btn-hover: #f5f5f5;
     --accent: #1a3fa0;
     --live: #c0392b;
+    --live-glow-a: rgba(192, 57, 43, 0.45);
+    --live-glow-b: rgba(192, 57, 43, 0.9);
   }
   html[data-theme="dark"] {
     --bg: #14161a;
@@ -37,6 +39,8 @@
     --btn-hover: #262a31;
     --accent: #3a67df;
     --live: #e0574a;
+    --live-glow-a: rgba(224, 87, 74, 0.5);
+    --live-glow-b: rgba(224, 87, 74, 1);
   }
 
   body { font-family: -apple-system, Arial, sans-serif; background: var(--bg); margin: 0; padding: 30px; color: var(--fg); transition: background 0.2s, color 0.2s; }
@@ -70,11 +74,23 @@
 
   #status { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
 
+  /* ---- Live/Final status badges -- glow while genuinely live (all_starters_done
+     is false, meaning the game could still move at any moment, even through a
+     quiet scoring lull), plain gray once a matchup is Final. ---- */
+  @keyframes liveGlow {
+    0%, 100% { text-shadow: 0 0 3px var(--live-glow-a); }
+    50% { text-shadow: 0 0 9px var(--live-glow-b), 0 0 3px var(--live-glow-a); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live { animation: none !important; }
+  }
+
   /* ---- Timeline view (stacked line charts) ---- */
   #matchups.view-timeline { display: flex; flex-direction: column; gap: 34px; }
   .matchup-card { border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; background: var(--card-bg); }
   .matchup-title { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
-  .matchup-title .live { color: var(--live); font-weight: 600; }
+  .matchup-title span:last-child:not(.live) { color: var(--muted); }
+  .matchup-title .live { color: var(--live); font-weight: 600; animation: liveGlow 1.8s ease-in-out infinite; }
   .chartBox { position: relative; height: 300px; width: 100%; }
 
   /* ---- Postcard view (compact grid of the same line charts) ---- */
@@ -85,12 +101,13 @@
     border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--card-bg);
   }
   .postcard-title { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
-  .postcard-title .live { color: var(--live); font-weight: 600; }
+  .postcard-title span:last-child:not(.live) { color: var(--muted); }
+  .postcard-title .live { color: var(--live); font-weight: 600; animation: liveGlow 1.8s ease-in-out infinite; }
   .postcard-chartBox { position: relative; height: 140px; width: 100%; }
 
   /* ---- Shared status pill (needle view) ---- */
   .postcard-status { font-size: 11px; color: var(--muted); text-align: right; margin-bottom: 6px; }
-  .postcard-status.live { color: var(--live); font-weight: 600; }
+  .postcard-status.live { color: var(--live); font-weight: 600; animation: liveGlow 1.8s ease-in-out infinite; }
 
   /* ---- Needle view (gauge grid) ---- */
   #matchups.view-needle {
