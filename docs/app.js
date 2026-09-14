@@ -910,11 +910,13 @@ function renderEspnCard(rows, home, away, allDone) {
   const card = document.createElement('div');
   card.className = 'espn-card';
   card.innerHTML = `
-    <div class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</div>
+    <div class="espn-header">
+      <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
+      <span class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</span>
+    </div>
     <div class="espn-row espn-row-top">
       <span class="espn-emoji">${home.emoji || ''}</span>
       <span class="espn-name" style="color:${home.color}">${home.name}</span>
-      <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
       <span class="espn-dash" style="background:${home.color}"></span>
       <span class="espn-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
     </div>
