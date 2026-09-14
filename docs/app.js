@@ -13,6 +13,7 @@ const charts = {}; // matchupId -> { mode, chart? , el?, needle? } depending on 
 let refreshTimer = null;
 let viewMode = localStorage.getItem('winProbViewMode') || 'timeline'; // 'timeline' | 'postcard' | 'needle'
 let theme = localStorage.getItem('winProbTheme') || 'light'; // 'light' | 'dark'
+let tooltipDetail = localStorage.getItem('winProbTooltipDetail') || 'condensed'; // 'condensed' | 'full' -- set on preferences.html
 document.documentElement.setAttribute('data-theme', theme);
 
 // ============================== THEME / COLOR ADJUSTMENT ==============================
@@ -427,10 +428,13 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
             // Underlying model numbers at this point, for the curious --
             // rounded to 1 decimal since the raw stored values are long
             // floats (e.g. 148.73891118999998) that would make for an
-            // unreadably long tooltip line otherwise. Synthetic 50%-crossing
+            // unreadably long tooltip line otherwise. Only shown when the
+            // "Full" tooltip detail preference is set (see preferences.html);
+            // condensed (win % only) is the default. Synthetic 50%-crossing
             // points (see withCrossings) don't correspond to a real snapshot,
             // so they have no underlying scores -- skip the extra lines then.
             afterLabel: (item) => {
+              if (tooltipDetail !== 'full') return undefined;
               const p = item.raw;
               if (p.homeActual === undefined || p.awayActual === undefined) return undefined;
               return [
