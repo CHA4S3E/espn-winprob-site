@@ -105,7 +105,8 @@
   .needle-verdict { font-size: 16px; font-weight: 800; margin-top: 6px; }
   .needle-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-  a.settings-link { display: block; text-align: center; margin-top: 26px; font-size: 13px; color: var(--accent); }
+  a.settings-link { display: block; text-align: center; margin-top: 10px; font-size: 13px; color: var(--accent); }
+  #settingsLinks { margin-top: 26px; }
 </style>
 </head>
 <body>
@@ -129,10 +130,13 @@
   <div id="status"></div>
   <div id="matchups" class="view-timeline"></div>
 
-  <a class="settings-link" href="settings.html">Team colors & names &rarr;</a>
+  <div id="settingsLinks">
+    <a class="settings-link" href="settings.html">Team colors & names &rarr;</a>
+    <a class="settings-link" href="preferences.html">Display settings &rarr;</a>
+  </div>
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
