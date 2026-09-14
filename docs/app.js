@@ -7,10 +7,102 @@ const weekSelect = document.getElementById('weekSelect');
 const statusEl = document.getElementById('status');
 const matchupsEl = document.getElementById('matchups');
 const viewButtons = document.querySelectorAll('.view-btn');
+const themeToggle = document.getElementById('themeToggle');
 
 const charts = {}; // matchupId -> { mode, chart? , el?, needle? } depending on view
 let refreshTimer = null;
 let viewMode = localStorage.getItem('winProbViewMode') || 'timeline'; // 'timeline' | 'postcard' | 'needle'
+let theme = localStorage.getItem('winProbTheme') || 'light'; // 'light' | 'dark'
+document.documentElement.setAttribute('data-theme', theme);
+
+// ============================== THEME / COLOR ADJUSTMENT ==============================
+
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const num = parseInt(full, 16);
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
+}
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) { h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return { h, s, l };
+}
+function hslToRgb(h, s, l) {
+  let r, g, b;
+  if (s === 0) { r = g = b = l; }
+  else {
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  return { r: r * 255, g: g * 255, b: b * 255 };
+}
+
+// A team color is only adjusted if it's genuinely too close to black to read
+// against a dark background (HSL lightness below MIN_LIGHTNESS) -- not just
+// "somewhat dark." A saturated navy or forest green stays clearly identifiable
+// by hue even at moderate darkness, so those are left alone; this only
+// catches colors (true black, near-black grays, very dark navy/etc.) that
+// would genuinely blend into a dark page background. When it does need to
+// lighten a color, it preserves the original hue and saturation exactly and
+// only raises lightness -- so a near-black navy becomes a lighter blue, not
+// some unrelated color, and true black/gray becomes a clean neutral gray
+// rather than an invented tint.
+const MIN_LIGHTNESS = 0.20;
+const TARGET_LIGHTNESS = 0.50;
+function themedColor(hex) {
+  if (theme !== 'dark') return hex;
+  try {
+    const { r, g, b } = hexToRgb(hex);
+    const { h, s, l } = rgbToHsl(r, g, b);
+    if (l >= MIN_LIGHTNESS) return hex;
+    const { r: nr, g: ng, b: nb } = hslToRgb(h, s, TARGET_LIGHTNESS);
+    return rgbToHex(nr, ng, nb);
+  } catch {
+    return hex; // malformed color -- don't crash the page over it
+  }
+}
+
+// Small helper for values (chart grid/tick colors) that just need to flip
+// between a light-mode and dark-mode constant, no per-color math needed.
+function themeVar(lightVal, darkVal) {
+  return theme === 'dark' ? darkVal : lightVal;
+}
+
+function setTheme(next) {
+  if (next === theme) return;
+  theme = next;
+  localStorage.setItem('winProbTheme', theme);
+  document.documentElement.setAttribute('data-theme', theme);
+  if (themeToggle) themeToggle.textContent = theme === 'dark' ? '\u2600\ufe0f Light' : '\ud83c\udf19 Dark';
+  loadMatchups({ preserveCharts: false }); // re-fetch so team colors re-run through themedColor()
+}
 
 // Supabase/PostgREST silently caps any query at 1000 rows by default -- no
 // error, it just returns the first 1000 and stops. With frequent polling
@@ -100,7 +192,7 @@ async function fetchMatchupData(leagueId, year, week) {
     const settings = t.team_settings || {};
     teamInfo[t.id] = {
       name: settings.display_name || t.espn_team_name,
-      color: settings.color || '#1a3fa0',
+      color: themedColor(settings.color || '#1a3fa0'),
     };
   }
 
@@ -228,14 +320,17 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
       scales: {
         y: {
           min: 0, max: 100,
-          grid: { color: (c) => (c.tick.value === 50 ? '#999' : 'rgba(0,0,0,0.06)'), lineWidth: (c) => (c.tick.value === 50 ? 1.5 : 1) },
-          ticks: compact ? { display: false } : { callback: (v) => (v === 0 || v === 50 || v === 100 ? v : ''), color: '#555' },
+          grid: {
+            color: (c) => (c.tick.value === 50 ? themeVar('#999', '#888') : themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)')),
+            lineWidth: (c) => (c.tick.value === 50 ? 1.5 : 1),
+          },
+          ticks: compact ? { display: false } : { callback: (v) => (v === 0 || v === 50 || v === 100 ? v : ''), color: themeVar('#555', '#aaa') },
         },
         x: {
           type: 'linear',
-          grid: { display: !compact, color: 'rgba(0,0,0,0.06)' },
+          grid: { display: !compact, color: themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)') },
           ticks: compact ? { display: false } : {
-            color: '#555',
+            color: themeVar('#555', '#aaa'),
             callback: (v) => state.dayTicks[Number(v).toFixed(2)] ?? '',
             autoSkip: false,
             maxRotation: 0,
@@ -313,12 +408,16 @@ function needleVerdict(homePct, home, away) {
   if (pct >= 80) return { text: `Very likely ${side.name}`, color: side.color };
   if (pct >= 65) return { text: `Likely ${side.name}`, color: side.color };
   if (pct >= 55) return { text: `Leaning ${side.name}`, color: side.color };
-  return { text: 'Toss-up', color: '#666' };
+  return { text: 'Toss-up', color: themeVar('#666', '#aaa') };
 }
 
 function buildNeedleSvg(home, away) {
   // Bands are colored by side: bands with max <= 50 are "away" side
   // (shaded with away's color), bands with min >= 50 are "home" side.
+  const bandStroke = themeVar('#fff', '#1c1f24');
+  const labelFill = themeVar('#555', '#aaa');
+  const pointerColor = themeVar('#333', '#e8e8e8');
+
   const bandPaths = NEEDLE_BANDS.map((band) => {
     const isHomeSide = band.min >= 50;
     const rgb = isHomeSide ? home.color : away.color;
@@ -330,8 +429,8 @@ function buildNeedleSvg(home, away) {
     const labelAngle = pctToAngle(mid);
     const labelPos = polarToXY(NEEDLE_CX, NEEDLE_CY, NEEDLE_R_LABEL, labelAngle);
     return `
-      <path d="${d}" fill="${colorWithAlpha(rgb, alpha)}" stroke="#fff" stroke-width="1"></path>
-      <text x="${labelPos.x.toFixed(2)}" y="${labelPos.y.toFixed(2)}" font-size="8" fill="#555" text-anchor="middle">${band.label}</text>
+      <path d="${d}" fill="${colorWithAlpha(rgb, alpha)}" stroke="${bandStroke}" stroke-width="1"></path>
+      <text x="${labelPos.x.toFixed(2)}" y="${labelPos.y.toFixed(2)}" font-size="8" fill="${labelFill}" text-anchor="middle">${band.label}</text>
     `;
   }).join('');
 
@@ -339,9 +438,9 @@ function buildNeedleSvg(home, away) {
     <svg viewBox="0 0 240 150" class="needle-svg">
       ${bandPaths}
       <line class="needle-pointer" x1="${NEEDLE_CX}" y1="${NEEDLE_CY}" x2="${NEEDLE_CX}" y2="${NEEDLE_CY - NEEDLE_R_OUTER + 4}"
-            stroke="#333" stroke-width="3" stroke-linecap="round"
+            stroke="${pointerColor}" stroke-width="3" stroke-linecap="round"
             style="transform-origin: ${NEEDLE_CX}px ${NEEDLE_CY}px;"></line>
-      <circle cx="${NEEDLE_CX}" cy="${NEEDLE_CY}" r="6" fill="#333"></circle>
+      <circle cx="${NEEDLE_CX}" cy="${NEEDLE_CY}" r="6" fill="${pointerColor}"></circle>
     </svg>
   `;
 }
@@ -483,6 +582,11 @@ function setViewMode(mode) {
 }
 
 async function init() {
+  if (themeToggle) {
+    themeToggle.textContent = theme === 'dark' ? '\u2600\ufe0f Light' : '\ud83c\udf19 Dark';
+    themeToggle.addEventListener('click', () => setTheme(theme === 'dark' ? 'light' : 'dark'));
+  }
+
   viewButtons.forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.view === viewMode);
     btn.addEventListener('click', () => setViewMode(btn.dataset.view));
