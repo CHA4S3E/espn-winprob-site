@@ -9,7 +9,11 @@
   // Set the theme attribute before first paint, so there's no flash of the
   // wrong theme while app.js (loaded at the bottom of the page) is still
   // starting up.
-  document.documentElement.setAttribute('data-theme', localStorage.getItem('winProbTheme') || 'light');
+  document.documentElement.setAttribute(
+    'data-theme',
+    localStorage.getItem('winProbTheme') ||
+      (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+  );
 </script>
 <style>
   :root {
@@ -80,6 +84,16 @@
     padding: 6px 16px; margin: 0 auto 16px; max-width: fit-content;
   }
 
+  #recapBanner {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 20px; margin: 0 auto 20px; max-width: 520px;
+  }
+  .recap-title { font-size: 15px; font-weight: 700; margin-bottom: 10px; text-align: center; }
+  .recap-scores { margin-bottom: 10px; }
+  .recap-score-line { font-size: 13px; padding: 4px 0; display: flex; justify-content: space-between; gap: 10px; }
+  .recap-margin { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .recap-highlight { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
   /* ---- Live/Final status badges -- glow while genuinely live (all_starters_done
      is false, meaning the game could still move at any moment, even through a
      quiet scoring lull), plain gray once a matchup is Final. ---- */
@@ -149,6 +163,7 @@
   <div class="sub">Updates automatically every ~1 minute while games are live.</div>
 
   <div id="swingBanner" hidden></div>
+  <div id="recapBanner" hidden></div>
 
   <div id="controls">
     <select id="leagueSelect"></select>
@@ -173,6 +188,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
