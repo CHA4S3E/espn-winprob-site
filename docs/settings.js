@@ -57,7 +57,7 @@ async function loadTeams() {
   const leagueId = leagueSelect.value;
   const { data, error } = await sb
     .from('teams')
-    .select('id, espn_team_name, team_settings(color, display_name)')
+    .select('id, espn_team_name, team_settings(color, display_name, emoji)')
     .eq('league_id', leagueId)
     .order('espn_team_name');
 
@@ -67,9 +67,11 @@ async function loadTeams() {
     const settings = t.team_settings || {};
     const color = settings.color || '#1a3fa0';
     const name = settings.display_name || t.espn_team_name;
+    const emoji = settings.emoji || '';
     return `
       <div class="team-row" data-team-id="${t.id}">
         <input type="color" value="${color}" class="color-input" />
+        <input type="text" value="${emoji}" class="emoji-input" maxlength="4" placeholder="🏈" />
         <input type="text" value="${name}" class="name-input" />
         <span class="espn-name">ESPN: ${t.espn_team_name}</span>
       </div>
@@ -79,22 +81,24 @@ async function loadTeams() {
   teamList.querySelectorAll('.team-row').forEach((row) => {
     const teamId = row.dataset.teamId;
     const colorInput = row.querySelector('.color-input');
+    const emojiInput = row.querySelector('.emoji-input');
     const nameInput = row.querySelector('.name-input');
     const save = () => {
       if (!unlocked) return; // extra guard even if disabled attr is bypassed
-      saveTeamSettings(teamId, colorInput.value, nameInput.value);
+      saveTeamSettings(teamId, colorInput.value, nameInput.value, emojiInput.value);
     };
     colorInput.addEventListener('input', save);
+    emojiInput.addEventListener('input', save);
     nameInput.addEventListener('input', save);
   });
 
   updateLockUI(); // apply current lock state to the freshly rendered inputs
 }
 
-async function saveTeamSettings(teamId, color, displayName) {
+async function saveTeamSettings(teamId, color, displayName, emoji) {
   const { error } = await sb
     .from('team_settings')
-    .upsert({ team_id: teamId, color, display_name: displayName }, { onConflict: 'team_id' });
+    .upsert({ team_id: teamId, color, display_name: displayName, emoji }, { onConflict: 'team_id' });
 
   savedNote.textContent = error ? 'Failed to save: ' + error.message : 'Saved \u2713';
   clearTimeout(saveTimeout);
