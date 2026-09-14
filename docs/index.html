@@ -5,36 +5,76 @@
 <title>Fantasy Win Probability Tracker</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // Set the theme attribute before first paint, so there's no flash of the
+  // wrong theme while app.js (loaded at the bottom of the page) is still
+  // starting up.
+  document.documentElement.setAttribute('data-theme', localStorage.getItem('winProbTheme') || 'light');
+</script>
 <style>
-  body { font-family: -apple-system, Arial, sans-serif; background: #fff; margin: 0; padding: 30px; color: #222; }
+  :root {
+    --bg: #ffffff;
+    --fg: #222222;
+    --muted: #888888;
+    --border: #eeeeee;
+    --card-bg: #ffffff;
+    --input-bg: #fafafa;
+    --input-border: #cccccc;
+    --btn-border: #dddddd;
+    --btn-hover: #f5f5f5;
+    --accent: #1a3fa0;
+    --live: #c0392b;
+  }
+  html[data-theme="dark"] {
+    --bg: #14161a;
+    --fg: #e8e8e8;
+    --muted: #9aa0a6;
+    --border: #2a2d33;
+    --card-bg: #1c1f24;
+    --input-bg: #20232a;
+    --input-border: #3a3d44;
+    --btn-border: #3a3d44;
+    --btn-hover: #262a31;
+    --accent: #3a67df;
+    --live: #e0574a;
+  }
+
+  body { font-family: -apple-system, Arial, sans-serif; background: var(--bg); margin: 0; padding: 30px; color: var(--fg); transition: background 0.2s, color 0.2s; }
   #wrap { max-width: 900px; margin: 0 auto; }
   h2 { text-align: center; margin-bottom: 4px; }
-  .sub { text-align: center; color: #888; font-size: 13px; margin-bottom: 18px; }
+  .sub { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 18px; }
 
   #controls {
-    display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px;
+    display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; align-items: center;
   }
   select {
-    padding: 6px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; background: #fafafa;
+    padding: 6px 10px; font-size: 14px; border: 1px solid var(--input-border); border-radius: 6px;
+    background: var(--input-bg); color: var(--fg);
   }
+
+  #themeToggle {
+    padding: 6px 12px; font-size: 13px; border: 1px solid var(--btn-border); border-radius: 20px;
+    background: var(--card-bg); color: var(--fg); cursor: pointer;
+  }
+  #themeToggle:hover { background: var(--btn-hover); }
 
   #viewToggle {
     display: flex; justify-content: center; gap: 6px; margin-bottom: 22px;
   }
   .view-btn {
-    padding: 6px 14px; font-size: 13px; border: 1px solid #ddd; border-radius: 20px;
-    background: #fff; color: #555; cursor: pointer; transition: all 0.15s;
+    padding: 6px 14px; font-size: 13px; border: 1px solid var(--btn-border); border-radius: 20px;
+    background: var(--card-bg); color: var(--fg); cursor: pointer; transition: all 0.15s;
   }
-  .view-btn:hover { background: #f5f5f5; }
-  .view-btn.active { background: #1a3fa0; color: #fff; border-color: #1a3fa0; }
+  .view-btn:hover { background: var(--btn-hover); }
+  .view-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-  #status { text-align: center; color: #999; font-size: 13px; margin: 10px 0; }
+  #status { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
 
   /* ---- Timeline view (stacked line charts) ---- */
   #matchups.view-timeline { display: flex; flex-direction: column; gap: 34px; }
-  .matchup-card { border: 1px solid #eee; border-radius: 10px; padding: 16px 18px; }
+  .matchup-card { border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; background: var(--card-bg); }
   .matchup-title { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
-  .matchup-title .live { color: #c0392b; font-weight: 600; }
+  .matchup-title .live { color: var(--live); font-weight: 600; }
   .chartBox { position: relative; height: 300px; width: 100%; }
 
   /* ---- Postcard view (compact grid of the same line charts) ---- */
@@ -42,30 +82,30 @@
     display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;
   }
   .postcard {
-    border: 1px solid #eee; border-radius: 10px; padding: 10px 12px; background: #fff;
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--card-bg);
   }
   .postcard-title { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
-  .postcard-title .live { color: #c0392b; font-weight: 600; }
+  .postcard-title .live { color: var(--live); font-weight: 600; }
   .postcard-chartBox { position: relative; height: 140px; width: 100%; }
 
   /* ---- Shared status pill (needle view) ---- */
-  .postcard-status { font-size: 11px; color: #999; text-align: right; margin-bottom: 6px; }
-  .postcard-status.live { color: #c0392b; font-weight: 600; }
+  .postcard-status { font-size: 11px; color: var(--muted); text-align: right; margin-bottom: 6px; }
+  .postcard-status.live { color: var(--live); font-weight: 600; }
 
   /* ---- Needle view (gauge grid) ---- */
   #matchups.view-needle {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px;
   }
   .needle-card {
-    border: 1px solid #eee; border-radius: 12px; padding: 14px 16px 18px; background: #fff; text-align: center;
+    border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px 18px; background: var(--card-bg); text-align: center;
   }
   .needle-gauge { max-width: 220px; margin: 0 auto; }
   .needle-svg { width: 100%; height: auto; display: block; }
   .needle-pointer { transition: transform 0.4s ease; }
   .needle-verdict { font-size: 16px; font-weight: 800; margin-top: 6px; }
-  .needle-sub { font-size: 12px; color: #888; margin-top: 2px; }
+  .needle-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-  a.settings-link { display: block; text-align: center; margin-top: 26px; font-size: 13px; color: #1a3fa0; }
+  a.settings-link { display: block; text-align: center; margin-top: 26px; font-size: 13px; color: var(--accent); }
 </style>
 </head>
 <body>
@@ -77,6 +117,7 @@
     <select id="leagueSelect"></select>
     <select id="yearSelect"></select>
     <select id="weekSelect"></select>
+    <button id="themeToggle"></button>
   </div>
 
   <div id="viewToggle">
@@ -92,6 +133,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
