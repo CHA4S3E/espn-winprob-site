@@ -1004,14 +1004,14 @@ function renderEspnCard(rows, home, away, allDone) {
       <div class="why-blurb" hidden>${explainMatchup(rows, home, away, allDone)}</div>
       <span class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</span>
     </div>
-    <div class="espn-row espn-row-top" style="background: linear-gradient(to bottom, ${colorWithAlpha(home.color, 0.14)}, transparent)">
+    <div class="espn-row espn-row-top">
       <span class="espn-emoji">${home.emoji || ''}</span>
       <span class="espn-name" style="color:${home.color}">${home.name}</span>
       <span class="espn-dash" style="background:${home.color}"></span>
       <span class="espn-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
     </div>
     <div class="espn-chartBox"><canvas></canvas></div>
-    <div class="espn-row espn-row-bottom" style="background: linear-gradient(to top, ${colorWithAlpha(away.color, 0.14)}, transparent)">
+    <div class="espn-row espn-row-bottom">
       <span class="espn-emoji">${away.emoji || ''}</span>
       <span class="espn-name" style="color:${away.color}">${away.name}</span>
       <span class="espn-dash" style="background:${away.color}"></span>
