@@ -1053,6 +1053,8 @@ function renderEspnCard(rows, home, away, allDone) {
           },
         },
         {
+          // Vertical guide line -- hidden until hovered (see the mousemove
+          // listener below), not shown persistently.
           data: [],
           hidden: true,
           parsing: false,
@@ -1061,9 +1063,24 @@ function renderEspnCard(rows, home, away, allDone) {
           pointRadius: 0,
           fill: false,
           tension: 0,
+          // Tells Chart.js not to reserve extra padding to keep this
+          // dataset's own rendering from being clipped -- without this,
+          // the FIRST time this dataset actually contains a point (i.e.
+          // the first hover), Chart.js recalculates the plot area to
+          // protect it from edge-clipping and keeps that recalculated,
+          // very slightly smaller plot area from then on -- exactly the
+          // "chart shrinks once on first hover, then stays that size"
+          // symptom. Since this line always runs from y:0 to y:100 inside
+          // the existing scale bounds, it never needed that protection.
           clip: false,
         },
         {
+          // The dot, drawn last so it sits on top of both the line and the
+          // vertical guide. Also hidden until hovered. Same clip:false
+          // reasoning as the line above -- this is the dataset most likely
+          // to trigger that one-time padding recalculation, since it has a
+          // real pixel radius (7px + a 2px border) that Chart.js would
+          // otherwise reserve edge padding to avoid clipping.
           data: [],
           hidden: true,
           parsing: false,
@@ -1079,8 +1096,40 @@ function renderEspnCard(rows, home, away, allDone) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      // Debounces Chart.js's own container-resize detection -- a second
+      // layer of protection against jitter alongside the mousemove
+      // throttling above, in case anything else nearby ever triggers a
+      // rapid string of resize checks during hover.
       resizeDelay: 100,
+      // Fixed, explicit padding -- without this, Chart.js auto-calculates
+      // padding based on what's actually rendered, to keep points near the
+      // plot edges (like the hover dot, which has real pixel radius) from
+      // being clipped. The FIRST time that dot dataset renders with real
+      // data, Chart.js recalculates that padding once and keeps it from
+      // then on, even after the dataset goes back to hidden -- which is
+      // exactly the "shrinks once on first hover, then stays that way
+      // until the chart is recreated" symptom. Locking padding to a fixed
+      // value up front means it can never depend on which datasets happen
+      // to be visible at any given moment.
+      // Confirmed via the debug overlay: chartArea.right shrinks by
+      // exactly 5px the first time the hover dot renders (left never
+      // moves), while the canvas/container's actual pixel size never
+      // changes at all -- this is Chart.js reserving extra right-side
+      // padding to avoid clipping the dot's point radius, a SEPARATE
+      // mechanism from the `clip` dataset option (which only controls
+      // visual clipping at draw time, not whether this padding gets
+      // reserved in the first place). Setting a fixed right padding
+      // comfortably larger than that ~5px means Chart.js's own
+      // calculation is always smaller than this value and never gets to
+      // add anything on top of it -- the chart area becomes genuinely
+      // constant regardless of hover state.
       layout: { padding: { top: 10, right: 16, bottom: 0, left: 4 } },
+      // Chart.js's own tooltip/hover system is turned off entirely --
+      // hovering is handled manually below via native mouse events on the
+      // canvas, which gives full control over exactly what shows (the
+      // marker line/dot and the DOM percentage labels) without fighting
+      // Chart.js's interaction modes across three differently-sized
+      // datasets.
       plugins: { legend: { display: false }, tooltip: { enabled: false } },
       events: [],
       scales: {
@@ -1109,6 +1158,20 @@ function renderEspnCard(rows, home, away, allDone) {
   });
   chart._state = state;
 
+  // Manual hover handling: find the nearest real data point to the mouse's
+  // x position, show the marker line + dot there, and show that point's
+  // percentages in the top/bottom labels. Reads datasets[0].data fresh each
+  // time (not a closed-over `points` variable) so this keeps working
+  // correctly after a background refresh replaces the chart's data.
+  //
+  // Only calls chart.update() when the hovered point actually CHANGES,
+  // rather than on every mousemove event (which fires dozens of times per
+  // second even for tiny mouse movements within the same nearest-point
+  // region). Each call to update() gives Chart.js's responsive-resize
+  // logic a chance to re-measure the container, and enough redundant calls
+  // in quick succession was producing a visible pixel-level jitter in the
+  // canvas -- this removes almost all of those redundant calls at the
+  // source rather than trying to patch around Chart.js's resize behavior.
   let lastHoverX = null;
   canvas.addEventListener('mousemove', (evt) => {
     const rect = canvas.getBoundingClientRect();
@@ -1125,7 +1188,7 @@ function renderEspnCard(rows, home, away, allDone) {
       if (d < minDist) { minDist = d; nearest = p; }
     }
 
-    if (nearest.x === lastHoverX) return;
+    if (nearest.x === lastHoverX) return; // same point as last event -- nothing to redraw
     lastHoverX = nearest.x;
 
     chart.data.datasets[1].data = [{ x: nearest.x, y: 0 }, { x: nearest.x, y: 100 }];
@@ -1160,6 +1223,9 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   chart.options.scales.x.max = maxX;
   chart.update('none');
 
+  // Only refresh the visible labels if the marker isn't currently being
+  // shown via hover -- otherwise a background refresh would yank the
+  // numbers out from under someone mid-hover.
   const isHovering = chart.data.datasets[1].hidden === false;
   if (!isHovering) {
     setEspnPctLabels(chart.canvas, chart._state.currentHomePct);
@@ -1186,50 +1252,24 @@ function destroyEntry(entry) {
   if (entry?.chart) entry.chart.destroy();
 }
 
-// Small placeholder cards with a shimmering gradient, shown in place of
-// real cards while the initial fetch is in flight -- filling the actual
-// card area (not just a small status line) so the page doesn't sit on a
-// single line of "Loading..." text for what can be a couple of seconds on
-// a slow connection.
-function renderSkeletonCards() {
-  matchupsEl.innerHTML = '';
-  const count = 3;
-  for (let i = 0; i < count; i++) {
-    const el = document.createElement('div');
-    el.className = 'skeleton-card';
-    el.innerHTML = `
-      <div class="skeleton-line skeleton-w-40"></div>
-      <div class="skeleton-block"></div>
-      <div class="skeleton-line skeleton-w-60"></div>
-    `;
-    matchupsEl.appendChild(el);
-  }
-}
-
-function renderEmptyState(message) {
-  matchupsEl.innerHTML = `
-    <div class="empty-state">
-      <div class="empty-state-icon">\ud83c\udfc8</div>
-      <div class="empty-state-title">No data yet</div>
-      <div class="empty-state-sub">${message}</div>
-    </div>
-  `;
-}
-
+// preserveCharts=true (used by the 30s auto-refresh timer) updates existing
+// cards in place and never touches the DOM structure or scroll position.
+// preserveCharts=false (used on initial load, view mode switches, or
+// whenever the league/year/week selection changes) does a full rebuild.
 async function loadMatchups({ preserveCharts = false } = {}) {
   const leagueId = leagueSelect.value;
   const year = Number(yearSelect.value);
   const week = Number(weekSelect.value);
   if (!leagueId || !year || !week) return;
 
-  if (!preserveCharts) { statusEl.textContent = ''; renderSkeletonCards(); }
+  if (!preserveCharts) statusEl.textContent = 'Loading...';
 
   let byMatchup, teamInfo;
   try {
     ({ byMatchup, teamInfo } = await fetchMatchupData(leagueId, year, week));
   } catch (err) {
     if (!preserveCharts) statusEl.textContent = 'Error loading data: ' + err.message;
-    return;
+    return; // don't wipe an existing view over a transient refresh error
   }
 
   renderSwingBanner(byMatchup, teamInfo);
@@ -1239,16 +1279,20 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
   if (Object.keys(byMatchup).length === 0) {
     if (!preserveCharts) {
+      matchupsEl.innerHTML = '';
       Object.values(charts).forEach(destroyEntry);
       for (const key of Object.keys(charts)) delete charts[key];
-      statusEl.textContent = '';
-      renderEmptyState('The poller may not have run yet for this week.');
+      statusEl.textContent = 'No data yet for this week -- the poller may not have run yet.';
     }
     return;
   }
 
   if (!preserveCharts || Object.keys(charts).length === 0) {
     matchupsEl.innerHTML = '';
+    // Only touch the view-mode class specifically -- a full className
+    // overwrite here would also wipe out the .view-fading class that
+    // setViewMode adds during a transition, breaking the fade-in half of
+    // the cross-fade before it ever gets a chance to play.
     matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn');
     matchupsEl.classList.add(`view-${viewMode}`);
     Object.values(charts).forEach(destroyEntry);
@@ -1272,6 +1316,8 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     return;
   }
 
+  // Incremental update: same matchup set as before (true on every routine
+  // 30s refresh) -- update each existing card in place.
   statusEl.textContent = '';
   for (const [matchupId, rows] of Object.entries(byMatchup)) {
     const homeRow = rows.find((r) => r.is_home);
@@ -1280,7 +1326,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
     const entry = charts[matchupId];
     if (!entry || entry.mode !== viewMode) {
-      return loadMatchups({ preserveCharts: false });
+      return loadMatchups({ preserveCharts: false }); // matchup set or mode changed -- fall back once
     }
 
     const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0', emoji: '' };
@@ -1294,17 +1340,33 @@ function setViewMode(mode) {
   if (mode === viewMode) return;
   viewButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.view === mode));
 
+  // Cross-fade instead of an instant hard cut: fade the current cards out,
+  // swap the DOM once fully transparent (invisible either way, so the swap
+  // itself is never seen), then fade the new view's cards back in.
   const FADE_MS = 180;
   matchupsEl.classList.add('view-fading');
   setTimeout(async () => {
     viewMode = mode;
     localStorage.setItem('winProbViewMode', mode);
     await loadMatchups({ preserveCharts: false });
+    // Force a reflow before removing the class -- otherwise the browser can
+    // coalesce the "add" and "remove" into a single frame and skip the
+    // fade-in transition entirely, since nothing would have visibly
+    // changed in between from its perspective.
     void matchupsEl.offsetWidth;
     matchupsEl.classList.remove('view-fading');
   }, FADE_MS);
 }
 
+// ============================== DEBUG OVERLAY ==============================
+// Visit the site with ?debug=1 appended to the URL to show a live-updating
+// panel of the exact measurements most likely to explain the "ESPN chart
+// shrinks a couple pixels on hover" issue: viewport/scrollbar width, the
+// canvas's own rendered size, Chart.js's internal chartArea boundaries, and
+// the surrounding container sizes. Watch which number actually changes the
+// moment you hover, rather than guessing at Chart.js internals blindly.
+// Completely inert (adds nothing to the page, costs nothing) without the
+// URL parameter, so it's safe to leave deployed.
 function setupDebugOverlay() {
   if (!new URLSearchParams(location.search).has('debug')) return;
 
@@ -1386,5 +1448,11 @@ async function init() {
     await loadMatchups();
   }
 
+  // Auto-refresh every 30s -- cheap read-only query, fine even if the
+  // underlying poller only writes every ~5 min. Updates existing cards in
+  // place instead of rebuilding the DOM, so this can't disturb scroll
+  // position.
   refreshTimer = setInterval(() => loadMatchups({ preserveCharts: true }), 30000);
 }
+
+init();
