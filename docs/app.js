@@ -506,19 +506,39 @@ function renderRecapBanner(byMatchup, teamInfo) {
 // real data point gets equal visual spacing regardless of how much actual
 // time passed before it. Each point also carries both teams' actual/expected
 // scores at that moment (nearest-matched by timestamp), for the tooltip.
+//
+// Built from the UNION of both sides' timestamps, not just home's. A team
+// can stop producing new rows entirely once ALL of its own values are
+// simultaneously frozen -- its own actual/expected score already locked in
+// (no players left), AND its win_prob pinned to an exact, unchanging
+// constant by the near-certain-win guard once the other team can no longer
+// catch up. With nothing left that could change, the database's
+// change-detection correctly stops inserting new rows for that side -- but
+// the OTHER team's game can still be live, producing fresh rows for
+// several more minutes. Walking only homeRows would make the whole chart
+// stall at whatever moment home went fully static, even while away kept
+// recording real, fresh data. Walking the union keeps the chart advancing
+// as long as EITHER side still has something new to show.
 function computeChartPoints(homeRows, awayRows) {
-  const rawPoints = homeRows.map((r, i) => {
-    const awayRow = nearestByTs(awayRows, r.ts);
-    return {
-      x: i,
-      y: r.win_prob,
-      ts: r.ts,
-      homeActual: r.actual_score,
-      homeExpected: r.expected_score,
-      awayActual: awayRow?.actual_score,
-      awayExpected: awayRow?.expected_score,
-    };
-  });
+  const allTimestamps = Array.from(new Set([...homeRows.map((r) => r.ts), ...awayRows.map((r) => r.ts)])).sort(
+    (a, b) => new Date(a) - new Date(b)
+  );
+
+  const rawPoints = allTimestamps
+    .map((ts, i) => {
+      const homeRow = nearestByTs(homeRows, ts);
+      const awayRow = nearestByTs(awayRows, ts);
+      return {
+        x: i,
+        y: homeRow?.win_prob,
+        ts,
+        homeActual: homeRow?.actual_score,
+        homeExpected: homeRow?.expected_score,
+        awayActual: awayRow?.actual_score,
+        awayExpected: awayRow?.expected_score,
+      };
+    })
+    .filter((p) => p.y !== undefined); // safety: skip if somehow neither side has data yet
   const points = withCrossings(rawPoints);
 
   const tickEvery = Math.max(Math.floor(rawPoints.length / 5), 1);
