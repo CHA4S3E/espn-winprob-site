@@ -62,11 +62,11 @@ function playerExpected(player, nflStatusMap) {
   const isFinished = status?.state === 'post';
   const isBye = status === undefined; // no game found for their team this week
 
-  if (isFinished || isBye) return { expected: actual, done: true };
+  if (isFinished || isBye) return { expected: actual, done: true, remainingFraction: 0 };
 
   const remainingFraction = status.remainingFraction ?? 1;
   const expected = actual + Math.max(projected - actual, 0) * remainingFraction;
-  return { expected, done: false };
+  return { expected, done: false, remainingFraction };
 }
 
 function getStatPoints(player, statSourceId) {
@@ -107,17 +107,27 @@ function teamExpected(roster, nflStatusMap) {
   let allDone = true;
   let totalCount = 0;
   let doneCount = 0;
+  let remainingFractionSum = 0; // time-weighted "remaining player-equivalents" -- see computeDynamicStddev
   for (const entry of roster || []) {
     if (entry.lineupSlotId === LINEUP_SLOT_BENCH || entry.lineupSlotId === LINEUP_SLOT_IR) continue;
     totalCount++;
     const player = entry.playerPoolEntry.player;
-    const { expected: playerPts, done } = playerExpected(player, nflStatusMap);
+    const { expected: playerPts, done, remainingFraction } = playerExpected(player, nflStatusMap);
     expected += playerPts;
     actual += getStatPoints(player, STAT_SOURCE_ACTUAL);
+    remainingFractionSum += remainingFraction;
     if (done) doneCount++;
     else allDone = false;
   }
-  return { expected, actual, allDone, totalCount, doneCount, lineupFingerprint: buildLineupFingerprint(roster) };
+  return {
+    expected,
+    actual,
+    allDone,
+    totalCount,
+    doneCount,
+    remainingFractionSum,
+    lineupFingerprint: buildLineupFingerprint(roster),
+  };
 }
 
 // Variance shrinks as the week plays out, but NOT based on point-value
@@ -132,17 +142,27 @@ function teamExpected(roster, nflStatusMap) {
 // prematurely shrunk stddev) is exactly what produces a 90%+ win
 // probability before most of the week has even started.
 //
-// Fix: compute BOTH a points-based remaining fraction and a player-count-
-// based remaining fraction, and use whichever is LARGER (i.e. whichever
-// signal says more uncertainty is still outstanding). Player-count barely
-// moves after just one game, so it correctly keeps the model conservative
-// until a real portion of both rosters has actually played -- without
-// requiring a full per-player-variance/correlation model.
+// Fix: compute BOTH a points-based remaining fraction and a TIME-weighted
+// remaining fraction, and use whichever is LARGER (i.e. whichever signal
+// says more uncertainty is still outstanding).
+//
+// The time-weighted fraction (remainingPlayerEquivalentsBoth) is a sum of
+// each still-active player's own remainingFraction from playerExpected --
+// not a raw count of "how many players aren't done yet." A raw count would
+// treat a player with 2 minutes left on the clock as carrying the exact
+// same remaining uncertainty as one who hasn't kicked off at all, which
+// keeps the model needlessly hedged in the closing minutes of a game (e.g.
+// showing ~67% for a 3-point lead with one player and 2 minutes left, when
+// the real answer is closer to 99% -- there's essentially no game clock
+// left for anything to change). Weighting by actual remaining time fixes
+// that specific case while leaving early-week behavior just as
+// conservative as before (a player 5 minutes into their game still
+// contributes ~0.92 of a "remaining player," not close to 0).
 function computeDynamicStddev(
   totalProjectedBoth,
   remainingProjectedBoth,
   baseStddev = DEFAULT_STDDEV,
-  playerCounts = null // optional: { totalPlayersBoth, remainingPlayersBoth }
+  playerCounts = null // optional: { totalPlayersBoth, remainingPlayerEquivalentsBoth }
 ) {
   if (totalProjectedBoth <= 0) return MIN_STDDEV;
 
@@ -150,11 +170,11 @@ function computeDynamicStddev(
 
   let ratio = pointsRemainingFraction;
   if (playerCounts && playerCounts.totalPlayersBoth > 0) {
-    const playersRemainingFraction = Math.max(
-      playerCounts.remainingPlayersBoth / playerCounts.totalPlayersBoth,
+    const timeWeightedRemainingFraction = Math.max(
+      playerCounts.remainingPlayerEquivalentsBoth / playerCounts.totalPlayersBoth,
       0
     );
-    ratio = Math.max(pointsRemainingFraction, playersRemainingFraction);
+    ratio = Math.max(pointsRemainingFraction, timeWeightedRemainingFraction);
   }
 
   const scaled = baseStddev * Math.sqrt(Math.min(ratio, 1));
