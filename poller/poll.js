@@ -154,6 +154,8 @@ async function pollLeague(league) {
       homeActual: homeC.actual,
       awayActual: awayC.actual,
       allDone: allStartersDone,
+      homeAllDone: homeC.allDone,
+      awayAllDone: awayC.allDone,
       stddev,
     });
     const awayWinProb = 100 - homeWinProb;
