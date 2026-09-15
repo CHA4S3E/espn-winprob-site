@@ -171,22 +171,46 @@ function winProbability(expectedA, expectedB, stddev = DEFAULT_STDDEV) {
   return Math.max(0, Math.min(100, pct));
 }
 
-// The entry point poll.js should actually call. Once every starter on both
-// teams is locked in (allDone), the outcome is a known fact, not a random
+// The entry point poll.js should actually call.
+//
+// If BOTH teams are locked in, the outcome is a known fact, not a random
 // variable -- there is no more uncertainty left to model. Running a
 // finished blowout through the normal-distribution formula would still cap
 // it around 90-99% (MIN_STDDEV keeps stddev slightly above zero), which is
 // wrong: a concluded matchup should show the actual winner at (essentially)
-// 100%, not "very likely." This bypasses the probabilistic model entirely
-// once both teams are done, and uses the *actual* (not expected) scores,
-// since those are now the same thing but actual is the more defensible
-// source of truth for a final result.
-function matchupWinProbability({ homeExpected, awayExpected, homeActual, awayActual, allDone, stddev }) {
+// 100%, not "very likely."
+//
+// A subtler case: if only ONE team is locked in and that team's actual
+// score is already BELOW the other (still-playing) team's current actual,
+// the still-playing team can't be caught -- the locked team has no players
+// left to add any points, and a team's own actual score essentially never
+// decreases (see the DB-level guard on implausible decreases for why).
+// Without this check, that situation still runs through the same
+// symmetric normal-distribution formula used for a fully open game, which
+// has no way to know one side has zero remaining upside OR downside left
+// -- producing a number like "56%" for a lead that's actually
+// unassailable. This treats it as a near-certain (not absolute -- there's
+// a small residual chance of an unusual negative-scoring correction,
+// e.g. a D/ST swing) win for the still-playing, already-ahead side.
+function matchupWinProbability({
+  homeExpected,
+  awayExpected,
+  homeActual,
+  awayActual,
+  allDone,
+  homeAllDone,
+  awayAllDone,
+  stddev,
+}) {
   if (allDone) {
     if (homeActual > awayActual) return 100;
     if (homeActual < awayActual) return 0;
     return 50; // exact tie, no more randomness left, and no rule to break it here
   }
+
+  if (homeAllDone && !awayAllDone && homeActual < awayActual) return 1; // home locked & already behind -> away can't be caught
+  if (awayAllDone && !homeAllDone && awayActual < homeActual) return 99; // away locked & already behind -> home can't be caught
+
   return winProbability(homeExpected, awayExpected, stddev);
 }
 
