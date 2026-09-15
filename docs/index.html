@@ -43,8 +43,6 @@
     --btn-border: #dddddd;
     --btn-hover: #f5f5f5;
     --accent: #1a3fa0;
-    --accent-2: #5b8def;
-    --accent-gradient: linear-gradient(135deg, var(--accent), var(--accent-2));
     --live: #c0392b;
     --live-glow-a: rgba(192, 57, 43, 0.45);
     --live-glow-b: rgba(192, 57, 43, 0.9);
@@ -75,7 +73,6 @@
     --btn-border: #3a3d44;
     --btn-hover: #262a31;
     --accent: #3a67df;
-    --accent-2: #7aa2ff;
     --live: #e0574a;
     --live-glow-a: rgba(224, 87, 74, 0.5);
     --live-glow-b: rgba(224, 87, 74, 1);
@@ -92,8 +89,6 @@
   h2 {
     text-align: center; margin-bottom: 4px; font-family: var(--font-display); font-weight: 400;
     font-size: var(--text-3xl); letter-spacing: 0.02em;
-    background: var(--accent-gradient); -webkit-background-clip: text; background-clip: text;
-    color: transparent; -webkit-text-fill-color: transparent;
   }
   .sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 18px; }
 
@@ -119,7 +114,7 @@
     background: var(--card-bg); color: var(--fg); cursor: pointer; transition: all 0.15s;
   }
   .view-btn:hover { background: var(--btn-hover); }
-  .view-btn.active { background: var(--accent-gradient); color: #fff; border-color: var(--accent); }
+  .view-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
   #status { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
 
@@ -147,8 +142,34 @@
     0%, 100% { text-shadow: 0 0 3px var(--live-glow-a); }
     50% { text-shadow: 0 0 9px var(--live-glow-b), 0 0 3px var(--live-glow-a); }
   }
+  @keyframes cardEnter {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  /* Applies to every card type across all four views. Only fires on a full
+     rebuild (initial load, league/week change, view switch) -- the 30s
+     background refresh updates existing card elements in place rather than
+     recreating them, so this never replays on a routine data refresh, only
+     when cards are genuinely new to the page. Staggered per card via
+     nth-child so a page of several matchups cascades in rather than
+     popping in all at once; capped at 10 steps since leagues rarely run
+     much larger and any further stagger would just feel slow. */
+  .matchup-card, .postcard, .needle-card, .espn-card {
+    animation: cardEnter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  #matchups > :nth-child(1) { animation-delay: 0.02s; }
+  #matchups > :nth-child(2) { animation-delay: 0.06s; }
+  #matchups > :nth-child(3) { animation-delay: 0.10s; }
+  #matchups > :nth-child(4) { animation-delay: 0.14s; }
+  #matchups > :nth-child(5) { animation-delay: 0.18s; }
+  #matchups > :nth-child(6) { animation-delay: 0.22s; }
+  #matchups > :nth-child(7) { animation-delay: 0.26s; }
+  #matchups > :nth-child(8) { animation-delay: 0.30s; }
+  #matchups > :nth-child(9) { animation-delay: 0.34s; }
+  #matchups > :nth-child(n+10) { animation-delay: 0.38s; }
   @media (prefers-reduced-motion: reduce) {
     .live { animation: none !important; }
+    .matchup-card, .postcard, .needle-card, .espn-card { animation: none !important; }
   }
 
   /* ---- "Why is this the number?" button + blurb, shared across all views ---- */
