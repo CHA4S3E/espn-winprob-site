@@ -124,11 +124,11 @@ async function pollLeague(league) {
       for (const entry of side.rosterForCurrentScoringPeriod?.entries || []) {
         attachProTeamAbbrev(entry.playerPoolEntry.player);
       }
-      const { expected, actual, allDone, totalCount, doneCount, lineupFingerprint } = teamExpected(
+      const { expected, actual, allDone, totalCount, doneCount, remainingFractionSum, lineupFingerprint } = teamExpected(
         side.rosterForCurrentScoringPeriod?.entries,
         nflStatusMap
       );
-      return { side, isHome, expected, allDone, actual, totalCount, doneCount, lineupFingerprint };
+      return { side, isHome, expected, allDone, actual, totalCount, doneCount, remainingFractionSum, lineupFingerprint };
     });
 
     const totalProjectedBoth = computed.reduce((sum, c) => sum + c.expected, 0);
@@ -137,13 +137,13 @@ async function pollLeague(league) {
       0
     );
     const totalPlayersBoth = computed.reduce((sum, c) => sum + c.totalCount, 0);
-    const remainingPlayersBoth = computed.reduce(
-      (sum, c) => sum + (c.totalCount - c.doneCount),
+    const remainingPlayerEquivalentsBoth = computed.reduce(
+      (sum, c) => sum + c.remainingFractionSum,
       0
     );
     const stddev = computeDynamicStddev(totalProjectedBoth, remainingProjectedBoth, DEFAULT_STDDEV, {
       totalPlayersBoth,
-      remainingPlayersBoth,
+      remainingPlayerEquivalentsBoth,
     });
 
     const [homeC, awayC] = computed;
