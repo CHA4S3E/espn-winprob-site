@@ -124,11 +124,11 @@ async function pollLeague(league) {
       for (const entry of side.rosterForCurrentScoringPeriod?.entries || []) {
         attachProTeamAbbrev(entry.playerPoolEntry.player);
       }
-      const { expected, actual, allDone, totalCount, doneCount } = teamExpected(
+      const { expected, actual, allDone, totalCount, doneCount, lineupFingerprint } = teamExpected(
         side.rosterForCurrentScoringPeriod?.entries,
         nflStatusMap
       );
-      return { side, isHome, expected, allDone, actual, totalCount, doneCount };
+      return { side, isHome, expected, allDone, actual, totalCount, doneCount, lineupFingerprint };
     });
 
     const totalProjectedBoth = computed.reduce((sum, c) => sum + c.expected, 0);
@@ -180,10 +180,12 @@ async function pollLeague(league) {
       p_home_actual_score: homeC.actual,
       p_home_expected_score: homeC.expected,
       p_home_win_prob: homeWinProb,
+      p_home_lineup_fingerprint: homeC.lineupFingerprint,
       p_away_team_id: awayTeamId,
       p_away_actual_score: awayC.actual,
       p_away_expected_score: awayC.expected,
       p_away_win_prob: awayWinProb,
+      p_away_lineup_fingerprint: awayC.lineupFingerprint,
       p_all_starters_done: allStartersDone,
     });
 
@@ -195,7 +197,8 @@ async function pollLeague(league) {
       rejectedCount++;
       console.warn(
         `[${league.slug}] matchup ${matchup.id}: rejected this poll's data for BOTH teams -- ` +
-          `one side's actual_score dropped implausibly (likely a bad ESPN read)`
+          `either an implausible actual_score drop, or an unexplained expected_score jump with an ` +
+          `unchanged lineup (likely a bad ESPN read)`
       );
       continue;
     }
