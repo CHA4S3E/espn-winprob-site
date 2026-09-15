@@ -448,13 +448,23 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     const homeScore = homeLatest.actual_score;
     const awayScore = awayLatest.actual_score;
     const margin = Math.abs(homeScore - awayScore);
-    const winner = homeScore >= awayScore ? home : away;
-    const loser = winner === home ? away : home;
+    const isTie = homeScore === awayScore;
+    const winner = isTie ? null : homeScore > awayScore ? home : away;
+    const loser = isTie ? null : winner === home ? away : home;
 
-    summaries.push({ winner, loser, winnerScore: Math.max(homeScore, awayScore), loserScore: Math.min(homeScore, awayScore), margin });
+    summaries.push({
+      isTie,
+      home,
+      away,
+      winner,
+      loser,
+      winnerScore: Math.max(homeScore, awayScore),
+      loserScore: Math.min(homeScore, awayScore),
+      margin,
+    });
 
     if (!closestGame || margin < closestGame.margin) {
-      closestGame = { winner, loser, margin };
+      closestGame = { isTie, home, away, winner, loser, margin };
     }
 
     const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
@@ -477,10 +487,12 @@ function renderRecapBanner(byMatchup, teamInfo) {
   }
 
   const scoreLines = recap.summaries
-    .map(
-      (s) =>
-        `<div class="recap-score-line"><b style="color:${s.winner.color}">${s.winner.name}</b> def. ${s.loser.name} ` +
-        `<span class="recap-margin">${s.winnerScore.toFixed(1)} - ${s.loserScore.toFixed(1)}</span></div>`
+    .map((s) =>
+      s.isTie
+        ? `<div class="recap-score-line"><b style="color:${s.home.color}">${s.home.name}</b> tied ${s.away.name} ` +
+          `<span class="recap-margin">${s.winnerScore.toFixed(1)} - ${s.loserScore.toFixed(1)}</span></div>`
+        : `<div class="recap-score-line"><b style="color:${s.winner.color}">${s.winner.name}</b> def. ${s.loser.name} ` +
+          `<span class="recap-margin">${s.winnerScore.toFixed(1)} - ${s.loserScore.toFixed(1)}</span></div>`
     )
     .join('');
 
@@ -488,7 +500,9 @@ function renderRecapBanner(byMatchup, teamInfo) {
     ? `<div class="recap-highlight">\ud83d\udd25 Biggest swing: <b style="color:${recap.biggestSwing.gainer.color}">${recap.biggestSwing.gainer.name}</b> +${Math.abs(recap.biggestSwing.delta).toFixed(1)}% win probability in a single stretch</div>`
     : '';
   const closestLine = recap.closestGame
-    ? `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.winner.name}</b> over ${recap.closestGame.loser.name} by ${recap.closestGame.margin.toFixed(1)}</div>`
+    ? recap.closestGame.isTie
+      ? `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.home.name}</b> and ${recap.closestGame.away.name} tied exactly</div>`
+      : `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.winner.name}</b> over ${recap.closestGame.loser.name} by ${recap.closestGame.margin.toFixed(1)}</div>`
     : '';
 
   banner.innerHTML = `
