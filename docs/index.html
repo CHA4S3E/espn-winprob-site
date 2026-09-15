@@ -3,9 +3,6 @@
 <head>
 <meta charset="utf-8">
 <title>Fantasy Win Probability Tracker</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -43,28 +40,9 @@
     --btn-border: #dddddd;
     --btn-hover: #f5f5f5;
     --accent: #1a3fa0;
-    --accent-2: #5b8def;
-    --accent-gradient: linear-gradient(135deg, var(--accent), var(--accent-2));
     --live: #c0392b;
     --live-glow-a: rgba(192, 57, 43, 0.45);
     --live-glow-b: rgba(192, 57, 43, 0.9);
-    /* Two-family type system: Oswald (condensed, bold, scoreboard-like) for
-       team names, percentages, and other "number/label" moments that
-       should feel like a sports broadcast graphic; Inter for everything
-       read as prose (blurbs, status text, form controls), since a
-       condensed display face gets fatiguing at paragraph length. */
-    --font-display: 'Oswald', 'Arial Narrow', sans-serif;
-    --font-body: 'Inter', -apple-system, Arial, sans-serif;
-    /* A single consistent scale instead of ad-hoc px values scattered per
-       view (the four views evolved somewhat independently over time) --
-       every font-size in the page now pulls from one of these. */
-    --text-xs: 11px;
-    --text-sm: 12px;
-    --text-base: 14px;
-    --text-lg: 16px;
-    --text-xl: 20px;
-    --text-2xl: 26px;
-    --text-3xl: 34px;
   }
   html[data-theme="dark"] {
     --bg: #14161a;
@@ -77,13 +55,12 @@
     --btn-border: #3a3d44;
     --btn-hover: #262a31;
     --accent: #3a67df;
-    --accent-2: #7aa2ff;
     --live: #e0574a;
     --live-glow-a: rgba(224, 87, 74, 0.5);
     --live-glow-b: rgba(224, 87, 74, 1);
   }
 
-  body { font-family: var(--font-body); background: var(--bg); margin: 0; padding: 30px; color: var(--fg); transition: background 0.2s, color 0.2s; }
+  body { font-family: -apple-system, Arial, sans-serif; background: var(--bg); margin: 0; padding: 30px; color: var(--fg); transition: background 0.2s, color 0.2s; }
   /* Canvases default to display:inline, which reserves a few pixels of
      invisible "descender" space below them (same as an inline image) --
      any small reflow nearby (like percentage text changing width on hover)
@@ -91,13 +68,8 @@
      nudge or shrink by a pixel or two. display:block removes it entirely. */
   canvas { display: block; }
   #wrap { max-width: 900px; margin: 0 auto; }
-  h2 {
-    text-align: center; margin-bottom: 4px; font-family: var(--font-display); font-weight: 700;
-    font-size: var(--text-3xl); text-transform: uppercase; letter-spacing: 0.03em;
-    background: var(--accent-gradient); -webkit-background-clip: text; background-clip: text;
-    color: transparent; -webkit-text-fill-color: transparent;
-  }
-  .sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 18px; }
+  h2 { text-align: center; margin-bottom: 4px; }
+  .sub { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 18px; }
 
   #controls {
     display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; align-items: center;
@@ -121,44 +93,9 @@
     background: var(--card-bg); color: var(--fg); cursor: pointer; transition: all 0.15s;
   }
   .view-btn:hover { background: var(--btn-hover); }
-  .view-btn.active { background: var(--accent-gradient); color: #fff; border-color: var(--accent); }
+  .view-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-  #status { text-align: center; color: var(--muted); font-size: var(--text-sm); margin: 10px 0; }
-
-  /* ---- Loading skeleton -- shown in place of real cards while the initial
-     fetch is in flight, so the page doesn't sit on bare "Loading..." text
-     for what can be a couple of seconds on a slow connection. ---- */
-  @keyframes skeletonShimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
-  }
-  .skeleton-card {
-    border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px;
-    background: var(--card-bg); margin-bottom: 20px;
-  }
-  .skeleton-line, .skeleton-block {
-    background: linear-gradient(90deg, var(--border) 25%, var(--btn-hover) 50%, var(--border) 75%);
-    background-size: 200% 100%;
-    animation: skeletonShimmer 1.5s ease-in-out infinite;
-    border-radius: 6px;
-  }
-  .skeleton-line { height: 14px; margin-bottom: 12px; }
-  .skeleton-w-40 { width: 40%; }
-  .skeleton-w-60 { width: 60%; margin-top: 12px; margin-bottom: 0; }
-  .skeleton-block { height: 160px; }
-  @media (prefers-reduced-motion: reduce) {
-    .skeleton-line, .skeleton-block { animation: none; }
-  }
-
-  /* ---- Empty state -- shown when a week genuinely has no data yet, rather
-     than a single small line of muted text easy to miss entirely. ---- */
-  .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
-  .empty-state-icon { font-size: 40px; margin-bottom: 12px; }
-  .empty-state-title {
-    font-family: var(--font-display); font-size: var(--text-xl); font-weight: 600;
-    color: var(--fg); text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 6px;
-  }
-  .empty-state-sub { font-size: var(--text-sm); max-width: 340px; margin: 0 auto; }
+  #status { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
 
   #swingBanner {
     text-align: center; font-size: 13px; font-weight: 600;
@@ -170,11 +107,10 @@
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
     padding: 16px 20px; margin: 0 auto 20px; max-width: 520px;
   }
-  .recap-title { font-family: var(--font-display); font-size: var(--text-lg); font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 10px; text-align: center; }
+  .recap-title { font-size: 15px; font-weight: 700; margin-bottom: 10px; text-align: center; }
   .recap-scores { margin-bottom: 10px; }
-  .recap-score-line { font-size: var(--text-sm); padding: 4px 0; display: flex; justify-content: space-between; gap: 10px; }
-  .recap-score-line b { font-family: var(--font-display); font-weight: 600; }
-  .recap-margin { font-family: var(--font-display); font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .recap-score-line { font-size: 13px; padding: 4px 0; display: flex; justify-content: space-between; gap: 10px; }
+  .recap-margin { color: var(--muted); font-variant-numeric: tabular-nums; }
   .recap-highlight { font-size: 12px; color: var(--muted); margin-top: 6px; }
 
   /* ---- Live/Final status badges -- glow while genuinely live (all_starters_done
@@ -184,34 +120,8 @@
     0%, 100% { text-shadow: 0 0 3px var(--live-glow-a); }
     50% { text-shadow: 0 0 9px var(--live-glow-b), 0 0 3px var(--live-glow-a); }
   }
-  @keyframes cardEnter {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  /* Applies to every card type across all four views. Only fires on a full
-     rebuild (initial load, league/week change, view switch) -- the 30s
-     background refresh updates existing card elements in place rather than
-     recreating them, so this never replays on a routine data refresh, only
-     when cards are genuinely new to the page. Staggered per card via
-     nth-child so a page of several matchups cascades in rather than
-     popping in all at once; capped at 10 steps since leagues rarely run
-     much larger and any further stagger would just feel slow. */
-  .matchup-card, .postcard, .needle-card, .espn-card {
-    animation: cardEnter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
-  }
-  #matchups > :nth-child(1) { animation-delay: 0.02s; }
-  #matchups > :nth-child(2) { animation-delay: 0.06s; }
-  #matchups > :nth-child(3) { animation-delay: 0.10s; }
-  #matchups > :nth-child(4) { animation-delay: 0.14s; }
-  #matchups > :nth-child(5) { animation-delay: 0.18s; }
-  #matchups > :nth-child(6) { animation-delay: 0.22s; }
-  #matchups > :nth-child(7) { animation-delay: 0.26s; }
-  #matchups > :nth-child(8) { animation-delay: 0.30s; }
-  #matchups > :nth-child(9) { animation-delay: 0.34s; }
-  #matchups > :nth-child(n+10) { animation-delay: 0.38s; }
   @media (prefers-reduced-motion: reduce) {
     .live { animation: none !important; }
-    .matchup-card, .postcard, .needle-card, .espn-card { animation: none !important; }
   }
 
   /* ---- "Why is this the number?" button + blurb, shared across all views ---- */
@@ -231,8 +141,7 @@
   /* ---- Timeline view (stacked line charts) ---- */
   #matchups.view-timeline { display: flex; flex-direction: column; gap: 34px; }
   .matchup-card { border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; background: var(--card-bg); }
-  .matchup-title { display: flex; justify-content: space-between; font-size: var(--text-base); margin-bottom: 8px; }
-  .matchup-title b { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.01em; }
+  .matchup-title { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
   .matchup-title span:last-child:not(.live) { color: var(--muted); }
   .matchup-title .live { color: var(--live); font-weight: 600; animation: liveGlow 1.8s ease-in-out infinite; }
   .chartBox { position: relative; height: 300px; width: 100%; }
@@ -244,14 +153,13 @@
   .postcard {
     border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--card-bg);
   }
-  .postcard-title { display: flex; justify-content: space-between; font-size: var(--text-sm); margin-bottom: 4px; }
-  .postcard-title b { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.01em; }
+  .postcard-title { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
   .postcard-title span:last-child:not(.live) { color: var(--muted); }
   .postcard-title .live { color: var(--live); font-weight: 600; animation: liveGlow 1.8s ease-in-out infinite; }
   .postcard-chartBox { position: relative; height: 140px; width: 100%; }
 
   /* ---- Shared status pill (needle view) ---- */
-  .postcard-status { font-size: var(--text-xs); color: var(--muted); text-align: right; margin-bottom: 6px; }
+  .postcard-status { font-size: 11px; color: var(--muted); text-align: right; margin-bottom: 6px; }
   .postcard-status.live { color: var(--live); font-weight: 600; animation: liveGlow 1.8s ease-in-out infinite; }
 
   /* ---- ESPN view (dotted line, persistent marker, static top/bottom rows) ---- */
@@ -262,9 +170,9 @@
   .espn-header .why-blurb { margin: 0 0 0 10px; flex: 1; }
   .espn-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
   .espn-emoji { font-size: 20px; line-height: 1; min-width: 1.2em; text-align: center; }
-  .espn-name { font-family: var(--font-display); font-size: var(--text-base); font-weight: 600; letter-spacing: 0.01em; }
+  .espn-name { font-size: 14px; font-weight: 700; }
   .espn-dash { flex: 1; height: 3px; border-radius: 2px; opacity: 0.4; margin: 0 6px; }
-  .espn-pct { font-family: var(--font-display); font-size: var(--text-2xl); font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
+  .espn-pct { font-size: 22px; font-weight: 800; margin-left: auto; }
   .espn-chartBox { position: relative; height: 220px; width: 100%; margin: 6px 0; }
 
   /* ---- Needle view (gauge grid) ---- */
@@ -277,8 +185,8 @@
   .needle-gauge { max-width: 220px; margin: 0 auto; }
   .needle-svg { width: 100%; height: auto; display: block; }
   .needle-pointer { transition: transform 0.4s ease; }
-  .needle-verdict { font-family: var(--font-display); font-size: var(--text-xl); font-weight: 700; letter-spacing: 0.01em; margin-top: 6px; }
-  .needle-sub { font-size: var(--text-sm); color: var(--muted); margin-top: 2px; }
+  .needle-verdict { font-size: 16px; font-weight: 800; margin-top: 6px; }
+  .needle-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
   a.settings-link { display: block; text-align: center; margin-top: 10px; font-size: 13px; color: var(--accent); }
   #settingsLinks { margin-top: 26px; }
@@ -316,6 +224,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>
