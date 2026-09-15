@@ -401,7 +401,7 @@ function renderSwingBanner(byMatchup, teamInfo) {
     return;
   }
   const pts = Math.abs(swing.delta).toFixed(1);
-  banner.textContent = `\ud83d\udd25 Biggest swing right now: ${swing.gainer.name} +${pts} pts (last ~15 min)`;
+  banner.textContent = `\ud83d\udd25 Biggest swing right now: ${swing.gainer.name} +${pts}% (last ~15 min)`;
   banner.hidden = false;
 }
 
@@ -485,7 +485,7 @@ function renderRecapBanner(byMatchup, teamInfo) {
     .join('');
 
   const swingLine = recap.biggestSwing
-    ? `<div class="recap-highlight">\ud83d\udd25 Biggest swing: <b style="color:${recap.biggestSwing.gainer.color}">${recap.biggestSwing.gainer.name}</b> +${Math.abs(recap.biggestSwing.delta).toFixed(1)} pts in a single stretch</div>`
+    ? `<div class="recap-highlight">\ud83d\udd25 Biggest swing: <b style="color:${recap.biggestSwing.gainer.color}">${recap.biggestSwing.gainer.name}</b> +${Math.abs(recap.biggestSwing.delta).toFixed(1)}% win probability in a single stretch</div>`
     : '';
   const closestLine = recap.closestGame
     ? `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.winner.name}</b> over ${recap.closestGame.loser.name} by ${recap.closestGame.margin.toFixed(1)}</div>`
