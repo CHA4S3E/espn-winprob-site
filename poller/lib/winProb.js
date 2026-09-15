@@ -74,6 +74,26 @@ function getStatPoints(player, statSourceId) {
   return entry ? entry.appliedTotal || 0 : 0;
 }
 
+// A stable fingerprint of exactly who's in the starting lineup right now
+// (bench/IR excluded) -- just the sorted list of player IDs, joined into a
+// string. Sorted so the fingerprint never changes just because ESPN happens
+// to return the roster array in a different order; only an actual lineup
+// change (a real swap) changes this value. Used by poll.js/the DB layer to
+// tell "this team's expected_score jumped because a manager made a real
+// swap" apart from "this team's expected_score jumped for no reason" --
+// the latter being a strong signal of a bad ESPN read, the former being a
+// completely legitimate reason for a big, real jump.
+function buildLineupFingerprint(roster) {
+  const ids = [];
+  for (const entry of roster || []) {
+    if (entry.lineupSlotId === LINEUP_SLOT_BENCH || entry.lineupSlotId === LINEUP_SLOT_IR) continue;
+    const player = entry.playerPoolEntry?.player;
+    if (player && player.id != null) ids.push(player.id);
+  }
+  ids.sort((a, b) => a - b);
+  return ids.join(',');
+}
+
 // Sums the starting lineup only (bench/IR excluded), returning the expected
 // total, the summed *actual* live points (per-player, not ESPN's team-level
 // totalPoints field which can lag/stay stale mid-game), whether every
@@ -97,7 +117,7 @@ function teamExpected(roster, nflStatusMap) {
     if (done) doneCount++;
     else allDone = false;
   }
-  return { expected, actual, allDone, totalCount, doneCount };
+  return { expected, actual, allDone, totalCount, doneCount, lineupFingerprint: buildLineupFingerprint(roster) };
 }
 
 // Variance shrinks as the week plays out, but NOT based on point-value
@@ -174,6 +194,7 @@ module.exports = {
   normalCdf,
   playerExpected,
   teamExpected,
+  buildLineupFingerprint,
   computeDynamicStddev,
   winProbability,
   matchupWinProbability,
