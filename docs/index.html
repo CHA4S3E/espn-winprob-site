@@ -191,11 +191,13 @@
   .recap-card-value { font-size: 13px; line-height: 1.3; }
   .recap-card-value b { font-family: var(--font-display); font-weight: 400; }
   .recap-card-sub { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.3; }
-  /* A completed upset is the single most dramatic thing that can happen
-     in a week -- given its own accent border (reusing the same --upset
-     color the live alert uses elsewhere) so it visually stands out from
-     the other, more matter-of-fact stat cards without needing any motion. */
-  .recap-card-upset { border-color: var(--upset); border-width: 1.5px; }
+  /* The closing card (Upset/Threat/Near-Upset, or the Total Points
+     fallback on an uneventful week) always gets its own full-width row
+     and is centered within it, rather than landing wherever the grid's
+     auto-placement happens to put a leftover single item -- this reads
+     as a deliberate "closing" summary regardless of how many of the
+     other, conditional cards ended up showing that week. */
+  .recap-card-featured { grid-column: 1 / -1; max-width: 400px; margin: 0 auto; text-align: center; }
 
   /* ---- Live/Final status badges -- glow while genuinely live (all_starters_done
      is false, meaning the game could still move at any moment, even through a
