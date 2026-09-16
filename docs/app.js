@@ -349,60 +349,137 @@ function nearestByTs(sortedRows, targetTs) {
   return sortedRows[lo];
 }
 
-// ============================== BIGGEST SWING BANNER ==============================
-// Finds, across every matchup CURRENTLY LOADED (i.e. whichever league/week
-// is selected -- switching leagues naturally shows that league's own
-// swing, never a mix of both), whichever team gained the most win
-// probability over the last SWING_WINDOW_MS. If a matchup has less history
-// than the window, it gracefully compares against its earliest available
-// point instead of hiding entirely.
-const SWING_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-const MIN_SWING_TO_SHOW = 8; // percentage points -- below this, hide the banner rather than show noise
+// ============================== UPSET WATCH ==============================
+// Per-card alert (not a banner) that flags when a team who was heavily
+// favored has fallen far enough that a genuine upset is possible. Walks
+// the HOME win_prob sequence exactly once, in chronological order, using
+// a single state machine -- rather than checking "is win_prob currently
+// below 65" in isolation on every render, which has no memory of whether
+// anyone was ever actually dominant and would misfire on a game that
+// simply started close and stayed close.
+//
+// State machine (thresholds from home's perspective; away is always
+// 100 - home, so every threshold has a mirror-image counterpart):
+//   ARM:     home >= 90  -> home is the armed favorite (peak tracked)
+//            home <= 10  -> away is the armed favorite (peak = 100-home)
+//            Reaching either extreme always clears any prior watch --
+//            re-securing a commanding lead means the last scare is over.
+//   TRIGGER: armed=home and home drops below 65        -> watch on, away is the upset side
+//            armed=away and home rises above 35 (=100-65) -> watch on, home is the upset side
+//   CLEAR:   once watching, hitting the SAME 70 threshold from either
+//            direction turns watch off and fully un-arms both sides --
+//            hp >= 70 means the upset side clearly took over, hp <= 30
+//            (its mirror) means the original favorite clearly reclaimed
+//            control. Using one consistent number both ways matters: an
+//            earlier version only cleared via the favorite re-reaching
+//            the full 90 ARM threshold, which meant some games visibly
+//            cleared right around 70% while others didn't clear until
+//            90% -- an inconsistency that was a real bug, not a feature.
+//            Per spec, the newly-settled side only becomes "armed" again
+//            the next time it itself reaches the 90/10 extreme.
+// This naturally gives hysteresis (65 to trigger, 70 to clear) so a team
+// bouncing right around either line doesn't flicker the alert on and off,
+// and naturally supports a game flipping favorites multiple times, since
+// each arm/trigger/clear cycle is independent of any earlier one.
+//
+// This is pure client-side computation over snapshots that already exist
+// in the database -- it reads win_prob history, it never writes anything,
+// so it cannot create, duplicate, or otherwise affect any real snapshot
+// row, and has no interaction with the poller at all.
+const UPSET_ARM = 90;
+const UPSET_TRIGGER_LOW = 65; // home side triggers below this
+const UPSET_TRIGGER_HIGH = 100 - UPSET_TRIGGER_LOW; // away side triggers above this (35)
+const UPSET_CLEAR = 70; // the upset side reaching this many % clears the watch
 
-function computeBiggestSwing(byMatchup, teamInfo) {
-  let best = null;
-  for (const rows of Object.values(byMatchup)) {
-    const homeRow = rows.find((r) => r.is_home);
-    const awayRow = rows.find((r) => !r.is_home);
-    if (!homeRow || !awayRow) continue;
+// sortedHomeWinProbs: home's win_prob values in ascending ts order.
+// Returns the state as of the LAST value (for live card display) plus
+// every distinct triggered episode across the whole sequence (for the
+// weekly recap, which cares about the most dramatic moment of the whole
+// game, not just wherever things ended up).
+function walkUpsetState(sortedHomeWinProbs) {
+  let armed = null; // 'home' | 'away' | null
+  let peak = null; // the armed side's peak favorite % reached
+  let watch = false;
+  let upsetSide = null; // the side currently threatening the upset, while watch is true
+  let currentEpisode = null;
+  const episodes = [];
 
-    // Skip matchups that have gone stale (same freshness check that gates
-    // the "Live" badge -- see isRecentlyActive). Without this, a matchup
-    // that finished last night keeps comparing its same two final points
-    // forever, since nothing about its "latest" row ever changes once the
-    // game is over -- surfacing last night's swing indefinitely instead of
-    // disappearing once it's no longer actually happening.
-    if (!isRecentlyActive(rows)) continue;
-
-    const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
-    if (homeRows.length < 2) continue;
-
-    const latest = homeRows[homeRows.length - 1];
-    const targetTs = new Date(new Date(latest.ts).getTime() - SWING_WINDOW_MS).toISOString();
-    const past = nearestByTs(homeRows, targetTs);
-    if (!past || past === latest) continue;
-
-    const delta = latest.win_prob - past.win_prob; // positive = home gained ground
-    if (!best || Math.abs(delta) > Math.abs(best.delta)) {
-      const home = teamInfo[homeRow.team_id] || { name: 'Home' };
-      const away = teamInfo[awayRow.team_id] || { name: 'Away' };
-      best = { delta, gainer: delta > 0 ? home : away };
+  for (const hp of sortedHomeWinProbs) {
+    if (hp >= UPSET_ARM) {
+      if (armed !== 'home') {
+        armed = 'home'; peak = hp;
+        currentEpisode = { favoriteSide: 'home', peakFavoritePct: hp };
+      } else {
+        peak = Math.max(peak, hp);
+        currentEpisode.peakFavoritePct = peak;
+      }
+      watch = false; upsetSide = null;
+      continue;
+    }
+    if (hp <= 100 - UPSET_ARM) {
+      if (armed !== 'away') {
+        armed = 'away'; peak = 100 - hp;
+        currentEpisode = { favoriteSide: 'away', peakFavoritePct: peak };
+      } else {
+        peak = Math.max(peak, 100 - hp);
+        currentEpisode.peakFavoritePct = peak;
+      }
+      watch = false; upsetSide = null;
+      continue;
+    }
+    if (armed === 'home' && !watch && hp < UPSET_TRIGGER_LOW) {
+      watch = true; upsetSide = 'away';
+      episodes.push({ ...currentEpisode, upsetSide: 'away' });
+    } else if (armed === 'away' && !watch && hp > UPSET_TRIGGER_HIGH) {
+      watch = true; upsetSide = 'home';
+      episodes.push({ ...currentEpisode, upsetSide: 'home' });
+    }
+    // Clear uses ONE consistent threshold (UPSET_CLEAR, 70) regardless of
+    // which side ends up crossing it -- hp >= 70 means home reclaimed
+    // control, hp <= 30 (its mirror) means away did. Which of those two
+    // it is matters for what happens to `armed`, though:
+    //   - If the side that reclaims is the SAME side that was already
+    //     armed, that team already proved it could reach 90+ earlier in
+    //     this exact stretch -- surviving a scare and climbing back
+    //     doesn't erase that, so it stays armed with its peak intact,
+    //     only the scare itself (watch) clears. It does NOT need to
+    //     re-earn arming by climbing all the way back to 90.
+    //   - If the side that reclaims is the OTHER side (the one that was
+    //     threatening), that's a genuine changeover -- a different team
+    //     is now in charge, so the old arm status no longer applies and
+    //     that team must earn its own by reaching 90/10 itself.
+    if (watch) {
+      const homeReclaimed = hp >= UPSET_CLEAR;
+      const awayReclaimed = hp <= 100 - UPSET_CLEAR;
+      if (homeReclaimed || awayReclaimed) {
+        const reclaimingSide = homeReclaimed ? 'home' : 'away';
+        watch = false; upsetSide = null;
+        if (reclaimingSide !== armed) {
+          armed = null; peak = null; currentEpisode = null;
+        }
+      }
     }
   }
-  return best;
+
+  return { armed, peak, watch, upsetSide, episodes };
 }
 
-function renderSwingBanner(byMatchup, teamInfo) {
-  const banner = document.getElementById('swingBanner');
-  if (!banner) return;
-  const swing = computeBiggestSwing(byMatchup, teamInfo);
-  if (!swing || Math.abs(swing.delta) < MIN_SWING_TO_SHOW) {
-    banner.hidden = true;
-    return;
-  }
-  const pts = Math.abs(swing.delta).toFixed(1);
-  banner.textContent = `\ud83d\udd25 Biggest swing right now: ${swing.gainer.name} +${pts}% (last ~15 min)`;
-  banner.hidden = false;
+// Convenience wrapper for card rendering: given a matchup's rows and the
+// resolved home/away team objects, returns null if no live alert should
+// show, or { favorite, upsetTeam, favoritePeak, currentUpsetPct } if it
+// should. Per spec, the alert is cleared the moment the game ends, even
+// if the raw state machine would still say "watching" -- a completed
+// game's drama is over regardless of how close the final score was.
+function getLiveUpsetInfo(rows, home, away, allDone) {
+  if (allDone) return null;
+  const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (homeRows.length < 2) return null;
+  const { watch, armed, peak, upsetSide } = walkUpsetState(homeRows.map((r) => r.win_prob));
+  if (!watch) return null;
+  const favorite = armed === 'home' ? home : away;
+  const upsetTeam = upsetSide === 'home' ? home : away;
+  const currentUpsetPct = upsetSide === 'home' ? homeRows[homeRows.length - 1].win_prob : 100 - homeRows[homeRows.length - 1].win_prob;
+  return { favorite, upsetTeam, favoritePeak: peak, currentUpsetPct };
 }
 
 // ============================== WEEKLY RECAP ==============================
@@ -430,6 +507,7 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
   const summaries = [];
   let biggestSwing = null;
   let closestGame = null;
+  let biggestUpset = null;
 
   for (const matchupId of matchupIds) {
     const rows = byMatchup[matchupId];
@@ -472,9 +550,33 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     if (swing && (!biggestSwing || Math.abs(swing.delta) > Math.abs(biggestSwing.delta))) {
       biggestSwing = { delta: swing.delta, gainer: swing.delta > 0 ? home : away };
     }
+
+    // Upset watch, scanned across this matchup's FULL history (not just
+    // whatever's currently live) -- picks whichever triggered episode
+    // reached the most extreme favorite peak, since that's the single
+    // most dramatic "this looked all but over" moment of the game. Then
+    // checked against the real final winner (already computed above) to
+    // tell an actual completed upset apart from a threat the favorite
+    // ultimately survived.
+    const { episodes } = walkUpsetState(homeRows.map((r) => r.win_prob));
+    if (episodes.length) {
+      const topEpisode = episodes.reduce((best, e) => (!best || e.peakFavoritePct > best.peakFavoritePct ? e : best), null);
+      const favoriteTeam = topEpisode.favoriteSide === 'home' ? home : away;
+      const upsetTeam = topEpisode.upsetSide === 'home' ? home : away;
+      const upsetHappened = !isTie && winner === upsetTeam;
+      if (!biggestUpset || topEpisode.peakFavoritePct > biggestUpset.favoritePeak) {
+        biggestUpset = {
+          favorite: favoriteTeam,
+          upsetTeam,
+          favoritePeak: topEpisode.peakFavoritePct,
+          upsetHappened,
+          backAndForth: episodes.length > 1,
+        };
+      }
+    }
   }
 
-  return { summaries, biggestSwing, closestGame };
+  return { summaries, biggestSwing, closestGame, biggestUpset };
 }
 
 function renderRecapBanner(byMatchup, teamInfo) {
@@ -504,12 +606,18 @@ function renderRecapBanner(byMatchup, teamInfo) {
       ? `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.home.name}</b> and ${recap.closestGame.away.name} tied exactly</div>`
       : `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.winner.name}</b> over ${recap.closestGame.loser.name} by ${recap.closestGame.margin.toFixed(1)}</div>`
     : '';
+  const upsetLine = recap.biggestUpset
+    ? recap.biggestUpset.upsetHappened
+      ? `<div class="recap-highlight">\ud83d\udea8 <b>BIGGEST UPSET:</b> <b style="color:${recap.biggestUpset.upsetTeam.color}">${recap.biggestUpset.upsetTeam.name}</b> defeated ${recap.biggestUpset.favorite.name} after ${recap.biggestUpset.favorite.name} reached a ${Math.round(recap.biggestUpset.favoritePeak)}% win probability${recap.biggestUpset.backAndForth ? ', in a game that swung more than once' : ''}</div>`
+      : `<div class="recap-highlight">\ud83d\udea8 Upset threat: <b>${recap.biggestUpset.upsetTeam.name}</b> pushed <b>${recap.biggestUpset.favorite.name}</b> (up to ${Math.round(recap.biggestUpset.favoritePeak)}% at their peak) to the brink, but ${recap.biggestUpset.favorite.name} held on</div>`
+    : '';
 
   banner.innerHTML = `
     <div class="recap-title">Week Recap</div>
     <div class="recap-scores">${scoreLines}</div>
     ${swingLine}
     ${closestLine}
+    ${upsetLine}
   `;
   banner.hidden = false;
 }
@@ -655,7 +763,10 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
   const titleClass = compact ? 'postcard-title' : 'matchup-title';
   const chartBoxClass = compact ? 'postcard-chartBox' : 'chartBox';
   const isLive = !allDone && isRecentlyActive(rows);
+  const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
+  if (upsetInfo) card.classList.add('upset-watch');
   card.innerHTML = `
+    <div class="upset-watch-badge${upsetInfo ? ' active' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="${titleClass}">
       <span><b style="color:${home.color}">${home.name}</b> vs <b style="color:${away.color}">${away.name}</b>
         <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
@@ -783,6 +894,14 @@ function updateLineChartCard(entry, rows, home, away, allDone) {
 
   const blurb = entry.chart.canvas.closest('.matchup-card, .postcard')?.querySelector('.why-blurb');
   if (blurb) blurb.textContent = explainMatchup(rows, home, away, allDone);
+
+  const card = entry.chart.canvas.closest('.matchup-card, .postcard');
+  const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
+  if (card) {
+    card.classList.toggle('upset-watch', !!upsetInfo);
+    const upsetBadge = card.querySelector('.upset-watch-badge');
+    if (upsetBadge) upsetBadge.classList.toggle('active', !!upsetInfo);
+  }
 }
 
 function renderTimelineCard(rows, home, away, allDone) {
@@ -881,10 +1000,12 @@ function renderNeedleCard(rows, home, away, allDone) {
   const homePct = latestPct(rows);
   const verdict = needleVerdict(homePct, home, away);
   const isLive = !allDone && isRecentlyActive(rows);
+  const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
 
   const card = document.createElement('div');
-  card.className = 'needle-card';
+  card.className = 'needle-card' + (upsetInfo ? ' upset-watch' : '');
   card.innerHTML = `
+    <div class="upset-watch-badge${upsetInfo ? ' active' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</div>
     <div class="needle-gauge">${buildNeedleSvg(home, away)}</div>
     <div class="needle-verdict" style="color:${verdict.color}">${verdict.text}</div>
@@ -913,6 +1034,11 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
   verdictEl.style.color = verdict.color;
   const needle = card.querySelector('.needle-pointer');
   if (needle) needle.style.transform = `rotate(${needleRotationDeg(homePct)}deg)`;
+
+  const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
+  card.classList.toggle('upset-watch', !!upsetInfo);
+  const upsetBadge = card.querySelector('.upset-watch-badge');
+  if (upsetBadge) upsetBadge.classList.toggle('active', !!upsetInfo);
 
   const blurb = card.querySelector('.why-blurb');
   if (blurb) blurb.textContent = explainMatchup(rows, home, away, allDone);
@@ -996,9 +1122,11 @@ function setEspnPctLabels(canvas, homePct, { animate = true } = {}) {
 function renderEspnCard(rows, home, away, allDone) {
   const homePct = latestPct(rows);
   const isLive = !allDone && isRecentlyActive(rows);
+  const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
   const card = document.createElement('div');
-  card.className = 'espn-card';
+  card.className = 'espn-card' + (upsetInfo ? ' upset-watch' : '');
   card.innerHTML = `
+    <div class="upset-watch-badge${upsetInfo ? ' active' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="espn-header">
       <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
       <div class="why-blurb" hidden>${explainMatchup(rows, home, away, allDone)}</div>
@@ -1239,6 +1367,14 @@ function updateEspnCard(entry, rows, home, away, allDone) {
 
   const blurb = chart.canvas.closest('.espn-card')?.querySelector('.why-blurb');
   if (blurb) blurb.textContent = explainMatchup(rows, home, away, allDone);
+
+  const card = chart.canvas.closest('.espn-card');
+  const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
+  if (card) {
+    card.classList.toggle('upset-watch', !!upsetInfo);
+    const upsetBadge = card.querySelector('.upset-watch-badge');
+    if (upsetBadge) upsetBadge.classList.toggle('active', !!upsetInfo);
+  }
 }
 
 const VIEW_RENDERERS = {
@@ -1272,7 +1408,6 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     return; // don't wipe an existing view over a transient refresh error
   }
 
-  renderSwingBanner(byMatchup, teamInfo);
   renderRecapBanner(byMatchup, teamInfo);
 
   const { render, update } = VIEW_RENDERERS[viewMode];
