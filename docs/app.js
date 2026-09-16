@@ -21,6 +21,9 @@ function systemPrefersDark() {
 }
 let theme = localStorage.getItem('winProbTheme') || (systemPrefersDark() ? 'dark' : 'light'); // 'light' | 'dark'
 let tooltipDetail = localStorage.getItem('winProbTooltipDetail') || 'condensed'; // 'condensed' | 'full' -- set on preferences.html
+// Defaults on (only off if explicitly set to 'false') -- shows, on hover
+// in ESPN view, whether Upset Watch was active at that historical point.
+let showUpsetHistory = localStorage.getItem('winProbShowUpsetHistory') !== 'false'; // set on preferences.html
 document.documentElement.setAttribute('data-theme', theme);
 
 // ============================== THEME / COLOR ADJUSTMENT ==============================
@@ -396,7 +399,11 @@ const UPSET_CLEAR = 70; // the upset side reaching this many % clears the watch
 // every distinct triggered episode across the whole sequence (for the
 // weekly recap, which cares about the most dramatic moment of the whole
 // game, not just wherever things ended up).
-function walkUpsetState(sortedHomeWinProbs) {
+//
+// onStep, if given, is called once per input value with the `watch` state
+// as of THAT point -- used to build a hover-over-history lookup (see
+// getUpsetWatchHistoryMap) without duplicating this whole state machine.
+function walkUpsetState(sortedHomeWinProbs, onStep) {
   let armed = null; // 'home' | 'away' | null
   let peak = null; // the armed side's peak favorite % reached
   let watch = false;
@@ -414,9 +421,7 @@ function walkUpsetState(sortedHomeWinProbs) {
         currentEpisode.peakFavoritePct = peak;
       }
       watch = false; upsetSide = null;
-      continue;
-    }
-    if (hp <= 100 - UPSET_ARM) {
+    } else if (hp <= 100 - UPSET_ARM) {
       if (armed !== 'away') {
         armed = 'away'; peak = 100 - hp;
         currentEpisode = { favoriteSide: 'away', peakFavoritePct: peak };
@@ -425,40 +430,41 @@ function walkUpsetState(sortedHomeWinProbs) {
         currentEpisode.peakFavoritePct = peak;
       }
       watch = false; upsetSide = null;
-      continue;
-    }
-    if (armed === 'home' && !watch && hp < UPSET_TRIGGER_LOW) {
-      watch = true; upsetSide = 'away';
-      episodes.push({ ...currentEpisode, upsetSide: 'away' });
-    } else if (armed === 'away' && !watch && hp > UPSET_TRIGGER_HIGH) {
-      watch = true; upsetSide = 'home';
-      episodes.push({ ...currentEpisode, upsetSide: 'home' });
-    }
-    // Clear uses ONE consistent threshold (UPSET_CLEAR, 70) regardless of
-    // which side ends up crossing it -- hp >= 70 means home reclaimed
-    // control, hp <= 30 (its mirror) means away did. Which of those two
-    // it is matters for what happens to `armed`, though:
-    //   - If the side that reclaims is the SAME side that was already
-    //     armed, that team already proved it could reach 90+ earlier in
-    //     this exact stretch -- surviving a scare and climbing back
-    //     doesn't erase that, so it stays armed with its peak intact,
-    //     only the scare itself (watch) clears. It does NOT need to
-    //     re-earn arming by climbing all the way back to 90.
-    //   - If the side that reclaims is the OTHER side (the one that was
-    //     threatening), that's a genuine changeover -- a different team
-    //     is now in charge, so the old arm status no longer applies and
-    //     that team must earn its own by reaching 90/10 itself.
-    if (watch) {
-      const homeReclaimed = hp >= UPSET_CLEAR;
-      const awayReclaimed = hp <= 100 - UPSET_CLEAR;
-      if (homeReclaimed || awayReclaimed) {
-        const reclaimingSide = homeReclaimed ? 'home' : 'away';
-        watch = false; upsetSide = null;
-        if (reclaimingSide !== armed) {
-          armed = null; peak = null; currentEpisode = null;
+    } else {
+      if (armed === 'home' && !watch && hp < UPSET_TRIGGER_LOW) {
+        watch = true; upsetSide = 'away';
+        episodes.push({ ...currentEpisode, upsetSide: 'away' });
+      } else if (armed === 'away' && !watch && hp > UPSET_TRIGGER_HIGH) {
+        watch = true; upsetSide = 'home';
+        episodes.push({ ...currentEpisode, upsetSide: 'home' });
+      }
+      // Clear uses ONE consistent threshold (UPSET_CLEAR, 70) regardless
+      // of which side ends up crossing it -- hp >= 70 means home
+      // reclaimed control, hp <= 30 (its mirror) means away did. Which of
+      // those two it is matters for what happens to `armed`, though:
+      //   - If the side that reclaims is the SAME side that was already
+      //     armed, that team already proved it could reach 90+ earlier in
+      //     this exact stretch -- surviving a scare and climbing back
+      //     doesn't erase that, so it stays armed with its peak intact,
+      //     only the scare itself (watch) clears. It does NOT need to
+      //     re-earn arming by climbing all the way back to 90.
+      //   - If the side that reclaims is the OTHER side (the one that was
+      //     threatening), that's a genuine changeover -- a different team
+      //     is now in charge, so the old arm status no longer applies and
+      //     that team must earn its own by reaching 90/10 itself.
+      if (watch) {
+        const homeReclaimed = hp >= UPSET_CLEAR;
+        const awayReclaimed = hp <= 100 - UPSET_CLEAR;
+        if (homeReclaimed || awayReclaimed) {
+          const reclaimingSide = homeReclaimed ? 'home' : 'away';
+          watch = false; upsetSide = null;
+          if (reclaimingSide !== armed) {
+            armed = null; peak = null; currentEpisode = null;
+          }
         }
       }
     }
+    if (onStep) onStep(watch);
   }
 
   return { armed, peak, watch, upsetSide, episodes };
@@ -480,6 +486,24 @@ function getLiveUpsetInfo(rows, home, away, allDone) {
   const upsetTeam = upsetSide === 'home' ? home : away;
   const currentUpsetPct = upsetSide === 'home' ? homeRows[homeRows.length - 1].win_prob : 100 - homeRows[homeRows.length - 1].win_prob;
   return { favorite, upsetTeam, favoritePeak: peak, currentUpsetPct };
+}
+
+// For ESPN view's hover-over-history feature (see preferences.html): a
+// map from each of a team's own snapshot timestamps to whether Upset
+// Watch was active as of THAT specific historical point, not just
+// whatever the state happens to be right now. Built by replaying the
+// same state machine via walkUpsetState's onStep callback rather than
+// duplicating its logic, so this can never drift out of sync with the
+// live behavior.
+function getUpsetWatchHistoryMap(rows) {
+  const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const map = new Map();
+  let i = 0;
+  walkUpsetState(homeRows.map((r) => r.win_prob), (watchNow) => {
+    map.set(homeRows[i].ts, watchNow);
+    i++;
+  });
+  return map;
 }
 
 // ============================== WEEKLY RECAP ==============================
@@ -749,7 +773,7 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
   if (upsetInfo) card.classList.add('upset-watch');
   card.innerHTML = `
-    <div class="upset-watch-badge${upsetInfo ? ' active' : ''}">\ud83d\udea8 UPSET WATCH</div>
+    <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="${titleClass}">
       <span><b style="color:${home.color}">${home.name}</b> vs <b style="color:${away.color}">${away.name}</b>
         <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
@@ -883,7 +907,10 @@ function updateLineChartCard(entry, rows, home, away, allDone) {
   if (card) {
     card.classList.toggle('upset-watch', !!upsetInfo);
     const upsetBadge = card.querySelector('.upset-watch-badge');
-    if (upsetBadge) upsetBadge.classList.toggle('active', !!upsetInfo);
+    if (upsetBadge) {
+      upsetBadge.classList.toggle('visible', !!upsetInfo);
+      upsetBadge.classList.toggle('pulsing', !!upsetInfo);
+    }
   }
 }
 
@@ -988,7 +1015,7 @@ function renderNeedleCard(rows, home, away, allDone) {
   const card = document.createElement('div');
   card.className = 'needle-card' + (upsetInfo ? ' upset-watch' : '');
   card.innerHTML = `
-    <div class="upset-watch-badge${upsetInfo ? ' active' : ''}">\ud83d\udea8 UPSET WATCH</div>
+    <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</div>
     <div class="needle-gauge">${buildNeedleSvg(home, away)}</div>
     <div class="needle-verdict" style="color:${verdict.color}">${verdict.text}</div>
@@ -1021,7 +1048,10 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
   card.classList.toggle('upset-watch', !!upsetInfo);
   const upsetBadge = card.querySelector('.upset-watch-badge');
-  if (upsetBadge) upsetBadge.classList.toggle('active', !!upsetInfo);
+  if (upsetBadge) {
+    upsetBadge.classList.toggle('visible', !!upsetInfo);
+    upsetBadge.classList.toggle('pulsing', !!upsetInfo);
+  }
 
   const blurb = card.querySelector('.why-blurb');
   if (blurb) blurb.textContent = explainMatchup(rows, home, away, allDone);
@@ -1102,6 +1132,18 @@ function setEspnPctLabels(canvas, homePct, { animate = true } = {}) {
   }
 }
 
+// Sets the ESPN card's upset badge text and independently controls its
+// visibility and pulsing -- used both for the live current-state display
+// and for the hover-over-history feature, which shows the plain text
+// with no pulse regardless of how dramatic the historical moment was.
+function setUpsetBadgeState(canvas, { text, visible, pulsing }) {
+  const badge = canvas.closest('.espn-card')?.querySelector('.upset-watch-badge');
+  if (!badge) return;
+  badge.textContent = text;
+  badge.classList.toggle('visible', visible);
+  badge.classList.toggle('pulsing', pulsing);
+}
+
 function renderEspnCard(rows, home, away, allDone) {
   const homePct = latestPct(rows);
   const isLive = !allDone && isRecentlyActive(rows);
@@ -1109,7 +1151,7 @@ function renderEspnCard(rows, home, away, allDone) {
   const card = document.createElement('div');
   card.className = 'espn-card' + (upsetInfo ? ' upset-watch' : '');
   card.innerHTML = `
-    <div class="upset-watch-badge${upsetInfo ? ' active' : ''}">\ud83d\udea8 UPSET WATCH</div>
+    <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="espn-header">
       <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
       <div class="why-blurb" hidden>${explainMatchup(rows, home, away, allDone)}</div>
@@ -1139,7 +1181,15 @@ function renderEspnCard(rows, home, away, allDone) {
   // currentHomePct is kept in sync on every refresh (see updateEspnCard) so
   // that moving the mouse away always snaps back to the real live value,
   // never a stale one captured back when this chart was first created.
-  const state = { dayTicks, currentHomePct: homePct };
+  // upsetHistoryMap and currentUpsetInfo are similarly kept fresh so a
+  // hover always reflects the latest data, not whatever existed when this
+  // card was first created.
+  const state = {
+    dayTicks,
+    currentHomePct: homePct,
+    upsetHistoryMap: getUpsetWatchHistoryMap(rows),
+    currentUpsetInfo: upsetInfo,
+  };
   const canvas = card.querySelector('canvas');
 
   const chart = new Chart(canvas.getContext('2d'), {
@@ -1308,6 +1358,20 @@ function renderEspnCard(rows, home, away, allDone) {
     chart.data.datasets[2].hidden = false;
     chart.update('none');
     setEspnPctLabels(canvas, nearest.y, { animate: false });
+
+    // Historical upset-watch hover (gated on the preference, defaulting
+    // on). `nearest.ts` is undefined for the synthetic 50%-crossing
+    // points withCrossings inserts (they don't correspond to a real
+    // snapshot), so those naturally fall through to "not active" rather
+    // than needing a separate check. No pulsing here regardless of
+    // whether it was active -- a past moment isn't a live alert, so it
+    // gets the plain visible-but-static text, never the glow.
+    if (showUpsetHistory) {
+      const wasActive = chart._state.upsetHistoryMap.get(nearest.ts);
+      setUpsetBadgeState(canvas, wasActive
+        ? { text: '\ud83d\udea8 Upset Watch was active here', visible: true, pulsing: false }
+        : { text: '\ud83d\udea8 UPSET WATCH', visible: false, pulsing: false });
+    }
   });
 
   canvas.addEventListener('mouseleave', () => {
@@ -1316,6 +1380,13 @@ function renderEspnCard(rows, home, away, allDone) {
     chart.data.datasets[2].hidden = true;
     chart.update('none');
     setEspnPctLabels(canvas, chart._state.currentHomePct, { animate: false });
+    // Revert the badge to whatever the CURRENT live state actually is
+    // (kept fresh on every refresh -- see updateEspnCard), not whatever
+    // text the hover happened to leave behind.
+    if (showUpsetHistory) {
+      const info = chart._state.currentUpsetInfo;
+      setUpsetBadgeState(canvas, { text: '\ud83d\udea8 UPSET WATCH', visible: !!info, pulsing: !!info });
+    }
   });
 
   return { card, entry: { mode: 'espn', chart } };
@@ -1353,10 +1424,15 @@ function updateEspnCard(entry, rows, home, away, allDone) {
 
   const card = chart.canvas.closest('.espn-card');
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
+  chart._state.upsetHistoryMap = getUpsetWatchHistoryMap(rows);
+  chart._state.currentUpsetInfo = upsetInfo;
   if (card) {
     card.classList.toggle('upset-watch', !!upsetInfo);
-    const upsetBadge = card.querySelector('.upset-watch-badge');
-    if (upsetBadge) upsetBadge.classList.toggle('active', !!upsetInfo);
+    // Same hovering guard as the pct labels above -- a background refresh
+    // shouldn't yank a historical hover state out from under someone.
+    if (!isHovering) {
+      setUpsetBadgeState(chart.canvas, { text: '\ud83d\udea8 UPSET WATCH', visible: !!upsetInfo, pulsing: !!upsetInfo });
+    }
   }
 }
 
