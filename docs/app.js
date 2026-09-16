@@ -571,6 +571,9 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
           upsetTeam,
           favoritePeak: topEpisode.peakFavoritePct,
           upsetHappened,
+          isTie, // the game this episode belongs to ended in a tie -- neither
+                 // "defeated" nor "held on" is accurate then, so the render
+                 // step needs a third, tie-specific message
           backAndForth: episodes.length > 1,
         };
       }
@@ -608,9 +611,11 @@ function renderRecapBanner(byMatchup, teamInfo) {
       : `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.winner.name}</b> over ${recap.closestGame.loser.name} by ${recap.closestGame.margin.toFixed(1)}</div>`
     : '';
   const upsetLine = recap.biggestUpset
-    ? recap.biggestUpset.upsetHappened
-      ? `<div class="recap-highlight">\ud83d\udea8 <b>BIGGEST UPSET:</b> <b style="color:${recap.biggestUpset.upsetTeam.color}">${recap.biggestUpset.upsetTeam.name}</b> defeated ${recap.biggestUpset.favorite.name} after ${recap.biggestUpset.favorite.name} reached a ${Math.round(recap.biggestUpset.favoritePeak)}% win probability${recap.biggestUpset.backAndForth ? ', in a game that swung more than once' : ''}</div>`
-      : `<div class="recap-highlight">\ud83d\udea8 Upset threat: <b>${recap.biggestUpset.upsetTeam.name}</b> pushed <b>${recap.biggestUpset.favorite.name}</b> (up to ${Math.round(recap.biggestUpset.favoritePeak)}% at their peak) to the brink, but ${recap.biggestUpset.favorite.name} held on</div>`
+    ? recap.biggestUpset.isTie
+      ? `<div class="recap-highlight">\ud83e\udd1d Near-upset: <b>${recap.biggestUpset.upsetTeam.name}</b> pushed <b>${recap.biggestUpset.favorite.name}</b> (up to ${Math.round(recap.biggestUpset.favoritePeak)}% at their peak) all the way to a tie</div>`
+      : recap.biggestUpset.upsetHappened
+        ? `<div class="recap-highlight">\ud83d\udea8 <b>BIGGEST UPSET:</b> <b style="color:${recap.biggestUpset.upsetTeam.color}">${recap.biggestUpset.upsetTeam.name}</b> defeated ${recap.biggestUpset.favorite.name} after ${recap.biggestUpset.favorite.name} reached a ${Math.round(recap.biggestUpset.favoritePeak)}% win probability${recap.biggestUpset.backAndForth ? ', in a game that swung more than once' : ''}</div>`
+        : `<div class="recap-highlight">\ud83d\udea8 Upset threat: <b>${recap.biggestUpset.upsetTeam.name}</b> pushed <b>${recap.biggestUpset.favorite.name}</b> (up to ${Math.round(recap.biggestUpset.favoritePeak)}% at their peak) to the brink, but ${recap.biggestUpset.favorite.name} held on</div>`
     : '';
 
   banner.innerHTML = `
