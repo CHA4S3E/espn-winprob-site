@@ -46,6 +46,9 @@
     --live: #c0392b;
     --live-glow-a: rgba(192, 57, 43, 0.45);
     --live-glow-b: rgba(192, 57, 43, 0.9);
+    --upset: #e8590c;
+    --upset-glow-a: rgba(232, 89, 12, 0.35);
+    --upset-glow-b: rgba(232, 89, 12, 0.85);
     /* Doppio One for team names/percentages/headings -- a display face
        that's already bold-by-design (it only ships in a single weight, no
        separate Bold variant, so display-font elements below deliberately
@@ -76,6 +79,9 @@
     --live: #e0574a;
     --live-glow-a: rgba(224, 87, 74, 0.5);
     --live-glow-b: rgba(224, 87, 74, 1);
+    --upset: #ff8a3d;
+    --upset-glow-a: rgba(255, 138, 61, 0.4);
+    --upset-glow-b: rgba(255, 138, 61, 0.9);
   }
 
   body { font-family: var(--font-body); background: var(--bg); margin: 0; padding: 30px; color: var(--fg); transition: background 0.2s, color 0.2s; }
@@ -118,12 +124,6 @@
 
   #status { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
 
-  #swingBanner {
-    text-align: center; font-size: 13px; font-weight: 600;
-    background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px;
-    padding: 6px 16px; margin: 0 auto 16px; max-width: fit-content;
-  }
-
   #recapBanner {
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
     padding: 16px 20px; margin: 0 auto 20px; max-width: 520px;
@@ -141,6 +141,40 @@
   @keyframes liveGlow {
     0%, 100% { text-shadow: 0 0 3px var(--live-glow-a); }
     50% { text-shadow: 0 0 9px var(--live-glow-b), 0 0 3px var(--live-glow-a); }
+  }
+  /* ---- Upset Watch -- a per-card alert, not a banner. Pulses the card's
+     own border and a centered badge together, using the same alert color
+     for both so they read as one coordinated signal, kept noticeably
+     calmer than the Live-badge glow above so it's attention-getting
+     without competing with the chart itself. Uses box-shadow rather than
+     changing border-width, so nothing in the card's layout ever shifts by
+     even a pixel while it pulses. ---- */
+  @keyframes upsetPulse {
+    0%, 100% { box-shadow: inset 0 0 0 1px var(--upset), 0 0 6px var(--upset-glow-a); }
+    50% { box-shadow: inset 0 0 0 1px var(--upset), 0 0 16px var(--upset-glow-b); }
+  }
+  @keyframes upsetTextPulse {
+    0%, 100% { opacity: 0.8; text-shadow: 0 0 3px var(--upset-glow-a); }
+    50% { opacity: 1; text-shadow: 0 0 8px var(--upset-glow-b); }
+  }
+  .upset-watch { animation: upsetPulse 2.4s ease-in-out infinite; }
+  /* Height/line-height/margin are reserved unconditionally, whether or not
+     the alert is currently active -- toggling only `visibility` (never
+     `display`, and never rendered/removed via the `hidden` attribute)
+     means the card's total height never changes when upset watch turns on
+     or off, so sibling cards never shift position. The animation itself
+     is gated on .active so an inactive, invisible badge isn't still
+     animating in the background for no reason. */
+  .upset-watch-badge {
+    text-align: center; font-family: var(--font-display); font-weight: 400;
+    font-size: var(--text-sm); letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--upset); margin-bottom: 6px;
+    height: 1.1em; line-height: 1.1em;
+    visibility: hidden;
+  }
+  .upset-watch-badge.active {
+    visibility: visible;
+    animation: upsetTextPulse 2.4s ease-in-out infinite;
   }
   @keyframes cardEnter {
     from { opacity: 0; transform: translateY(10px); }
@@ -167,9 +201,21 @@
   #matchups > :nth-child(8) { animation-delay: 0.30s; }
   #matchups > :nth-child(9) { animation-delay: 0.34s; }
   #matchups > :nth-child(n+10) { animation-delay: 0.38s; }
+  /* When a card is both freshly inserted (cardEnter, above) and already
+     upset-watching, a plain .upset-watch rule would win the `animation`
+     shorthand outright and silently drop the entrance fade -- a single
+     element can only run whichever value wins the cascade, not both,
+     unless they're explicitly listed together. This compound selector
+     (higher specificity than either single-class rule) runs both as one
+     comma-separated list whenever both classes coexist. */
+  .matchup-card.upset-watch, .postcard.upset-watch, .needle-card.upset-watch, .espn-card.upset-watch {
+    animation: cardEnter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both, upsetPulse 2.4s ease-in-out infinite;
+  }
   @media (prefers-reduced-motion: reduce) {
     .live { animation: none !important; }
     .matchup-card, .postcard, .needle-card, .espn-card { animation: none !important; }
+    .upset-watch { animation: none !important; box-shadow: inset 0 0 0 1.5px var(--upset) !important; }
+    .upset-watch-badge.active { animation: none !important; opacity: 1; }
   }
 
   /* ---- "Why is this the number?" button + blurb, shared across all views ---- */
@@ -247,7 +293,6 @@
   <h2>Fantasy Win Probability</h2>
   <div class="sub">Updates automatically every ~1 minute while games are live.</div>
 
-  <div id="swingBanner" hidden></div>
   <div id="recapBanner" hidden></div>
 
   <div id="controls">
