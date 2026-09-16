@@ -1385,15 +1385,29 @@ function renderEspnCard(rows, home, away, allDone) {
     // Historical upset-watch hover (gated on the preference, defaulting
     // on). Looked up via nearestByTs, not an exact match -- see
     // getUpsetWatchHistory's comment for why exact matching flickered.
-    // No pulsing here regardless of whether it was active -- a past
-    // moment isn't a live alert, so it gets the plain visible-but-static
-    // text, never the glow.
+    // Never pulses here regardless of the case below -- only the CARD's
+    // own border glow (untouched by any of this, see updateEspnCard)
+    // reflects the live state with motion; hovering only ever changes
+    // static text.
+    //   - The hovered point WAS during an episode -> say so.
+    //   - It wasn't, but the game IS currently under a live alert
+    //     elsewhere on the timeline (the border is still pulsing right
+    //     now, entirely independent of whatever's hovered) -> keep the
+    //     badge visible and say so, rather than going blank next to a
+    //     border that's still visibly glowing -- a blank badge next to a
+    //     pulsing border reads as broken, not informative.
+    //   - Neither -> nothing to show.
     if (showUpsetHistory && chart._state.upsetHistory.length) {
       const nearestEntry = nearestByTs(chart._state.upsetHistory, nearest.ts);
       const wasActive = nearestEntry ? nearestEntry.watch : false;
-      setUpsetBadgeState(canvas, wasActive
-        ? { text: '\ud83d\udea8 Upset Watch was active here', visible: true, pulsing: false }
-        : { text: '\ud83d\udea8 UPSET WATCH', visible: false, pulsing: false });
+      const isCurrentlyLive = !!chart._state.currentUpsetInfo;
+      if (wasActive) {
+        setUpsetBadgeState(canvas, { text: '\ud83d\udea8 Upset Watch was active here', visible: true, pulsing: false });
+      } else if (isCurrentlyLive) {
+        setUpsetBadgeState(canvas, { text: '\ud83d\udea8 UPSET WATCH', visible: true, pulsing: false });
+      } else {
+        setUpsetBadgeState(canvas, { text: '\ud83d\udea8 UPSET WATCH', visible: false, pulsing: false });
+      }
     }
   });
 
