@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <title>Fantasy Win Probability Tracker</title>
+<!-- Inline SVG data URI rather than a hosted image file -- keeps the
+     favicon self-contained in this one file, matching how the rest of
+     the site avoids separate asset files. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%F0%9F%8F%88</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -83,6 +87,13 @@
     --upset-glow-a: rgba(255, 138, 61, 0.4);
     --upset-glow-b: rgba(255, 138, 61, 0.9);
   }
+
+  /* Highlighted/selected text uses the theme's own accent color rather
+     than the browser default blue -- automatically swaps between light
+     and dark mode's accent since it reads the same --accent variable
+     everything else on the page already uses. */
+  ::selection { background: var(--accent); color: #fff; }
+  ::-moz-selection { background: var(--accent); color: #fff; }
 
   body { font-family: var(--font-body); background: var(--bg); margin: 0; padding: 30px; color: var(--fg); transition: background 0.2s, color 0.2s; }
   /* Canvases default to display:inline, which reserves a few pixels of
