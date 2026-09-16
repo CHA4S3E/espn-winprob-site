@@ -1090,6 +1090,70 @@ function computeChartPoints(homeRows, awayRows) {
 
 function midY(segCtx) { return (segCtx.p0.parsed.y + segCtx.p1.parsed.y) / 2; }
 
+// Builds the two vertical fill gradients used under the win-probability
+// line: for the home side, fully saturated at the very top of the chart
+// (100%) fading down to nearly transparent at the 50% line; for away,
+// the mirror image anchored at the bottom (0%). This replaces an earlier
+// version that picked a single FLAT alpha per line segment based on how
+// far that segment's value was from 50 -- which produced a blocky,
+// stepped look tied to the line's shape. A true canvas gradient instead
+// anchors its fade to fixed positions on the Y-AXIS itself, independent
+// of the line's value at any given x, so the fill looks like a smooth,
+// continuous wash regardless of how the line moves -- and it's still
+// naturally "cropped" to only the leading side, since Chart.js only ever
+// paints this fill between the line and the 50-value baseline in the
+// first place (see the `fill: { target: { value: 50 } }` dataset option
+// wherever this is used).
+//
+// Cached on the chart instance and only rebuilt when the chart area or
+// colors actually change (resize, theme swap), rather than recreated on
+// every one of Chart.js's many per-segment callback invocations.
+function getBandGradients(chart, homeColor, awayColor) {
+  const area = chart.chartArea;
+  if (!area) return null;
+  const midPixelY = chart.scales.y.getPixelForValue(50);
+  const cacheKey = `${area.top}|${area.bottom}|${midPixelY}|${homeColor}|${awayColor}`;
+  if (chart._bandGradientCache && chart._bandGradientCache.key === cacheKey) {
+    return chart._bandGradientCache;
+  }
+  const ctx = chart.ctx;
+  const homeGradient = ctx.createLinearGradient(0, area.top, 0, midPixelY);
+  homeGradient.addColorStop(0, colorWithAlpha(homeColor, 0.34));
+  homeGradient.addColorStop(1, colorWithAlpha(homeColor, 0.02));
+  const awayGradient = ctx.createLinearGradient(0, midPixelY, 0, area.bottom);
+  awayGradient.addColorStop(0, colorWithAlpha(awayColor, 0.02));
+  awayGradient.addColorStop(1, colorWithAlpha(awayColor, 0.34));
+  const cache = { key: cacheKey, home: homeGradient, away: awayGradient };
+  chart._bandGradientCache = cache;
+  return cache;
+}
+
+// Builds a vertical canvas gradient for a chart segment's win-probability
+// fill -- fully colored at that team's own 100% (the top of the chart
+// for home, the bottom for away, since the shared y-axis is always
+// home's own percentage), fading to fully transparent by the 50% line.
+// Replaces the old approach (a flat color whose ALPHA scaled with each
+// segment's distance from 50), which could look mottled or banded on a
+// choppy line -- lots of small segments, each independently landing on
+// a slightly different alpha, rather than one smooth continuous fade.
+// Computed fresh from the chart's current y-scale pixel mapping every
+// time a segment is drawn: CanvasGradient objects are cheap to create,
+// and the scale's pixel layout isn't actually known until Chart.js is
+// mid-render anyway, so there's no earlier point this could be
+// precomputed once and cached.
+function segmentFillGradient(segmentCtx, homeColor, awayColor) {
+  const chart = segmentCtx.chart;
+  const yScale = chart.scales.y;
+  const above = midY(segmentCtx) >= 50;
+  const color = above ? homeColor : awayColor;
+  const yEdge = yScale.getPixelForValue(above ? 100 : 0);
+  const yMid = yScale.getPixelForValue(50);
+  const gradient = chart.ctx.createLinearGradient(0, yEdge, 0, yMid);
+  gradient.addColorStop(0, colorWithAlpha(color, 0.38));
+  gradient.addColorStop(1, colorWithAlpha(color, 0));
+  return gradient;
+}
+
 function latestPct(rows) {
   const homeRow = rows.filter((r) => r.is_home).sort((a, b) => new Date(b.ts) - new Date(a.ts))[0];
   return homeRow ? homeRow.win_prob : 50;
@@ -1292,10 +1356,9 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
         segment: {
           borderColor: (c) => (midY(c) >= 50 ? home.color : away.color),
           backgroundColor: (c) => {
-            const above = midY(c) >= 50;
-            const rgb = above ? home.color : away.color;
-            const alpha = 0.04 + intensity(midY(c)) * 0.32;
-            return colorWithAlpha(rgb, alpha);
+            const gradients = getBandGradients(c.chart, home.color, away.color);
+            if (!gradients) return 'transparent';
+            return midY(c) >= 50 ? gradients.home : gradients.away;
           },
         },
       }],
@@ -1841,10 +1904,9 @@ function renderEspnCard(rows, home, away, allDone) {
           segment: {
             borderColor: (c) => (midY(c) >= 50 ? home.color : away.color),
             backgroundColor: (c) => {
-              const above = midY(c) >= 50;
-              const rgb = above ? home.color : away.color;
-              const alpha = 0.04 + intensity(midY(c)) * 0.32;
-              return colorWithAlpha(rgb, alpha);
+              const gradients = getBandGradients(c.chart, home.color, away.color);
+              if (!gradients) return 'transparent';
+              return midY(c) >= 50 ? gradients.home : gradients.away;
             },
           },
         },
