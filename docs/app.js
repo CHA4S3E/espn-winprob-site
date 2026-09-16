@@ -770,6 +770,12 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
   let lowScore = null;
   let biggestOverperformer = null;
   let biggestUnderperformer = null;
+  let highestScoringMatchup = null;
+  let lowestScoringMatchup = null;
+  let totalPointsScored = 0; // league-wide, always computable -- used as a
+  // fallback highlight for the closing slot when no Upset Watch episode
+  // happened anywhere this week, so an uneventful week still fills the
+  // grid instead of just showing one fewer card.
 
   for (const matchupId of matchupIds) {
     const rows = byMatchup[matchupId];
@@ -802,6 +808,19 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
       loserScore: Math.min(homeScore, awayScore),
       margin,
     });
+
+    // Combined-points framing, a different lens from the individual
+    // high/low score above -- a matchup where BOTH teams went off (or
+    // both had a rough week) is its own notable story, distinct from
+    // either team's own individual number.
+    const combined = homeScore + awayScore;
+    totalPointsScored += combined;
+    if (!highestScoringMatchup || combined > highestScoringMatchup.combined) {
+      highestScoringMatchup = { home, away, homeScore, awayScore, combined };
+    }
+    if (!lowestScoringMatchup || combined < lowestScoringMatchup.combined) {
+      lowestScoringMatchup = { home, away, homeScore, awayScore, combined };
+    }
 
     if (!closestGame || margin < closestGame.margin) {
       closestGame = { isTie, home, away, winner, loser, margin };
@@ -866,7 +885,7 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     }
   }
 
-  return { summaries, closestGame, biggestBlowout, biggestUpset, highScore, lowScore, biggestOverperformer, biggestUnderperformer };
+  return { summaries, closestGame, biggestBlowout, biggestUpset, highScore, lowScore, biggestOverperformer, biggestUnderperformer, highestScoringMatchup, lowestScoringMatchup, totalPointsScored };
 }
 
 function renderRecapBanner(byMatchup, teamInfo) {
@@ -934,6 +953,26 @@ function renderRecapBanner(byMatchup, teamInfo) {
       </div>`);
   }
 
+  if (recap.highestScoringMatchup) {
+    const m = recap.highestScoringMatchup;
+    highlights.push(`
+      <div class="recap-card">
+        <div class="recap-card-label">\ud83c\udfc8 Highest-Scoring Matchup</div>
+        <div class="recap-card-value"><b style="color:${m.home.color}">${m.home.name}</b> vs ${m.away.name}</div>
+        <div class="recap-card-sub">combined for ${m.combined.toFixed(1)} points</div>
+      </div>`);
+  }
+
+  if (recap.lowestScoringMatchup) {
+    const m = recap.lowestScoringMatchup;
+    highlights.push(`
+      <div class="recap-card">
+        <div class="recap-card-label">\ud83d\udee1\ufe0f Lowest-Scoring Matchup</div>
+        <div class="recap-card-value"><b style="color:${m.home.color}">${m.home.name}</b> vs ${m.away.name}</div>
+        <div class="recap-card-sub">combined for just ${m.combined.toFixed(1)} points</div>
+      </div>`);
+  }
+
   if (recap.biggestOverperformer && recap.biggestOverperformer.delta > 0.5) {
     const o = recap.biggestOverperformer;
     highlights.push(`
@@ -967,10 +1006,21 @@ function renderRecapBanner(byMatchup, teamInfo) {
         ? `after ${u.favorite.name} reached a ${Math.round(u.favoritePeak)}% win probability${u.backAndForth ? ', in a game that swung more than once' : ''}`
         : `${u.favorite.name} peaked at ${Math.round(u.favoritePeak)}% before the scare`;
     highlights.push(`
-      <div class="recap-card ${u.upsetHappened && !u.isTie ? 'recap-card-upset' : ''}">
+      <div class="recap-card recap-card-featured">
         <div class="recap-card-label">\ud83d\udea8 ${u.isTie ? 'Near-Upset' : u.upsetHappened ? 'Biggest Upset' : 'Upset Threat'}</div>
         <div class="recap-card-value">${value}</div>
         <div class="recap-card-sub">${sub}</div>
+      </div>`);
+  } else {
+    // No Upset Watch episode happened anywhere this week -- rather than
+    // just showing one fewer card, this closing slot falls back to a
+    // different, always-computable stat so a quiet week still fills out
+    // the grid.
+    highlights.push(`
+      <div class="recap-card recap-card-featured">
+        <div class="recap-card-label">\ud83d\udcca Total Points Scored</div>
+        <div class="recap-card-value"><b>${recap.totalPointsScored.toFixed(1)}</b> combined across the league</div>
+        <div class="recap-card-sub">No Upset Watch alerts this week -- a quiet one.</div>
       </div>`);
   }
 
