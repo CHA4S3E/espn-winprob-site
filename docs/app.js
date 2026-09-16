@@ -321,7 +321,18 @@ function withCrossings(points) {
       const crosses = (prev.y - 50) * (p.y - 50) < 0;
       if (crosses) {
         const t = (50 - prev.y) / (p.y - prev.y);
-        out.push({ x: prev.x + t * (p.x - prev.x), y: 50 });
+        // ts is carried forward from the preceding REAL point so that
+        // lookups keyed by timestamp (e.g. the Upset Watch hover-history
+        // map) still resolve for this synthetic point, rather than
+        // missing and falling back to "not active." Without this, ESPN
+        // view's hover badge would flicker on/off as the mouse swept
+        // across any 50%-crossing, alternating between a real point (has
+        // a match) and this one (previously had none) even when both
+        // genuinely belong to the same historical moment. This does NOT
+        // affect the separate "is this point real or synthetic" check
+        // used elsewhere (afterLabel etc.), which tests homeActual, not
+        // ts -- this point still correctly has no real scores of its own.
+        out.push({ x: prev.x + t * (p.x - prev.x), y: 50, ts: prev.ts });
       }
     }
     out.push(p);
@@ -402,7 +413,7 @@ const UPSET_CLEAR = 70; // the upset side reaching this many % clears the watch
 //
 // onStep, if given, is called once per input value with the `watch` state
 // as of THAT point -- used to build a hover-over-history lookup (see
-// getUpsetWatchHistoryMap) without duplicating this whole state machine.
+// getUpsetWatchHistory) without duplicating this whole state machine.
 function walkUpsetState(sortedHomeWinProbs, onStep) {
   let armed = null; // 'home' | 'away' | null
   let peak = null; // the armed side's peak favorite % reached
@@ -495,15 +506,27 @@ function getLiveUpsetInfo(rows, home, away, allDone) {
 // same state machine via walkUpsetState's onStep callback rather than
 // duplicating its logic, so this can never drift out of sync with the
 // live behavior.
-function getUpsetWatchHistoryMap(rows) {
+// Returns a sorted array of { ts, watch } entries, one per home poll, in
+// chronological order -- looked up via nearestByTs (same fuzzy matching
+// used everywhere else in this file for cross-referencing home/away data
+// onto a shared timestamp axis), NOT an exact-match lookup. This matters:
+// the chart's x-axis is built from the UNION of home and away poll
+// timestamps, so a hovered chart point's own .ts can come from either
+// side and may not exactly equal any home row's timestamp even when it's
+// only milliseconds off. An earlier exact-match version of this (a Map
+// keyed by home ts) would silently miss on every point whose ts happened
+// to originate from an away poll, which -- since home/away polls
+// interleave -- meant the hover badge flickered on/off at nearly every
+// adjacent point instead of holding steady across a real stretch.
+function getUpsetWatchHistory(rows) {
   const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
-  const map = new Map();
+  const history = [];
   let i = 0;
   walkUpsetState(homeRows.map((r) => r.win_prob), (watchNow) => {
-    map.set(homeRows[i].ts, watchNow);
+    history.push({ ts: homeRows[i].ts, watch: watchNow });
     i++;
   });
-  return map;
+  return history;
 }
 
 // ============================== WEEKLY RECAP ==============================
@@ -1181,13 +1204,13 @@ function renderEspnCard(rows, home, away, allDone) {
   // currentHomePct is kept in sync on every refresh (see updateEspnCard) so
   // that moving the mouse away always snaps back to the real live value,
   // never a stale one captured back when this chart was first created.
-  // upsetHistoryMap and currentUpsetInfo are similarly kept fresh so a
+  // upsetHistory and currentUpsetInfo are similarly kept fresh so a
   // hover always reflects the latest data, not whatever existed when this
   // card was first created.
   const state = {
     dayTicks,
     currentHomePct: homePct,
-    upsetHistoryMap: getUpsetWatchHistoryMap(rows),
+    upsetHistory: getUpsetWatchHistory(rows),
     currentUpsetInfo: upsetInfo,
   };
   const canvas = card.querySelector('canvas');
@@ -1360,14 +1383,14 @@ function renderEspnCard(rows, home, away, allDone) {
     setEspnPctLabels(canvas, nearest.y, { animate: false });
 
     // Historical upset-watch hover (gated on the preference, defaulting
-    // on). `nearest.ts` is undefined for the synthetic 50%-crossing
-    // points withCrossings inserts (they don't correspond to a real
-    // snapshot), so those naturally fall through to "not active" rather
-    // than needing a separate check. No pulsing here regardless of
-    // whether it was active -- a past moment isn't a live alert, so it
-    // gets the plain visible-but-static text, never the glow.
-    if (showUpsetHistory) {
-      const wasActive = chart._state.upsetHistoryMap.get(nearest.ts);
+    // on). Looked up via nearestByTs, not an exact match -- see
+    // getUpsetWatchHistory's comment for why exact matching flickered.
+    // No pulsing here regardless of whether it was active -- a past
+    // moment isn't a live alert, so it gets the plain visible-but-static
+    // text, never the glow.
+    if (showUpsetHistory && chart._state.upsetHistory.length) {
+      const nearestEntry = nearestByTs(chart._state.upsetHistory, nearest.ts);
+      const wasActive = nearestEntry ? nearestEntry.watch : false;
       setUpsetBadgeState(canvas, wasActive
         ? { text: '\ud83d\udea8 Upset Watch was active here', visible: true, pulsing: false }
         : { text: '\ud83d\udea8 UPSET WATCH', visible: false, pulsing: false });
@@ -1424,7 +1447,7 @@ function updateEspnCard(entry, rows, home, away, allDone) {
 
   const card = chart.canvas.closest('.espn-card');
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
-  chart._state.upsetHistoryMap = getUpsetWatchHistoryMap(rows);
+  chart._state.upsetHistory = getUpsetWatchHistory(rows);
   chart._state.currentUpsetInfo = upsetInfo;
   if (card) {
     card.classList.toggle('upset-watch', !!upsetInfo);
