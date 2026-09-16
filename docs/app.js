@@ -24,6 +24,10 @@ let tooltipDetail = localStorage.getItem('winProbTooltipDetail') || 'condensed';
 // Defaults on (only off if explicitly set to 'false') -- shows, on hover
 // in ESPN view, whether Upset Watch was active at that historical point.
 let showUpsetHistory = localStorage.getItem('winProbShowUpsetHistory') !== 'false'; // set on preferences.html
+// Defaults OFF (only 'true' turns it on) -- opposite convention from the
+// preference above, since this adds a visual layer to every chart rather
+// than just extra info on an already-opt-in hover.
+let showConfidenceBand = localStorage.getItem('winProbShowConfidenceBand') === 'true'; // set on preferences.html
 // Tracks which of the two leader-bar layers is currently the visible one,
 // so updateLeaderBar (see WEEKLY RECAP section) knows which layer to
 // write the NEW gradient into and crossfade up, and which one to fade
@@ -33,6 +37,92 @@ let leaderBarCurrentTeamId = null;
 document.documentElement.setAttribute('data-theme', theme);
 
 // ============================== THEME / COLOR ADJUSTMENT ==============================
+
+// ============================== FORECASTING MATH ==============================
+// The poller computes win_prob using a normal-distribution model over the
+// projected score margin (see poller/lib/winProb.js), but only the
+// RESULT gets stored -- not the stddev it used to get there. To build a
+// projected score range, a "points needed to win" figure, or a
+// confidence band, we need that stddev back. Since win_prob was computed
+// as Phi((homeExpected - awayExpected) / (stddev * sqrt(2))), and we DO
+// have the stored win_prob plus both expected scores, the implied stddev
+// can be recovered exactly by inverting that formula -- which just needs
+// the inverse of the standard normal CDF (the "probit" function).
+
+// erf via the Abramowitz & Stegun 7.1.26 approximation -- max error
+// ~1.5e-7, comfortably precise enough for a visual estimate.
+function erf(x) {
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x);
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return sign * y;
+}
+function normalCdf(z) {
+  return 0.5 * (1 + erf(z / Math.SQRT2));
+}
+// Inverse of the standard normal CDF ("probit"), via Peter Acklam's
+// rational approximation. Takes p in (0,1), returns z such that
+// normalCdf(z) === p. Accurate to about 1.15e-9 in the central region.
+function probit(p) {
+  if (p <= 0) return -Infinity;
+  if (p >= 1) return Infinity;
+  const a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+  const b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01];
+  const c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+  const d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+  const pLow = 0.02425, pHigh = 1 - pLow;
+  let q, r;
+  if (p < pLow) {
+    q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  } else if (p <= pHigh) {
+    q = p - 0.5; r = q * q;
+    return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  } else {
+    q = Math.sqrt(-2 * Math.log(1 - p));
+    return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+}
+
+// Recovers the stddev (in points) the poller must have used for this
+// specific snapshot, given the stored win_prob and both expected scores.
+// Clamped away from exact 0/100 (which would imply infinite certainty --
+// z would be +/-Infinity) and guarded against a near-zero z with a
+// meaningful diff (which shouldn't happen given the model, but falls
+// back to a sane default rather than dividing by ~0 if it ever does).
+const FORECAST_FALLBACK_STDDEV = 21; // matches the poller's own DEFAULT_STDDEV
+function impliedStddev(homeExpected, awayExpected, winProbHome) {
+  const diff = homeExpected - awayExpected;
+  const p = Math.max(0.001, Math.min(0.999, winProbHome / 100));
+  const z = probit(p);
+  if (Math.abs(z) < 0.05) return FORECAST_FALLBACK_STDDEV;
+  const stddev = diff / (z * Math.SQRT2);
+  return stddev > 0 ? stddev : FORECAST_FALLBACK_STDDEV;
+}
+
+// For the optional confidence-band chart overlay (see preferences.html):
+// given the RAW (pre-withCrossings) chart points, returns two parallel
+// arrays of {x, y} representing the upper/lower bounds of a "+/- 1 model
+// stddev" band around the plotted win_prob line. Works entirely in
+// z-score space -- shift the implied z-score by +/-1, convert back via
+// normalCdf -- so it never needs the stddev in points at all, just the
+// stored win_prob itself. This is also why the band naturally narrows as
+// a game becomes decided: normalCdf flattens out near its tails, so the
+// same +/-1 shift in z produces a much smaller swing in win_prob terms
+// once the line is already close to 0 or 100 than it does near 50.
+function computeConfidenceBand(rawPoints) {
+  const upper = [], lower = [];
+  for (const p of rawPoints) {
+    if (p.y === undefined) continue;
+    const pClamped = Math.max(0.1, Math.min(99.9, p.y)) / 100;
+    const z = probit(pClamped);
+    upper.push({ x: p.x, y: Math.min(100, normalCdf(z + 1) * 100) });
+    lower.push({ x: p.x, y: Math.max(0, normalCdf(z - 1) * 100) });
+  }
+  return { upper, lower };
+}
 
 function hexToRgb(hex) {
   const h = hex.replace('#', '');
@@ -839,7 +929,7 @@ function computeChartPoints(homeRows, awayRows) {
   // other even though they're all meant to fill the same width edge-to-edge.
   const maxX = rawPoints.length ? rawPoints[rawPoints.length - 1].x : 0;
 
-  return { points, dayTicks, maxX };
+  return { points, rawPoints, dayTicks, maxX };
 }
 
 function midY(segCtx) { return (segCtx.p0.parsed.y + segCtx.p1.parsed.y) / 2; }
@@ -1010,14 +1100,33 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length) return { card, entry: null };
 
-  const { points, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
-  const state = { dayTicks };
+  const { points, rawPoints, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  // Confidence band never applies to Postcard (compact) -- only Timeline.
+  const showBandHere = showConfidenceBand && !compact;
+  const mainIdx = showBandHere ? 2 : 0;
+  const state = { dayTicks, mainIdx };
   const canvas = card.querySelector('canvas');
+
+  const lineDatasets = [];
+  if (showBandHere) {
+    const band = computeConfidenceBand(rawPoints);
+    const upperIdx = lineDatasets.length;
+    lineDatasets.push({
+      data: band.upper,
+      parsing: false, borderWidth: 0, pointRadius: 0, tension: 0.15, fill: false,
+    });
+    lineDatasets.push({
+      data: band.lower,
+      parsing: false, borderWidth: 0, pointRadius: 0, tension: 0.15,
+      fill: { target: upperIdx },
+      backgroundColor: themeVar('rgba(120,120,120,0.14)', 'rgba(210,210,210,0.12)'),
+    });
+  }
 
   const chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: {
-      datasets: [{
+      datasets: [...lineDatasets, {
         data: points,
         parsing: false,
         borderWidth: compact ? 1.5 : 2,
@@ -1042,6 +1151,11 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
       plugins: {
         legend: { display: false },
         tooltip: {
+          // Excludes the confidence band's two datasets (when present)
+          // from the tooltip entirely -- without this, hovering would
+          // show three lines (upper bound, lower bound, actual line)
+          // instead of just the one meaningful value.
+          filter: (tooltipItem) => tooltipItem.datasetIndex === mainIdx,
           callbacks: {
             label: (item) => {
               const above = item.parsed.y >= 50;
@@ -1108,8 +1222,16 @@ function updateLineChartCard(entry, rows, home, away, allDone) {
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length || !entry.chart) return;
 
-  const { points, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
-  entry.chart.data.datasets[0].data = points;
+  const { points, rawPoints, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  const mainIdx = entry.chart._state.mainIdx;
+  entry.chart.data.datasets[mainIdx].data = points;
+  if (mainIdx > 0) {
+    // This card has the confidence band (Timeline only, never Postcard --
+    // mainIdx is 0 there since showBandHere was false at render time).
+    const band = computeConfidenceBand(rawPoints);
+    entry.chart.data.datasets[0].data = band.upper;
+    entry.chart.data.datasets[1].data = band.lower;
+  }
   entry.chart._state.dayTicks = dayTicks;
   entry.chart.options.scales.x.max = maxX; // keep the pinned axis in sync as new points arrive
   entry.chart.update('none');
@@ -1175,6 +1297,96 @@ function describeBandPath(angleStart, angleEnd) {
   const p4 = polarToXY(NEEDLE_CX, NEEDLE_CY, NEEDLE_R_INNER, angleStart);
   return `M ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} A ${NEEDLE_R_OUTER} ${NEEDLE_R_OUTER} 0 0 1 ${p2.x.toFixed(2)} ${p2.y.toFixed(2)} ` +
     `L ${p3.x.toFixed(2)} ${p3.y.toFixed(2)} A ${NEEDLE_R_INNER} ${NEEDLE_R_INNER} 0 0 0 ${p4.x.toFixed(2)} ${p4.y.toFixed(2)} Z`;
+}
+
+// ============================== FORECASTING CONTENT ==============================
+// The Needle view's content beyond the gauge itself: a projected final
+// score range for each team, how many points the trailing team needs
+// beyond their own projection to take the lead, and a rough estimate of
+// when the game will likely be decided. All computed from data already
+// on the page -- see the FORECASTING MATH section above for how the
+// underlying stddev gets recovered from the stored win_prob.
+const FORECAST_CI_Z = 1.2816; // ~80% confidence interval -- wide enough to be useful, not so wide it feels meaningless
+
+// Rough "when will this be decided" estimate: tracks how far win_prob has
+// drifted from 50 (in either direction) over a recent window, and
+// extrapolates forward to when that distance would reach 45 (i.e. roughly
+// 95%/5%). A lead change or a stalled game naturally suppresses this
+// (the distance-from-50 stops growing, or shrinks), rather than needing
+// special-case handling -- it just falls out of using distance-from-50
+// as the tracked quantity instead of "whoever's currently favored."
+function computeTimeUntilDecided(rows) {
+  const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (homeRows.length < 3) return null;
+
+  const latest = homeRows[homeRows.length - 1];
+  const targetTs = new Date(new Date(latest.ts).getTime() - 30 * 60 * 1000).toISOString();
+  const past = nearestByTs(homeRows, targetTs);
+  if (!past || past === latest) return null;
+
+  const elapsedMin = (new Date(latest.ts) - new Date(past.ts)) / 60000;
+  if (elapsedMin < 5) return null; // too little elapsed time for a meaningful rate
+
+  const latestDistance = Math.abs(latest.win_prob - 50);
+  const pastDistance = Math.abs(past.win_prob - 50);
+  const ratePerMin = (latestDistance - pastDistance) / elapsedMin;
+  if (ratePerMin <= 0.05) return null; // not trending toward decided
+
+  const distanceRemaining = 45 - latestDistance; // 50+/-45 = 95%/5%
+  if (distanceRemaining <= 0) return null; // already basically decided
+
+  const minutesToDecided = distanceRemaining / ratePerMin;
+  if (minutesToDecided < 0 || minutesToDecided > 180) return null; // too uncertain to state
+
+  return minutesToDecided < 60
+    ? `Roughly ${Math.round(minutesToDecided)} more minutes at the current pace`
+    : `Roughly ${(minutesToDecided / 60).toFixed(1)} more hours at the current pace`;
+}
+
+function buildForecastSection(rows, home, away, allDone) {
+  const homeRow = latestRow(rows, true);
+  const awayRow = latestRow(rows, false);
+  if (!homeRow || !awayRow) return '';
+
+  if (allDone) {
+    return `<div class="forecast-section">
+      <div class="forecast-title">Final</div>
+      <div class="forecast-row"><span style="color:${home.color}">${home.name}</span><b>${homeRow.actual_score.toFixed(1)}</b></div>
+      <div class="forecast-row"><span style="color:${away.color}">${away.name}</span><b>${awayRow.actual_score.toFixed(1)}</b></div>
+    </div>`;
+  }
+
+  const stddev = impliedStddev(homeRow.expected_score, awayRow.expected_score, homeRow.win_prob);
+  const margin = FORECAST_CI_Z * stddev;
+
+  // A side that's individually done (even if the matchup overall isn't,
+  // since the other side can still be live) has zero remaining
+  // uncertainty of its own -- show its actual score as fixed rather than
+  // a fake range around a number that isn't going to move.
+  const rangeFor = (row) => {
+    if (row.all_starters_done) return `${row.actual_score.toFixed(0)} <span class="forecast-range">(locked in)</span>`;
+    const low = Math.max(row.actual_score, row.expected_score - margin);
+    const high = row.expected_score + margin;
+    return `${row.expected_score.toFixed(0)} <span class="forecast-range">(${low.toFixed(0)}-${high.toFixed(0)})</span>`;
+  };
+
+  const homeFavored = homeRow.win_prob >= 50;
+  const favored = homeFavored ? home : away;
+  const trailing = homeFavored ? away : home;
+  const pointsNeeded = Math.abs(homeRow.expected_score - awayRow.expected_score);
+
+  const decidedEstimate = computeTimeUntilDecided(rows);
+
+  return `
+    <div class="forecast-section">
+      <div class="forecast-title">Projected Final Score</div>
+      <div class="forecast-row"><span style="color:${home.color}">${home.name}</span><b>${rangeFor(homeRow)}</b></div>
+      <div class="forecast-row"><span style="color:${away.color}">${away.name}</span><b>${rangeFor(awayRow)}</b></div>
+      <div class="forecast-title">Points Needed</div>
+      <div class="forecast-note">${trailing.name} needs about ${pointsNeeded.toFixed(1)} more points than currently projected to take the lead over ${favored.name}.</div>
+      ${decidedEstimate ? `<div class="forecast-title">Time Until Likely Decided</div><div class="forecast-note">${decidedEstimate} (rough estimate).</div>` : ''}
+    </div>
+  `;
 }
 
 function needleVerdict(homePct, home, away) {
@@ -1246,6 +1458,7 @@ function renderNeedleCard(rows, home, away, allDone) {
       <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
     </div>
     <div class="why-blurb" hidden>${explainMatchup(rows, home, away, allDone)}</div>
+    ${buildForecastSection(rows, home, away, allDone)}
   `;
   wireWhyButton(card);
 
@@ -1279,6 +1492,10 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
 
   const blurb = card.querySelector('.why-blurb');
   if (blurb) blurb.textContent = explainMatchup(rows, home, away, allDone);
+
+  const oldForecast = card.querySelector('.forecast-section');
+  const newForecastHtml = buildForecastSection(rows, home, away, allDone);
+  if (oldForecast && newForecastHtml) oldForecast.outerHTML = newForecastHtml;
 }
 
 // ============================== SHARED LOADING ==============================
@@ -1412,7 +1629,16 @@ function renderEspnCard(rows, home, away, allDone) {
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length) return { card, entry: null };
 
-  const { points, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  const { points, rawPoints, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  // mainIdx tracks where the "real" datasets (main line, hover guide,
+  // hover dot) actually start -- 0 normally, or 2 when the confidence
+  // band's two datasets are inserted ahead of them so the band renders
+  // BEHIND the line. Every place below that references datasets by
+  // index uses this instead of a hardcoded 0/1/2, so the hover code and
+  // the update function stay correct regardless of whether the band is
+  // present -- getting this wrong would silently point the hover marker
+  // or the pct-label lookup at the wrong dataset.
+  const mainIdx = showConfidenceBand ? 2 : 0;
   // currentHomePct is kept in sync on every refresh (see updateEspnCard) so
   // that moving the mouse away always snaps back to the real live value,
   // never a stale one captured back when this chart was first created.
@@ -1424,13 +1650,31 @@ function renderEspnCard(rows, home, away, allDone) {
     currentHomePct: homePct,
     upsetHistory: getUpsetWatchHistory(rows),
     currentUpsetInfo: upsetInfo,
+    mainIdx,
   };
   const canvas = card.querySelector('canvas');
+
+  const datasets = [];
+  if (showConfidenceBand) {
+    const band = computeConfidenceBand(rawPoints);
+    const upperIdx = datasets.length;
+    datasets.push({
+      data: band.upper,
+      parsing: false, borderWidth: 0, pointRadius: 0, tension: 0.15, fill: false,
+    });
+    datasets.push({
+      data: band.lower,
+      parsing: false, borderWidth: 0, pointRadius: 0, tension: 0.15,
+      fill: { target: upperIdx },
+      backgroundColor: themeVar('rgba(120,120,120,0.14)', 'rgba(210,210,210,0.12)'),
+    });
+  }
 
   const chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: {
       datasets: [
+        ...datasets,
         {
           data: points,
           parsing: false,
@@ -1574,7 +1818,7 @@ function renderEspnCard(rows, home, away, allDone) {
     const mouseX = evt.clientX - rect.left;
     const xValue = chart.scales.x.getValueForPixel(mouseX);
     if (xValue == null) return;
-    const currentPoints = chart.data.datasets[0].data;
+    const currentPoints = chart.data.datasets[mainIdx].data;
     if (!currentPoints.length) return;
 
     let nearest = currentPoints[0];
@@ -1587,10 +1831,10 @@ function renderEspnCard(rows, home, away, allDone) {
     if (nearest.x === lastHoverX) return; // same point as last event -- nothing to redraw
     lastHoverX = nearest.x;
 
-    chart.data.datasets[1].data = [{ x: nearest.x, y: 0 }, { x: nearest.x, y: 100 }];
-    chart.data.datasets[1].hidden = false;
-    chart.data.datasets[2].data = [nearest];
-    chart.data.datasets[2].hidden = false;
+    chart.data.datasets[mainIdx + 1].data = [{ x: nearest.x, y: 0 }, { x: nearest.x, y: 100 }];
+    chart.data.datasets[mainIdx + 1].hidden = false;
+    chart.data.datasets[mainIdx + 2].data = [nearest];
+    chart.data.datasets[mainIdx + 2].hidden = false;
     chart.update('none');
     setEspnPctLabels(canvas, nearest.y, { animate: false });
 
@@ -1632,8 +1876,8 @@ function renderEspnCard(rows, home, away, allDone) {
 
   canvas.addEventListener('mouseleave', () => {
     lastHoverX = null;
-    chart.data.datasets[1].hidden = true;
-    chart.data.datasets[2].hidden = true;
+    chart.data.datasets[mainIdx + 1].hidden = true;
+    chart.data.datasets[mainIdx + 2].hidden = true;
     chart.update('none');
     setEspnPctLabels(canvas, chart._state.currentHomePct, { animate: false });
     // Revert the badge to whatever the CURRENT live state actually is
@@ -1654,8 +1898,14 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   if (!homeRows.length || !entry.chart) return;
 
   const chart = entry.chart;
-  const { points, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
-  chart.data.datasets[0].data = points;
+  const { points, rawPoints, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  const mainIdx = chart._state.mainIdx;
+  chart.data.datasets[mainIdx].data = points;
+  if (showConfidenceBand) {
+    const band = computeConfidenceBand(rawPoints);
+    chart.data.datasets[0].data = band.upper;
+    chart.data.datasets[1].data = band.lower;
+  }
   chart._state.dayTicks = dayTicks;
   chart._state.currentHomePct = latestPct(rows);
   chart.options.scales.x.max = maxX;
@@ -1664,7 +1914,7 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   // Only refresh the visible labels if the marker isn't currently being
   // shown via hover -- otherwise a background refresh would yank the
   // numbers out from under someone mid-hover.
-  const isHovering = chart.data.datasets[1].hidden === false;
+  const isHovering = chart.data.datasets[mainIdx + 1].hidden === false;
   if (!isHovering) {
     setEspnPctLabels(chart.canvas, chart._state.currentHomePct);
   }
