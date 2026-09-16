@@ -57,14 +57,14 @@
   <div class="sub">These are saved on this device and apply next time you load the main page.</div>
 
   <div class="setting-group">
-    <div class="setting-title">Chart tooltip detail</div>
-    <div class="setting-desc">What shows up when you hover a point on a Timeline or Postcard chart.</div>
+    <div class="setting-title">Detail level</div>
+    <div class="setting-desc">Applies to both the Timeline/Postcard chart tooltip and the "Why is this the number?" blurb on every card.</div>
 
     <label class="option-row">
       <input type="radio" name="tooltipDetail" value="condensed">
       <span>
         <div class="option-label">Condensed (default)</div>
-        <div class="option-example">Just the win percentage, e.g. "Joe Buck Yourself: 73%"</div>
+        <div class="option-example">Chart tooltip shows just the win percentage; the "why" blurb stays a single plain-language sentence</div>
       </span>
     </label>
 
@@ -72,7 +72,7 @@
       <input type="radio" name="tooltipDetail" value="full">
       <span>
         <div class="option-label">Full detail</div>
-        <div class="option-example">Win percentage plus each team's actual and projected score at that moment</div>
+        <div class="option-example">Chart tooltip adds each team's actual/projected score; the "why" blurb adds exact numbers, recent momentum, and any Upset Watch history for that game</div>
       </span>
     </label>
   </div>
