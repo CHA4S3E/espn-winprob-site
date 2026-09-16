@@ -894,11 +894,15 @@ function explainMatchup(rows, home, away, allDone) {
     const favoriteTeam = topEpisode.favoriteSide === 'home' ? home : away;
     const upsetTeam = topEpisode.upsetSide === 'home' ? home : away;
     if (allDone) {
-      const winner = homeRow.actual_score === awayRow.actual_score ? null : (homeRow.actual_score > awayRow.actual_score ? home : away);
-      const upsetHappened = winner === upsetTeam;
-      extra.push(upsetHappened
-        ? `This was an Upset Watch game: ${upsetTeam.name} came back after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}%.`
-        : `Upset Watch triggered mid-game (${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}%), but ${favoriteTeam.name} held on.`);
+      const isTie = homeRow.actual_score === awayRow.actual_score;
+      const winner = isTie ? null : (homeRow.actual_score > awayRow.actual_score ? home : away);
+      if (isTie) {
+        extra.push(`This game ended in a tie after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}% -- ${upsetTeam.name} pushed it all the way there.`);
+      } else if (winner === upsetTeam) {
+        extra.push(`This was an Upset Watch game: ${upsetTeam.name} came back after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}%.`);
+      } else {
+        extra.push(`Upset Watch triggered mid-game (${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}%), but ${favoriteTeam.name} held on.`);
+      }
     } else {
       extra.push(`This game has seen an Upset Watch alert, after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}% win probability.`);
     }
