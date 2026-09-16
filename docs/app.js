@@ -484,29 +484,14 @@ function getLiveUpsetInfo(rows, home, away, allDone) {
 
 // ============================== WEEKLY RECAP ==============================
 // Shows once every matchup in the current week is Final -- final scores,
-// the week's single biggest swing (a 15-minute-window win_prob delta,
-// scanned across the whole week's history), the closest game by final
-// margin, and the biggest upset (see the Upset Watch section above).
-const SWING_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-
-function biggestSwingInHistory(homeRows) {
-  let best = null;
-  for (const row of homeRows) {
-    const targetTs = new Date(new Date(row.ts).getTime() - SWING_WINDOW_MS).toISOString();
-    const past = nearestByTs(homeRows, targetTs);
-    if (!past || past === row) continue;
-    const delta = row.win_prob - past.win_prob;
-    if (!best || Math.abs(delta) > Math.abs(best.delta)) best = { delta };
-  }
-  return best;
-}
+// the closest game by final margin, and the biggest upset (see the Upset
+// Watch section above).
 
 function computeWeeklyRecap(byMatchup, teamInfo) {
   const matchupIds = Object.keys(byMatchup);
   if (!matchupIds.length) return null;
 
   const summaries = [];
-  let biggestSwing = null;
   let closestGame = null;
   let biggestUpset = null;
 
@@ -547,10 +532,6 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     }
 
     const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
-    const swing = biggestSwingInHistory(homeRows);
-    if (swing && (!biggestSwing || Math.abs(swing.delta) > Math.abs(biggestSwing.delta))) {
-      biggestSwing = { delta: swing.delta, gainer: swing.delta > 0 ? home : away };
-    }
 
     // Upset watch, scanned across this matchup's FULL history (not just
     // whatever's currently live) -- picks whichever triggered episode
@@ -580,7 +561,7 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     }
   }
 
-  return { summaries, biggestSwing, closestGame, biggestUpset };
+  return { summaries, closestGame, biggestUpset };
 }
 
 function renderRecapBanner(byMatchup, teamInfo) {
@@ -602,9 +583,6 @@ function renderRecapBanner(byMatchup, teamInfo) {
     )
     .join('');
 
-  const swingLine = recap.biggestSwing
-    ? `<div class="recap-highlight">\ud83d\udd25 Biggest swing: <b style="color:${recap.biggestSwing.gainer.color}">${recap.biggestSwing.gainer.name}</b> +${Math.abs(recap.biggestSwing.delta).toFixed(1)}% win probability in a single stretch</div>`
-    : '';
   const closestLine = recap.closestGame
     ? recap.closestGame.isTie
       ? `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.home.name}</b> and ${recap.closestGame.away.name} tied exactly</div>`
@@ -621,7 +599,6 @@ function renderRecapBanner(byMatchup, teamInfo) {
   banner.innerHTML = `
     <div class="recap-title">Week Recap</div>
     <div class="recap-scores">${scoreLines}</div>
-    ${swingLine}
     ${closestLine}
     ${upsetLine}
   `;
