@@ -764,7 +764,12 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
 
   const summaries = [];
   let closestGame = null;
+  let biggestBlowout = null;
   let biggestUpset = null;
+  let highScore = null;
+  let lowScore = null;
+  let biggestOverperformer = null;
+  let biggestUnderperformer = null;
 
   for (const matchupId of matchupIds) {
     const rows = byMatchup[matchupId];
@@ -801,8 +806,37 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     if (!closestGame || margin < closestGame.margin) {
       closestGame = { isTie, home, away, winner, loser, margin };
     }
+    // A tie has margin 0, which can never exceed a prior blowout's
+    // margin, so ties naturally never win "biggest blowout" without
+    // needing an explicit exclusion.
+    if (!isTie && (!biggestBlowout || margin > biggestBlowout.margin)) {
+      biggestBlowout = { home, away, winner, loser, margin };
+    }
 
-    const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+    const homeRowsSorted = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+    const awayRowsSorted = rows.filter((r) => !r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+
+    // High/low score of the week, and biggest boom/bust against each
+    // team's OWN earliest recorded projection (effectively their pregame
+    // number, since polling starts before kickoff) -- a different lens
+    // than the live win-probability stuff above: this is purely about
+    // "who scored the most/least" and "whose final score aged best or
+    // worst against what the model expected before anyone had played."
+    for (const [team, finalScore, sortedRows] of [[home, homeScore, homeRowsSorted], [away, awayScore, awayRowsSorted]]) {
+      if (!highScore || finalScore > highScore.score) highScore = { team, score: finalScore };
+      if (!lowScore || finalScore < lowScore.score) lowScore = { team, score: finalScore };
+
+      const pregameRow = sortedRows[0];
+      if (pregameRow && pregameRow.expected_score != null) {
+        const delta = finalScore - pregameRow.expected_score;
+        if (!biggestOverperformer || delta > biggestOverperformer.delta) {
+          biggestOverperformer = { team, delta, pregame: pregameRow.expected_score, final: finalScore };
+        }
+        if (!biggestUnderperformer || delta < biggestUnderperformer.delta) {
+          biggestUnderperformer = { team, delta, pregame: pregameRow.expected_score, final: finalScore };
+        }
+      }
+    }
 
     // Upset watch, scanned across this matchup's FULL history (not just
     // whatever's currently live) -- picks whichever triggered episode
@@ -811,7 +845,7 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     // checked against the real final winner (already computed above) to
     // tell an actual completed upset apart from a threat the favorite
     // ultimately survived.
-    const { episodes } = walkUpsetState(homeRows.map((r) => r.win_prob));
+    const { episodes } = walkUpsetState(homeRowsSorted.map((r) => r.win_prob));
     if (episodes.length) {
       const topEpisode = episodes.reduce((best, e) => (!best || e.peakFavoritePct > best.peakFavoritePct ? e : best), null);
       const favoriteTeam = topEpisode.favoriteSide === 'home' ? home : away;
@@ -832,7 +866,7 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     }
   }
 
-  return { summaries, closestGame, biggestUpset };
+  return { summaries, closestGame, biggestBlowout, biggestUpset, highScore, lowScore, biggestOverperformer, biggestUnderperformer };
 }
 
 function renderRecapBanner(byMatchup, teamInfo) {
@@ -854,24 +888,96 @@ function renderRecapBanner(byMatchup, teamInfo) {
     )
     .join('');
 
-  const closestLine = recap.closestGame
-    ? recap.closestGame.isTie
-      ? `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.home.name}</b> and ${recap.closestGame.away.name} tied exactly</div>`
-      : `<div class="recap-highlight">\ud83c\udfaf Closest game: <b>${recap.closestGame.winner.name}</b> over ${recap.closestGame.loser.name} by ${recap.closestGame.margin.toFixed(1)}</div>`
-    : '';
-  const upsetLine = recap.biggestUpset
-    ? recap.biggestUpset.isTie
-      ? `<div class="recap-highlight">\ud83e\udd1d Near-upset: <b>${recap.biggestUpset.upsetTeam.name}</b> pushed <b>${recap.biggestUpset.favorite.name}</b> (up to ${Math.round(recap.biggestUpset.favoritePeak)}% at their peak) all the way to a tie</div>`
-      : recap.biggestUpset.upsetHappened
-        ? `<div class="recap-highlight">\ud83d\udea8 <b>BIGGEST UPSET:</b> <b style="color:${recap.biggestUpset.upsetTeam.color}">${recap.biggestUpset.upsetTeam.name}</b> defeated ${recap.biggestUpset.favorite.name} after ${recap.biggestUpset.favorite.name} reached a ${Math.round(recap.biggestUpset.favoritePeak)}% win probability${recap.biggestUpset.backAndForth ? ', in a game that swung more than once' : ''}</div>`
-        : `<div class="recap-highlight">\ud83d\udea8 Upset threat: <b>${recap.biggestUpset.upsetTeam.name}</b> pushed <b>${recap.biggestUpset.favorite.name}</b> (up to ${Math.round(recap.biggestUpset.favoritePeak)}% at their peak) to the brink, but ${recap.biggestUpset.favorite.name} held on</div>`
-    : '';
+  // Each highlight is a small self-contained card: an icon+label up top,
+  // then the concrete value/story below. Built as an array and filtered
+  // rather than concatenated strings, so a highlight that has nothing to
+  // say (e.g. no upset all week) just doesn't produce a card instead of
+  // leaving a stray empty one in the grid.
+  const highlights = [];
+
+  if (recap.closestGame) {
+    const g = recap.closestGame;
+    highlights.push(`
+      <div class="recap-card">
+        <div class="recap-card-label">\ud83c\udfaf Closest Game</div>
+        ${g.isTie
+          ? `<div class="recap-card-value">${g.home.name} &amp; ${g.away.name} tied exactly</div>`
+          : `<div class="recap-card-value"><b style="color:${g.winner.color}">${g.winner.name}</b> over ${g.loser.name}</div><div class="recap-card-sub">by ${g.margin.toFixed(1)}</div>`}
+      </div>`);
+  }
+
+  if (recap.biggestBlowout) {
+    const g = recap.biggestBlowout;
+    highlights.push(`
+      <div class="recap-card">
+        <div class="recap-card-label">\ud83d\udca5 Biggest Blowout</div>
+        <div class="recap-card-value"><b style="color:${g.winner.color}">${g.winner.name}</b> over ${g.loser.name}</div>
+        <div class="recap-card-sub">by ${g.margin.toFixed(1)}</div>
+      </div>`);
+  }
+
+  if (recap.highScore) {
+    highlights.push(`
+      <div class="recap-card">
+        <div class="recap-card-label">\ud83d\udcc8 Highest Score</div>
+        <div class="recap-card-value" style="color:${recap.highScore.team.color}"><b>${recap.highScore.team.name}</b></div>
+        <div class="recap-card-sub">${recap.highScore.score.toFixed(1)} points</div>
+      </div>`);
+  }
+
+  if (recap.lowScore) {
+    highlights.push(`
+      <div class="recap-card">
+        <div class="recap-card-label">\ud83d\udcc9 Lowest Score</div>
+        <div class="recap-card-value" style="color:${recap.lowScore.team.color}"><b>${recap.lowScore.team.name}</b></div>
+        <div class="recap-card-sub">${recap.lowScore.score.toFixed(1)} points</div>
+      </div>`);
+  }
+
+  if (recap.biggestOverperformer && recap.biggestOverperformer.delta > 0.5) {
+    const o = recap.biggestOverperformer;
+    highlights.push(`
+      <div class="recap-card">
+        <div class="recap-card-label">\ud83d\ude80 Biggest Overperformer</div>
+        <div class="recap-card-value" style="color:${o.team.color}"><b>${o.team.name}</b></div>
+        <div class="recap-card-sub">beat their pregame projection by ${o.delta.toFixed(1)} (${o.pregame.toFixed(0)} \u2192 ${o.final.toFixed(0)})</div>
+      </div>`);
+  }
+
+  if (recap.biggestUnderperformer && recap.biggestUnderperformer.delta < -0.5) {
+    const u = recap.biggestUnderperformer;
+    highlights.push(`
+      <div class="recap-card">
+        <div class="recap-card-label">\ud83d\ude2c Biggest Underperformer</div>
+        <div class="recap-card-value" style="color:${u.team.color}"><b>${u.team.name}</b></div>
+        <div class="recap-card-sub">fell short of their pregame projection by ${Math.abs(u.delta).toFixed(1)} (${u.pregame.toFixed(0)} \u2192 ${u.final.toFixed(0)})</div>
+      </div>`);
+  }
+
+  if (recap.biggestUpset) {
+    const u = recap.biggestUpset;
+    const value = u.isTie
+      ? `<b>${u.upsetTeam.name}</b> pushed <b>${u.favorite.name}</b> to a tie`
+      : u.upsetHappened
+        ? `<b style="color:${u.upsetTeam.color}">${u.upsetTeam.name}</b> defeated ${u.favorite.name}`
+        : `<b>${u.upsetTeam.name}</b> pushed <b>${u.favorite.name}</b>, who held on`;
+    const sub = u.isTie
+      ? `after ${u.favorite.name} peaked at ${Math.round(u.favoritePeak)}%`
+      : u.upsetHappened
+        ? `after ${u.favorite.name} reached a ${Math.round(u.favoritePeak)}% win probability${u.backAndForth ? ', in a game that swung more than once' : ''}`
+        : `${u.favorite.name} peaked at ${Math.round(u.favoritePeak)}% before the scare`;
+    highlights.push(`
+      <div class="recap-card ${u.upsetHappened && !u.isTie ? 'recap-card-upset' : ''}">
+        <div class="recap-card-label">\ud83d\udea8 ${u.isTie ? 'Near-Upset' : u.upsetHappened ? 'Biggest Upset' : 'Upset Threat'}</div>
+        <div class="recap-card-value">${value}</div>
+        <div class="recap-card-sub">${sub}</div>
+      </div>`);
+  }
 
   banner.innerHTML = `
     <div class="recap-title">Week Recap</div>
     <div class="recap-scores">${scoreLines}</div>
-    ${closestLine}
-    ${upsetLine}
+    <div class="recap-highlights">${highlights.join('')}</div>
   `;
   banner.hidden = false;
 }
