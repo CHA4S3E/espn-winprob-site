@@ -814,51 +814,111 @@ function latestRow(rows, isHome) {
 // aggregate data already on the page (each team's current actual/expected
 // score and win_prob) -- no per-player roster data is fetched by the
 // frontend, so this deliberately stays at the team level rather than trying
-// to name specific players.
+// to name specific players. When the "Full detail" tooltip preference is
+// set (see preferences.html), a few extra lines of concrete numbers get
+// appended below the sentence -- reusing that existing preference rather
+// than adding a new one, since it's already exactly about "how much
+// numeric detail do you want to see."
 function explainMatchup(rows, home, away, allDone) {
   const homeRow = latestRow(rows, true);
   const awayRow = latestRow(rows, false);
   if (!homeRow || !awayRow) return 'Not enough data yet to explain this matchup.';
 
+  let sentence;
   if (allDone) {
-    if (homeRow.actual_score === awayRow.actual_score) return 'Final: this one ended in an exact tie.';
-    const homeWon = homeRow.actual_score > awayRow.actual_score;
-    const winner = homeWon ? home : away, loser = homeWon ? away : home;
-    const margin = Math.abs(homeRow.actual_score - awayRow.actual_score).toFixed(1);
-    return `Final: ${winner.name} beat ${loser.name} by ${margin} points.`;
+    if (homeRow.actual_score === awayRow.actual_score) {
+      sentence = 'Final: this one ended in an exact tie.';
+    } else {
+      const homeWon = homeRow.actual_score > awayRow.actual_score;
+      const winner = homeWon ? home : away, loser = homeWon ? away : home;
+      const margin = Math.abs(homeRow.actual_score - awayRow.actual_score).toFixed(1);
+      sentence = `Final: ${winner.name} beat ${loser.name} by ${margin} points.`;
+    }
+  } else {
+    const homePct = homeRow.win_prob;
+    const homeFavored = homePct >= 50;
+    const favored = homeFavored ? home : away;
+    const underdog = homeFavored ? away : home;
+    const favoredPct = Math.round(homeFavored ? homePct : 100 - homePct);
+
+    if (favoredPct < 55) {
+      sentence = `Toss-up right now -- ${home.name} and ${away.name} are projected within a few points of each other.`;
+    } else {
+      const actualMargin = Math.abs(homeRow.actual_score - awayRow.actual_score);
+      const favoredRow = homeFavored ? homeRow : awayRow;
+      const underdogRow = homeFavored ? awayRow : homeRow;
+      const favoredIsAhead = favoredRow.actual_score >= underdogRow.actual_score;
+      const favoredRemaining = Math.max(favoredRow.expected_score - favoredRow.actual_score, 0);
+      const underdogRemaining = Math.max(underdogRow.expected_score - underdogRow.actual_score, 0);
+      const favoredMoreLockedIn = favoredRemaining <= underdogRemaining;
+
+      if (actualMargin < 0.5) {
+        sentence = `${home.name} and ${away.name} are even on the scoreboard right now, but ${favored.name} is favored with ${favoredMoreLockedIn ? 'fewer points left on the table' : 'a stronger projection the rest of the way'}.`;
+      } else if (favoredIsAhead && favoredMoreLockedIn) {
+        sentence = `${favored.name} leads by ${actualMargin.toFixed(1)} and has more points already locked in, leaving ${underdog.name} less room to catch up.`;
+      } else if (favoredIsAhead && !favoredMoreLockedIn) {
+        sentence = `${favored.name} leads by ${actualMargin.toFixed(1)} right now, and still has more projected points left to add too.`;
+      } else if (!favoredIsAhead && favoredMoreLockedIn) {
+        sentence = `${underdog.name} leads by ${actualMargin.toFixed(1)} right now, but ${favored.name} has fewer points left on the table and is favored to finish ahead.`;
+      } else {
+        sentence = `${underdog.name} leads by ${actualMargin.toFixed(1)} right now, but ${favored.name} is favored with more projected points still to come.`;
+      }
+    }
   }
 
-  const homePct = homeRow.win_prob;
-  const homeFavored = homePct >= 50;
-  const favored = homeFavored ? home : away;
-  const underdog = homeFavored ? away : home;
-  const favoredPct = Math.round(homeFavored ? homePct : 100 - homePct);
+  if (tooltipDetail !== 'full') return sentence;
 
-  if (favoredPct < 55) {
-    return `Toss-up right now -- ${home.name} and ${away.name} are projected within a few points of each other.`;
+  // Full detail: exact numbers, recent momentum, and an Upset Watch note
+  // when relevant -- all computed from data already on the page, no
+  // extra fetch needed.
+  const extra = [];
+  if (allDone) {
+    extra.push(`${home.name}: ${homeRow.actual_score.toFixed(1)} final  |  ${away.name}: ${awayRow.actual_score.toFixed(1)} final`);
+  } else {
+    const homeRemaining = Math.max(homeRow.expected_score - homeRow.actual_score, 0);
+    const awayRemaining = Math.max(awayRow.expected_score - awayRow.actual_score, 0);
+    extra.push(`${home.name}: ${homeRow.actual_score.toFixed(1)} actual, ${homeRow.expected_score.toFixed(1)} projected (${homeRemaining.toFixed(1)} left)`);
+    extra.push(`${away.name}: ${awayRow.actual_score.toFixed(1)} actual, ${awayRow.expected_score.toFixed(1)} projected (${awayRemaining.toFixed(1)} left)`);
+
+    const momentum = computeRecentMomentum(rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts)));
+    if (momentum) {
+      const team = momentum.delta > 0 ? home : away;
+      extra.push(`Momentum: ${team.name} +${Math.abs(momentum.delta).toFixed(1)}% win probability in the last ~15 min`);
+    }
   }
 
-  const actualMargin = Math.abs(homeRow.actual_score - awayRow.actual_score);
-  const favoredRow = homeFavored ? homeRow : awayRow;
-  const underdogRow = homeFavored ? awayRow : homeRow;
-  const favoredIsAhead = favoredRow.actual_score >= underdogRow.actual_score;
-  const favoredRemaining = Math.max(favoredRow.expected_score - favoredRow.actual_score, 0);
-  const underdogRemaining = Math.max(underdogRow.expected_score - underdogRow.actual_score, 0);
-  const favoredMoreLockedIn = favoredRemaining <= underdogRemaining;
+  const homeRowsSorted = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const { episodes } = walkUpsetState(homeRowsSorted.map((r) => r.win_prob));
+  if (episodes.length) {
+    const topEpisode = episodes.reduce((best, e) => (!best || e.peakFavoritePct > best.peakFavoritePct ? e : best), null);
+    const favoriteTeam = topEpisode.favoriteSide === 'home' ? home : away;
+    const upsetTeam = topEpisode.upsetSide === 'home' ? home : away;
+    if (allDone) {
+      const winner = homeRow.actual_score === awayRow.actual_score ? null : (homeRow.actual_score > awayRow.actual_score ? home : away);
+      const upsetHappened = winner === upsetTeam;
+      extra.push(upsetHappened
+        ? `This was an Upset Watch game: ${upsetTeam.name} came back after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}%.`
+        : `Upset Watch triggered mid-game (${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}%), but ${favoriteTeam.name} held on.`);
+    } else {
+      extra.push(`This game has seen an Upset Watch alert, after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}% win probability.`);
+    }
+  }
 
-  if (actualMargin < 0.5) {
-    return `${home.name} and ${away.name} are even on the scoreboard right now, but ${favored.name} is favored with ${favoredMoreLockedIn ? 'fewer points left on the table' : 'a stronger projection the rest of the way'}.`;
-  }
-  if (favoredIsAhead && favoredMoreLockedIn) {
-    return `${favored.name} leads by ${actualMargin.toFixed(1)} and has more points already locked in, leaving ${underdog.name} less room to catch up.`;
-  }
-  if (favoredIsAhead && !favoredMoreLockedIn) {
-    return `${favored.name} leads by ${actualMargin.toFixed(1)} right now, and still has more projected points left to add too.`;
-  }
-  if (!favoredIsAhead && favoredMoreLockedIn) {
-    return `${underdog.name} leads by ${actualMargin.toFixed(1)} right now, but ${favored.name} has fewer points left on the table and is favored to finish ahead.`;
-  }
-  return `${underdog.name} leads by ${actualMargin.toFixed(1)} right now, but ${favored.name} is favored with more projected points still to come.`;
+  return extra.length ? sentence + '\n' + extra.join('\n') : sentence;
+}
+
+// 15-minute-window win_prob delta for one team's own sorted rows -- only
+// used to add a "Momentum" line to the Full-detail why-blurb above.
+// Positive delta = home gained ground; negative = away did.
+function computeRecentMomentum(sortedHomeRows) {
+  if (sortedHomeRows.length < 2) return null;
+  const latest = sortedHomeRows[sortedHomeRows.length - 1];
+  const targetTs = new Date(new Date(latest.ts).getTime() - 15 * 60 * 1000).toISOString();
+  const past = nearestByTs(sortedHomeRows, targetTs);
+  if (!past || past === latest) return null;
+  const delta = latest.win_prob - past.win_prob;
+  if (Math.abs(delta) < 3) return null; // too small to be worth mentioning
+  return { delta };
 }
 
 function wireWhyButton(card) {
