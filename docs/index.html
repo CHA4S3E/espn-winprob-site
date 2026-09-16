@@ -320,6 +320,23 @@
   .needle-verdict { font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl); letter-spacing: 0.01em; margin-top: 6px; }
   .needle-sub { font-size: var(--text-sm); color: var(--muted); margin-top: 2px; }
 
+  /* ---- Forecasting section -- the Needle view's new content beyond the
+     gauge itself: projected final score range, points needed to win, and
+     a rough time-until-decided estimate. Left-aligned inside an
+     otherwise center-aligned card since these are label/value rows, not
+     more short center-friendly phrases like the verdict above them. ---- */
+  .forecast-section { text-align: left; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .forecast-title {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); margin: 10px 0 4px;
+  }
+  .forecast-title:first-child { margin-top: 0; }
+  .forecast-row { display: flex; align-items: baseline; gap: 6px; font-size: 13px; padding: 2px 0; }
+  .forecast-row span:first-child { flex: 1; }
+  .forecast-row b { font-variant-numeric: tabular-nums; }
+  .forecast-range { color: var(--muted); font-size: 11px; }
+  .forecast-note { font-size: 12px; color: var(--muted); line-height: 1.4; }
+
   a.settings-link { display: block; text-align: center; margin-top: 10px; font-size: 13px; color: var(--accent); }
   #settingsLinks { margin-top: 26px; }
 </style>
@@ -343,7 +360,7 @@
     <button class="view-btn" data-view="espn">ESPN</button>
     <button class="view-btn" data-view="timeline">Timeline</button>
     <button class="view-btn" data-view="postcard">Postcard</button>
-    <button class="view-btn" data-view="needle">Needle</button>
+    <button class="view-btn" data-view="needle">Forecast</button>
   </div>
 
   <div id="status"></div>
