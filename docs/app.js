@@ -137,19 +137,6 @@ function rotateHue(hex, degrees) {
   return rgbToHex(nr, ng, nb);
 }
 
-// Lightens a color for use as a gradient's second stop -- keeps the same
-// hue/saturation, just raises lightness by a fixed amount (capped so an
-// already-light color doesn't wash out to near-white). Used by the
-// leader bar so a single team's color reads as a gradient rather than a
-// flat fill, without needing a second, unrelated color.
-function lightenForGradient(hex) {
-  const { r, g, b } = hexToRgb(hex);
-  const { h, s, l } = rgbToHsl(r, g, b);
-  const lighterL = Math.min(l + 0.28, 0.88);
-  const { r: nr, g: ng, b: nb } = hslToRgb(h, s, lighterL);
-  return rgbToHex(nr, ng, nb);
-}
-
 // Boosting every too-dark color to the SAME target lightness (above) can
 // occasionally make two originally-distinguishable colors (different only by
 // darkness) converge on a near-identical hue+lightness once flattened --
@@ -567,11 +554,14 @@ function applyUpsetColor(card, hexColor) {
 }
 
 // ============================== LEADER BAR ==============================
-// A thin gradient stripe at the top of the page, colored after whichever
-// team currently has the most points in the selected week -- live and
-// in-progress, unlike the Weekly Recap below which only shows once
-// everything is Final. Works across every matchup currently loaded, not
-// just one, since "the week's leader" is a league-wide comparison.
+// An ambient gradient wash behind the page's top section (see index.html
+// for the actual positioning/z-index -- it sits behind #wrap, confined
+// to roughly the top quarter of the viewport, fading to transparent),
+// colored after whichever team currently has the most points in the
+// selected week -- live and in-progress, unlike the Weekly Recap below
+// which only shows once everything is Final. Works across every matchup
+// currently loaded, not just one, since "the week's leader" is a
+// league-wide comparison.
 
 function computeWeekLeader(byMatchup, teamInfo) {
   let best = null;
@@ -596,9 +586,9 @@ function computeWeekLeader(byMatchup, teamInfo) {
 // whatever the new leader turns out to be just becomes "the new color,"
 // with no special-casing needed for why it changed.
 function updateLeaderBar(byMatchup, teamInfo) {
-  const bar = document.getElementById('leaderBar');
-  const layerA = document.getElementById('leaderLayerA');
-  const layerB = document.getElementById('leaderLayerB');
+  const bar = document.getElementById('leaderGradient');
+  const layerA = document.getElementById('leaderGradientLayerA');
+  const layerB = document.getElementById('leaderGradientLayerB');
   if (!bar || !layerA || !layerB) return;
 
   const leader = computeWeekLeader(byMatchup, teamInfo);
@@ -615,7 +605,10 @@ function updateLeaderBar(byMatchup, teamInfo) {
   const teamId = leader.teamId;
   if (teamId === leaderBarCurrentTeamId) return; // same leader -- nothing to transition
 
-  const gradient = `linear-gradient(90deg, ${leader.team.color}, ${lightenForGradient(leader.team.color)})`;
+  // A soft ambient wash, not a solid fill -- semi-transparent at the top,
+  // fading to fully transparent by the bottom of the band, so it reads
+  // as a gentle tint behind the header rather than a colored block.
+  const gradient = `linear-gradient(to bottom, ${colorWithAlpha(leader.team.color, 0.35)}, transparent)`;
   const nextLayer = leaderBarActiveLayer === 'A' ? layerB : layerA;
   const prevLayer = leaderBarActiveLayer === 'A' ? layerA : layerB;
 
