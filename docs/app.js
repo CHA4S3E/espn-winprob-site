@@ -24,6 +24,12 @@ let tooltipDetail = localStorage.getItem('winProbTooltipDetail') || 'condensed';
 // Defaults on (only off if explicitly set to 'false') -- shows, on hover
 // in ESPN view, whether Upset Watch was active at that historical point.
 let showUpsetHistory = localStorage.getItem('winProbShowUpsetHistory') !== 'false'; // set on preferences.html
+// Tracks which of the two leader-bar layers is currently the visible one,
+// so updateLeaderBar (see WEEKLY RECAP section) knows which layer to
+// write the NEW gradient into and crossfade up, and which one to fade
+// out -- alternating every time the leader actually changes.
+let leaderBarActiveLayer = null; // 'A' | 'B' | null (nothing shown yet)
+let leaderBarCurrentTeamId = null;
 document.documentElement.setAttribute('data-theme', theme);
 
 // ============================== THEME / COLOR ADJUSTMENT ==============================
@@ -128,6 +134,19 @@ function rotateHue(hex, degrees) {
   let { h, s, l } = rgbToHsl(r, g, b);
   h = (((h * 360 + degrees) % 360) + 360) % 360 / 360;
   const { r: nr, g: ng, b: nb } = hslToRgb(h, s, l);
+  return rgbToHex(nr, ng, nb);
+}
+
+// Lightens a color for use as a gradient's second stop -- keeps the same
+// hue/saturation, just raises lightness by a fixed amount (capped so an
+// already-light color doesn't wash out to near-white). Used by the
+// leader bar so a single team's color reads as a gradient rather than a
+// flat fill, without needing a second, unrelated color.
+function lightenForGradient(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  const { h, s, l } = rgbToHsl(r, g, b);
+  const lighterL = Math.min(l + 0.28, 0.88);
+  const { r: nr, g: ng, b: nb } = hslToRgb(h, s, lighterL);
   return rgbToHex(nr, ng, nb);
 }
 
@@ -545,6 +564,67 @@ function applyUpsetColor(card, hexColor) {
   card.style.setProperty('--upset', hexColor);
   card.style.setProperty('--upset-glow-a', colorWithAlpha(hexColor, 0.35));
   card.style.setProperty('--upset-glow-b', colorWithAlpha(hexColor, 0.85));
+}
+
+// ============================== LEADER BAR ==============================
+// A thin gradient stripe at the top of the page, colored after whichever
+// team currently has the most points in the selected week -- live and
+// in-progress, unlike the Weekly Recap below which only shows once
+// everything is Final. Works across every matchup currently loaded, not
+// just one, since "the week's leader" is a league-wide comparison.
+
+function computeWeekLeader(byMatchup, teamInfo) {
+  let best = null;
+  for (const rows of Object.values(byMatchup)) {
+    for (const isHome of [true, false]) {
+      const row = latestRow(rows, isHome);
+      if (!row) continue;
+      const team = teamInfo[row.team_id];
+      if (!team) continue;
+      if (!best || row.actual_score > best.score) {
+        best = { team, teamId: row.team_id, score: row.actual_score };
+      }
+    }
+  }
+  return best;
+}
+
+// Writes the current week's leader into the leader bar, crossfading
+// between the two stacked layers (see index.html's CSS) whenever the
+// leader actually changes -- including a change caused by switching to a
+// different week's data entirely, since that's handled the same way:
+// whatever the new leader turns out to be just becomes "the new color,"
+// with no special-casing needed for why it changed.
+function updateLeaderBar(byMatchup, teamInfo) {
+  const bar = document.getElementById('leaderBar');
+  const layerA = document.getElementById('leaderLayerA');
+  const layerB = document.getElementById('leaderLayerB');
+  if (!bar || !layerA || !layerB) return;
+
+  const leader = computeWeekLeader(byMatchup, teamInfo);
+  if (!leader) {
+    // No data yet for this week -- hide both layers rather than show a
+    // leftover color from whatever was previously selected.
+    layerA.classList.remove('visible');
+    layerB.classList.remove('visible');
+    leaderBarCurrentTeamId = null;
+    leaderBarActiveLayer = null;
+    return;
+  }
+
+  const teamId = leader.teamId;
+  if (teamId === leaderBarCurrentTeamId) return; // same leader -- nothing to transition
+
+  const gradient = `linear-gradient(90deg, ${leader.team.color}, ${lightenForGradient(leader.team.color)})`;
+  const nextLayer = leaderBarActiveLayer === 'A' ? layerB : layerA;
+  const prevLayer = leaderBarActiveLayer === 'A' ? layerA : layerB;
+
+  nextLayer.style.background = gradient;
+  nextLayer.classList.add('visible');
+  prevLayer.classList.remove('visible');
+
+  leaderBarCurrentTeamId = teamId;
+  leaderBarActiveLayer = leaderBarActiveLayer === 'A' ? 'B' : 'A';
 }
 
 // ============================== WEEKLY RECAP ==============================
@@ -1545,6 +1625,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   }
 
   renderRecapBanner(byMatchup, teamInfo);
+  updateLeaderBar(byMatchup, teamInfo);
 
   const { render, update } = VIEW_RENDERERS[viewMode];
 
