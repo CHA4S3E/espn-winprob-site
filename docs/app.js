@@ -412,8 +412,9 @@ const UPSET_CLEAR = 70; // the upset side reaching this many % clears the watch
 // game, not just wherever things ended up).
 //
 // onStep, if given, is called once per input value with the `watch` state
-// as of THAT point -- used to build a hover-over-history lookup (see
-// getUpsetWatchHistory) without duplicating this whole state machine.
+// and `upsetSide` as of THAT point -- used to build a hover-over-history
+// lookup (see getUpsetWatchHistory) without duplicating this whole state
+// machine.
 function walkUpsetState(sortedHomeWinProbs, onStep) {
   let armed = null; // 'home' | 'away' | null
   let peak = null; // the armed side's peak favorite % reached
@@ -475,7 +476,7 @@ function walkUpsetState(sortedHomeWinProbs, onStep) {
         }
       }
     }
-    if (onStep) onStep(watch);
+    if (onStep) onStep(watch, upsetSide);
   }
 
   return { armed, peak, watch, upsetSide, episodes };
@@ -522,11 +523,28 @@ function getUpsetWatchHistory(rows) {
   const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const history = [];
   let i = 0;
-  walkUpsetState(homeRows.map((r) => r.win_prob), (watchNow) => {
-    history.push({ ts: homeRows[i].ts, watch: watchNow });
+  walkUpsetState(homeRows.map((r) => r.win_prob), (watchNow, upsetSideNow) => {
+    history.push({ ts: homeRows[i].ts, watch: watchNow, upsetSide: upsetSideNow });
     i++;
   });
   return history;
+}
+
+// Colors the alert (both the card's border pulse and, by inheritance,
+// the badge's default text/glow) after the specific team that might pull
+// off the upset, rather than a fixed generic color -- reusing the
+// existing colorWithAlpha helper (see THEME/COLOR section) for the two
+// glow-intensity variants. Set as CSS custom properties scoped to just
+// this card element, so different matchups on the same page each show
+// their own team's color without needing separate CSS classes per team.
+// Called from every view's render/update function whenever upsetInfo
+// exists; when it doesn't, leaving the previous values in place is
+// harmless since the .upset-watch/.upset-watch-badge classes that read
+// them won't be applied to an inactive card anyway.
+function applyUpsetColor(card, hexColor) {
+  card.style.setProperty('--upset', hexColor);
+  card.style.setProperty('--upset-glow-a', colorWithAlpha(hexColor, 0.35));
+  card.style.setProperty('--upset-glow-b', colorWithAlpha(hexColor, 0.85));
 }
 
 // ============================== WEEKLY RECAP ==============================
@@ -794,7 +812,7 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
   const chartBoxClass = compact ? 'postcard-chartBox' : 'chartBox';
   const isLive = !allDone && isRecentlyActive(rows);
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
-  if (upsetInfo) card.classList.add('upset-watch');
+  if (upsetInfo) { card.classList.add('upset-watch'); applyUpsetColor(card, upsetInfo.upsetTeam.color); }
   card.innerHTML = `
     <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="${titleClass}">
@@ -929,6 +947,7 @@ function updateLineChartCard(entry, rows, home, away, allDone) {
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
   if (card) {
     card.classList.toggle('upset-watch', !!upsetInfo);
+    if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
     const upsetBadge = card.querySelector('.upset-watch-badge');
     if (upsetBadge) {
       upsetBadge.classList.toggle('visible', !!upsetInfo);
@@ -1037,6 +1056,7 @@ function renderNeedleCard(rows, home, away, allDone) {
 
   const card = document.createElement('div');
   card.className = 'needle-card' + (upsetInfo ? ' upset-watch' : '');
+  if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
   card.innerHTML = `
     <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</div>
@@ -1070,6 +1090,7 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
 
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
   card.classList.toggle('upset-watch', !!upsetInfo);
+  if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
   const upsetBadge = card.querySelector('.upset-watch-badge');
   if (upsetBadge) {
     upsetBadge.classList.toggle('visible', !!upsetInfo);
@@ -1159,12 +1180,22 @@ function setEspnPctLabels(canvas, homePct, { animate = true } = {}) {
 // visibility and pulsing -- used both for the live current-state display
 // and for the hover-over-history feature, which shows the plain text
 // with no pulse regardless of how dramatic the historical moment was.
-function setUpsetBadgeState(canvas, { text, visible, pulsing }) {
+// `color`, if given, overrides the badge's own text color via inline
+// style -- used specifically when hovering a historical point that
+// belonged to a DIFFERENT episode than whatever's currently live (a
+// back-and-forth game can have different teams threaten at different
+// times), without touching the shared --upset custom property the card's
+// border reads, which must keep reflecting the CURRENT live team
+// regardless of what's hovered. Passing no color clears any override,
+// letting the badge fall back to inheriting the card's own --upset.
+function setUpsetBadgeState(canvas, { text, visible, pulsing, color }) {
   const badge = canvas.closest('.espn-card')?.querySelector('.upset-watch-badge');
   if (!badge) return;
   badge.textContent = text;
   badge.classList.toggle('visible', visible);
   badge.classList.toggle('pulsing', pulsing);
+  if (color) badge.style.color = color;
+  else badge.style.removeProperty('color');
 }
 
 function renderEspnCard(rows, home, away, allDone) {
@@ -1173,6 +1204,7 @@ function renderEspnCard(rows, home, away, allDone) {
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
   const card = document.createElement('div');
   card.className = 'espn-card' + (upsetInfo ? ' upset-watch' : '');
+  if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
   card.innerHTML = `
     <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="espn-header">
@@ -1402,8 +1434,15 @@ function renderEspnCard(rows, home, away, allDone) {
       const wasActive = nearestEntry ? nearestEntry.watch : false;
       const isCurrentlyLive = !!chart._state.currentUpsetInfo;
       if (wasActive) {
-        setUpsetBadgeState(canvas, { text: '\ud83d\udea8 Upset Watch was active here', visible: true, pulsing: false });
+        // Colored after THIS specific historical episode's underdog,
+        // which can differ from whoever's currently live in a
+        // back-and-forth game -- e.g. home might have been the threat
+        // earlier, away the threat now.
+        const historicalColor = nearestEntry.upsetSide === 'home' ? home.color : away.color;
+        setUpsetBadgeState(canvas, { text: '\ud83d\udea8 Upset Watch was active here', visible: true, pulsing: false, color: historicalColor });
       } else if (isCurrentlyLive) {
+        // No color override here -- falls back to inheriting the card's
+        // own --upset, which already reflects the current live team.
         setUpsetBadgeState(canvas, { text: '\ud83d\udea8 UPSET WATCH', visible: true, pulsing: false });
       } else {
         setUpsetBadgeState(canvas, { text: '\ud83d\udea8 UPSET WATCH', visible: false, pulsing: false });
@@ -1465,6 +1504,7 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   chart._state.currentUpsetInfo = upsetInfo;
   if (card) {
     card.classList.toggle('upset-watch', !!upsetInfo);
+    if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
     // Same hovering guard as the pct labels above -- a background refresh
     // shouldn't yank a historical hover state out from under someone.
     if (!isHovering) {
