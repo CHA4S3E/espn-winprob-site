@@ -484,9 +484,10 @@ function getLiveUpsetInfo(rows, home, away, allDone) {
 
 // ============================== WEEKLY RECAP ==============================
 // Shows once every matchup in the current week is Final -- final scores,
-// the week's single biggest swing (using the same 15-min-window logic as
-// the live swing banner, just scanned across the whole week's history
-// rather than only the latest point), and the closest game by final margin.
+// the week's single biggest swing (a 15-minute-window win_prob delta,
+// scanned across the whole week's history), the closest game by final
+// margin, and the biggest upset (see the Upset Watch section above).
+const SWING_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
 function biggestSwingInHistory(homeRows) {
   let best = null;
