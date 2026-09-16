@@ -92,6 +92,32 @@
      nudge or shrink by a pixel or two. display:block removes it entirely. */
   canvas { display: block; }
   #wrap { max-width: 900px; margin: 0 auto; }
+
+  /* ---- Leader bar -- a thin gradient stripe colored after whichever
+     team currently has the most points in the selected week. Gradient
+     background-images aren't smoothly animatable via a plain CSS
+     transition in any broadly-supported way, so instead of transitioning
+     the gradient itself, two full-size layers are stacked on top of each
+     other and crossfaded via opacity -- the outgoing leader's gradient
+     fades out while the incoming one fades in, which reads as a smooth
+     color transition even though technically it's two static gradients
+     swapping. The same mechanism handles both "the lead changed" and
+     "switched to a different week" since both are just the color
+     changing at some point in time; there's nothing week-specific to
+     handle separately. ---- */
+  #leaderBar {
+    position: relative; height: 6px; width: 100%; margin: 0 auto 22px;
+    overflow: hidden; border-radius: 3px; background: var(--border);
+  }
+  .leader-layer {
+    position: absolute; inset: 0; opacity: 0;
+    transition: opacity 0.8s ease;
+  }
+  .leader-layer.visible { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    .leader-layer { transition: none; }
+  }
+
   h2 {
     text-align: center; margin-bottom: 4px; font-family: var(--font-display); font-weight: 400;
     font-size: var(--text-3xl); letter-spacing: 0.02em;
@@ -293,6 +319,7 @@
 </head>
 <body>
 <div id="wrap">
+  <div id="leaderBar"><div class="leader-layer" id="leaderLayerA"></div><div class="leader-layer" id="leaderLayerB"></div></div>
   <h2>Fantasy Win Probability</h2>
   <div class="sub">Updates automatically every ~1 minute while games are live.</div>
 
