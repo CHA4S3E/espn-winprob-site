@@ -90,6 +90,19 @@
     </label>
   </div>
 
+  <div class="setting-group">
+    <div class="setting-title">Confidence band</div>
+    <div class="setting-desc">A shaded band around the win-probability line on ESPN and Timeline charts (not Postcard), showing roughly how much uncertainty the model still has -- wider early, narrower as the game becomes more decided.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="showConfidenceBand">
+      <span>
+        <div class="option-label">Show confidence band (default: off)</div>
+        <div class="option-example">Off by default since it adds visual noise to every chart -- worth turning on if you want a sense of how much the projection could still move, not just where it currently sits</div>
+      </span>
+    </label>
+  </div>
+
   <a class="back-link" href="index.html">&larr; Back to matchups</a>
 </div>
 
@@ -111,6 +124,16 @@
   historyCheckbox.checked = localStorage.getItem(HISTORY_KEY) !== 'false';
   historyCheckbox.addEventListener('change', () => {
     localStorage.setItem(HISTORY_KEY, historyCheckbox.checked ? 'true' : 'false');
+  });
+
+  // Defaults OFF -- only 'true' turns it on, the opposite convention from
+  // the toggle above, since this one adds visual complexity rather than
+  // just extra info on an already-opt-in hover.
+  const BAND_KEY = 'winProbShowConfidenceBand';
+  const bandCheckbox = document.getElementById('showConfidenceBand');
+  bandCheckbox.checked = localStorage.getItem(BAND_KEY) === 'true';
+  bandCheckbox.addEventListener('change', () => {
+    localStorage.setItem(BAND_KEY, bandCheckbox.checked ? 'true' : 'false');
   });
 </script>
 </body>
