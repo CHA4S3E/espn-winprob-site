@@ -1690,6 +1690,33 @@ function setupDebugOverlay() {
       lines.push('(could not find Chart.js instance for this canvas)');
     }
 
+    // Upset Watch internals for this same card -- same fields the
+    // standalone test harness (test-upset-watch.html) shows, read
+    // straight off chart._state rather than recomputed here, so this
+    // always reflects exactly what the live card is actually using.
+    lines.push('');
+    lines.push('--- Upset Watch ---');
+    const state = chartInstance ? chartInstance._state : null;
+    if (!state) {
+      lines.push('(no chart._state found)');
+    } else {
+      const info = state.currentUpsetInfo;
+      const history = state.upsetHistory || [];
+      const last = history.length ? history[history.length - 1] : null;
+      lines.push(`getLiveUpsetInfo: ${info ? 'ACTIVE' : 'null'}`);
+      if (info) {
+        lines.push(`  favorite: ${info.favorite.name}`);
+        lines.push(`  upsetTeam: ${info.upsetTeam.name}`);
+        lines.push(`  favoritePeak: ${info.favoritePeak.toFixed(1)}%`);
+        lines.push(`  currentUpsetPct: ${info.currentUpsetPct.toFixed(1)}%`);
+      }
+      lines.push(`raw watch (latest history step): ${last ? last.watch : 'n/a'}`);
+      lines.push(`raw upsetSide (latest history step): ${last ? (last.upsetSide ?? 'null') : 'n/a'}`);
+      lines.push(`upsetHistory length: ${history.length}`);
+      lines.push(`badge inline color override: ${document.querySelector('.espn-card .upset-watch-badge')?.style.color || '(none, inherits --upset)'}`);
+      lines.push(`card --upset color: ${card ? card.style.getPropertyValue('--upset') || '(unset)' : 'n/a'}`);
+    }
+
     panel.textContent = lines.join('\n');
   }
 
