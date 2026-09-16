@@ -91,31 +91,33 @@
      can cause the browser to recompute that gap, making the chart appear to
      nudge or shrink by a pixel or two. display:block removes it entirely. */
   canvas { display: block; }
-  #wrap { max-width: 900px; margin: 0 auto; }
+  #wrap { max-width: 900px; margin: 0 auto; position: relative; z-index: 1; }
 
-  /* ---- Leader bar -- a thin gradient stripe colored after whichever
-     team currently has the most points in the selected week. Gradient
-     background-images aren't smoothly animatable via a plain CSS
-     transition in any broadly-supported way, so instead of transitioning
-     the gradient itself, two full-size layers are stacked on top of each
-     other and crossfaded via opacity -- the outgoing leader's gradient
-     fades out while the incoming one fades in, which reads as a smooth
-     color transition even though technically it's two static gradients
-     swapping. The same mechanism handles both "the lead changed" and
-     "switched to a different week" since both are just the color
-     changing at some point in time; there's nothing week-specific to
-     handle separately. ---- */
-  #leaderBar {
-    position: relative; height: 6px; width: 100%; margin: 0 auto 22px;
-    overflow: hidden; border-radius: 3px; background: var(--border);
+  /* ---- Leader gradient wash -- an ambient background tint behind
+     everything (note z-index:0, and #wrap above is explicitly given
+     z-index:1 so all real content stacks above this), colored after
+     whichever team currently has the most points in the selected week.
+     Positioned absolutely against the page itself (not the viewport --
+     no `fixed`, so it scrolls away normally rather than staying pinned),
+     confined to roughly the top quarter of the viewport height and
+     fading to fully transparent by the bottom of that band, so a long
+     page (Timeline view especially, which can run very tall) just shows
+     plain background color for everything below that -- it was never
+     meant to tint the whole page, only announce itself near the top.
+     Same two-layer crossfade technique as before: gradients can't be
+     smoothly transitioned directly, so the outgoing color's layer fades
+     out while the incoming one fades in. */
+  #leaderGradient {
+    position: absolute; top: 0; left: 0; right: 0; height: 25vh;
+    z-index: 0; pointer-events: none; overflow: hidden;
   }
-  .leader-layer {
+  .leader-gradient-layer {
     position: absolute; inset: 0; opacity: 0;
-    transition: opacity 0.8s ease;
+    transition: opacity 1.2s ease;
   }
-  .leader-layer.visible { opacity: 1; }
+  .leader-gradient-layer.visible { opacity: 1; }
   @media (prefers-reduced-motion: reduce) {
-    .leader-layer { transition: none; }
+    .leader-gradient-layer { transition: none; }
   }
 
   h2 {
@@ -318,8 +320,8 @@
 </style>
 </head>
 <body>
+<div id="leaderGradient"><div class="leader-gradient-layer" id="leaderGradientLayerA"></div><div class="leader-gradient-layer" id="leaderGradientLayerB"></div></div>
 <div id="wrap">
-  <div id="leaderBar"><div class="leader-layer" id="leaderLayerA"></div><div class="leader-layer" id="leaderLayerB"></div></div>
   <h2>Fantasy Win Probability</h2>
   <div class="sub">Updates automatically every ~1 minute while games are live.</div>
 
