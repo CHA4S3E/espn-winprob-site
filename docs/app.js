@@ -411,10 +411,10 @@ const UPSET_CLEAR = 70; // the upset side reaching this many % clears the watch
 // weekly recap, which cares about the most dramatic moment of the whole
 // game, not just wherever things ended up).
 //
-// onStep, if given, is called once per input value with the `watch`,
-// `upsetSide`, `armed`, and `peak` state as of THAT point -- used to
-// build a hover-over-history lookup (see getUpsetWatchHistory) without
-// duplicating this whole state machine.
+// onStep, if given, is called once per input value with the `watch` state
+// and `upsetSide` as of THAT point -- used to build a hover-over-history
+// lookup (see getUpsetWatchHistory) without duplicating this whole state
+// machine.
 function walkUpsetState(sortedHomeWinProbs, onStep) {
   let armed = null; // 'home' | 'away' | null
   let peak = null; // the armed side's peak favorite % reached
@@ -476,7 +476,7 @@ function walkUpsetState(sortedHomeWinProbs, onStep) {
         }
       }
     }
-    if (onStep) onStep(watch, upsetSide, armed, peak);
+    if (onStep) onStep(watch, upsetSide);
   }
 
   return { armed, peak, watch, upsetSide, episodes };
@@ -523,8 +523,8 @@ function getUpsetWatchHistory(rows) {
   const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const history = [];
   let i = 0;
-  walkUpsetState(homeRows.map((r) => r.win_prob), (watchNow, upsetSideNow, armedNow, peakNow) => {
-    history.push({ ts: homeRows[i].ts, watch: watchNow, upsetSide: upsetSideNow, armed: armedNow, peak: peakNow });
+  walkUpsetState(homeRows.map((r) => r.win_prob), (watchNow, upsetSideNow) => {
+    history.push({ ts: homeRows[i].ts, watch: watchNow, upsetSide: upsetSideNow });
     i++;
   });
   return history;
@@ -1649,8 +1649,6 @@ function setupDebugOverlay() {
     'z-index:99999; max-width:380px; white-space:pre; line-height:1.5; pointer-events:none;';
   document.body.appendChild(panel);
 
-  let lastMouseX = null, lastMouseY = null;
-
   function logDebug() {
     const lines = [];
     const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
@@ -1661,22 +1659,7 @@ function setupDebugOverlay() {
     lines.push(`has vertical scroll: ${document.documentElement.scrollHeight > document.documentElement.clientHeight}`);
     lines.push('');
 
-    // Prefers whichever ESPN card is actually under the cursor (tracked
-    // via lastMouseX/Y, updated on every mousemove below) so this stays
-    // locked onto the hovered card even when logDebug fires from the
-    // setInterval tick rather than a fresh mousemove -- mousemove only
-    // fires on actual movement, so without remembering the last known
-    // position, a stationary cursor would cause every interval tick to
-    // fall back to the first card on the page instead of staying put.
-    // Falls back to the first ESPN chart on the page when the cursor
-    // isn't over any card at all (or hasn't moved yet).
-    let canvas = null;
-    if (lastMouseX !== null && typeof document.elementFromPoint === 'function') {
-      const hoveredEl = document.elementFromPoint(lastMouseX, lastMouseY);
-      const hoveredCard = hoveredEl ? hoveredEl.closest('.espn-card') : null;
-      if (hoveredCard) canvas = hoveredCard.querySelector('canvas');
-    }
-    if (!canvas) canvas = document.querySelector('.espn-card canvas');
+    const canvas = document.querySelector('.espn-card canvas');
     if (!canvas) {
       lines.push('(no ESPN chart on screen)');
       panel.textContent = lines.join('\n');
@@ -1707,47 +1690,12 @@ function setupDebugOverlay() {
       lines.push('(could not find Chart.js instance for this canvas)');
     }
 
-    // Upset Watch internals for this same card -- same fields the
-    // standalone test harness (test-upset-watch.html) shows, read
-    // straight off chart._state rather than recomputed here, so this
-    // always reflects exactly what the live card is actually using.
-    lines.push('');
-    lines.push('--- Upset Watch ---');
-    const state = chartInstance ? chartInstance._state : null;
-    if (!state) {
-      lines.push('(no chart._state found)');
-    } else {
-      const history = state.upsetHistory || [];
-      const last = history.length ? history[history.length - 1] : null;
-      const info = state.currentUpsetInfo;
-      // Raw state machine fields first, always present regardless of
-      // whether watch is currently true -- this is the piece the
-      // wrapped getLiveUpsetInfo result hides: a team can be armed
-      // (climbing toward 90+, or sitting there) for a long stretch
-      // before ever triggering, and that's exactly the phase worth
-      // watching to confirm arming itself is behaving correctly.
-      lines.push(`armed: ${last ? (last.armed ?? 'null') : 'n/a'}  |  watch: ${last ? last.watch : 'n/a'}  |  peak: ${last && last.peak != null ? last.peak.toFixed(1) : 'null'}  |  upsetSide: ${last ? (last.upsetSide ?? 'null') : 'n/a'}`);
-      lines.push(`upsetHistory length: ${history.length}`);
-      lines.push(`getLiveUpsetInfo: ${info ? 'ACTIVE' : 'null'}`);
-      if (info) {
-        lines.push(`  favorite: ${info.favorite.name}`);
-        lines.push(`  upsetTeam: ${info.upsetTeam.name}`);
-        lines.push(`  currentUpsetPct: ${info.currentUpsetPct.toFixed(1)}%`);
-      }
-      lines.push(`badge inline color override: ${card ? card.querySelector('.upset-watch-badge')?.style.color || '(none, inherits --upset)' : 'n/a'}`);
-      lines.push(`card --upset color: ${card ? card.style.getPropertyValue('--upset') || '(unset)' : 'n/a'}`);
-    }
-
     panel.textContent = lines.join('\n');
   }
 
   logDebug();
   setInterval(logDebug, 300);
-  document.addEventListener('mousemove', (evt) => {
-    lastMouseX = evt.clientX;
-    lastMouseY = evt.clientY;
-    logDebug();
-  }, { passive: true });
+  document.addEventListener('mousemove', logDebug, { passive: true });
 }
 
 async function init() {
