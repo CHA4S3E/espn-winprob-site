@@ -1649,6 +1649,8 @@ function setupDebugOverlay() {
     'z-index:99999; max-width:380px; white-space:pre; line-height:1.5; pointer-events:none;';
   document.body.appendChild(panel);
 
+  let lastMouseX = null, lastMouseY = null;
+
   function logDebug() {
     const lines = [];
     const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
@@ -1659,7 +1661,22 @@ function setupDebugOverlay() {
     lines.push(`has vertical scroll: ${document.documentElement.scrollHeight > document.documentElement.clientHeight}`);
     lines.push('');
 
-    const canvas = document.querySelector('.espn-card canvas');
+    // Prefers whichever ESPN card is actually under the cursor (tracked
+    // via lastMouseX/Y, updated on every mousemove below) so this stays
+    // locked onto the hovered card even when logDebug fires from the
+    // setInterval tick rather than a fresh mousemove -- mousemove only
+    // fires on actual movement, so without remembering the last known
+    // position, a stationary cursor would cause every interval tick to
+    // fall back to the first card on the page instead of staying put.
+    // Falls back to the first ESPN chart on the page when the cursor
+    // isn't over any card at all (or hasn't moved yet).
+    let canvas = null;
+    if (lastMouseX !== null && typeof document.elementFromPoint === 'function') {
+      const hoveredEl = document.elementFromPoint(lastMouseX, lastMouseY);
+      const hoveredCard = hoveredEl ? hoveredEl.closest('.espn-card') : null;
+      if (hoveredCard) canvas = hoveredCard.querySelector('canvas');
+    }
+    if (!canvas) canvas = document.querySelector('.espn-card canvas');
     if (!canvas) {
       lines.push('(no ESPN chart on screen)');
       panel.textContent = lines.join('\n');
@@ -1713,7 +1730,7 @@ function setupDebugOverlay() {
       lines.push(`raw watch (latest history step): ${last ? last.watch : 'n/a'}`);
       lines.push(`raw upsetSide (latest history step): ${last ? (last.upsetSide ?? 'null') : 'n/a'}`);
       lines.push(`upsetHistory length: ${history.length}`);
-      lines.push(`badge inline color override: ${document.querySelector('.espn-card .upset-watch-badge')?.style.color || '(none, inherits --upset)'}`);
+      lines.push(`badge inline color override: ${card ? card.querySelector('.upset-watch-badge')?.style.color || '(none, inherits --upset)' : 'n/a'}`);
       lines.push(`card --upset color: ${card ? card.style.getPropertyValue('--upset') || '(unset)' : 'n/a'}`);
     }
 
@@ -1722,7 +1739,11 @@ function setupDebugOverlay() {
 
   logDebug();
   setInterval(logDebug, 300);
-  document.addEventListener('mousemove', logDebug, { passive: true });
+  document.addEventListener('mousemove', (evt) => {
+    lastMouseX = evt.clientX;
+    lastMouseY = evt.clientY;
+    logDebug();
+  }, { passive: true });
 }
 
 async function init() {
