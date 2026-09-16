@@ -620,6 +620,49 @@ function updateLeaderBar(byMatchup, teamInfo) {
   leaderBarActiveLayer = leaderBarActiveLayer === 'A' ? 'B' : 'A';
 }
 
+// ============================== BYE WEEK DETECTION ==============================
+// A team with no matchup scheduled this week would otherwise just never
+// appear anywhere on the page, with nothing distinguishing that from the
+// poller having failed for them specifically -- this makes the
+// distinction explicit. teamInfo always contains every team in the
+// league regardless of whether they have a matchup this week (see
+// fetchMatchupData, which fetches the teams table independently of
+// snapshots), so comparing it against who actually shows up in
+// byMatchup's rows is enough to find the gap, no extra fetch needed.
+function computeByeTeams(byMatchup, teamInfo) {
+  // If there's no data at all yet (poller hasn't run this week), don't
+  // guess -- that's "no data yet," not "everyone is on a bye." Only once
+  // SOME matchups have real rows does a team's total absence become a
+  // meaningful signal rather than just "hasn't been polled yet."
+  if (!Object.keys(byMatchup).length) return [];
+
+  const teamsWithMatchup = new Set();
+  for (const rows of Object.values(byMatchup)) {
+    for (const row of rows) teamsWithMatchup.add(row.team_id);
+  }
+
+  const byeTeams = [];
+  for (const [teamId, team] of Object.entries(teamInfo)) {
+    if (!teamsWithMatchup.has(teamId)) byeTeams.push(team);
+  }
+  return byeTeams;
+}
+
+function renderByeWeekNote(byMatchup, teamInfo) {
+  const note = document.getElementById('byeWeekNote');
+  if (!note) return;
+  const byeTeams = computeByeTeams(byMatchup, teamInfo);
+  if (!byeTeams.length) {
+    note.hidden = true;
+    return;
+  }
+  const names = byeTeams.map((t) => t.name).join(', ');
+  note.textContent = byeTeams.length === 1
+    ? `\ud83d\udecc ${names} is on a bye this week -- no matchup scheduled.`
+    : `\ud83d\udecc ${names} are on a bye this week -- no matchups scheduled.`;
+  note.hidden = false;
+}
+
 // ============================== WEEKLY RECAP ==============================
 // Shows once every matchup in the current week is Final -- final scores,
 // the closest game by final margin, and the biggest upset (see the Upset
@@ -1683,6 +1726,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
   renderRecapBanner(byMatchup, teamInfo);
   updateLeaderBar(byMatchup, teamInfo);
+  renderByeWeekNote(byMatchup, teamInfo);
 
   const { render, update } = VIEW_RENDERERS[viewMode];
 
