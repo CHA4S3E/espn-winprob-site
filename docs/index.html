@@ -163,7 +163,7 @@
      `display`, and never rendered/removed via the `hidden` attribute)
      means the card's total height never changes when upset watch turns on
      or off, so sibling cards never shift position. The animation itself
-     is gated on .active so an inactive, invisible badge isn't still
+     is gated on .pulsing so an inactive, invisible badge isn't still
      animating in the background for no reason. */
   .upset-watch-badge {
     text-align: center; font-family: var(--font-display); font-weight: 400;
@@ -172,8 +172,11 @@
     height: 1.1em; line-height: 1.1em;
     visibility: hidden;
   }
-  .upset-watch-badge.active {
-    visibility: visible;
+  /* .visible and .pulsing are separate so a historical hover state (see
+     app.js) can show the plain "Upset Watch was active here" text without
+     any glow -- only the CURRENT live alert gets both classes together. */
+  .upset-watch-badge.visible { visibility: visible; }
+  .upset-watch-badge.pulsing {
     animation: upsetTextPulse 2.4s ease-in-out infinite;
   }
   @keyframes cardEnter {
@@ -215,7 +218,7 @@
     .live { animation: none !important; }
     .matchup-card, .postcard, .needle-card, .espn-card { animation: none !important; }
     .upset-watch { animation: none !important; box-shadow: inset 0 0 0 1.5px var(--upset) !important; }
-    .upset-watch-badge.active { animation: none !important; opacity: 1; }
+    .upset-watch-badge.pulsing { animation: none !important; opacity: 1; }
   }
 
   /* ---- "Why is this the number?" button + blurb, shared across all views ---- */
