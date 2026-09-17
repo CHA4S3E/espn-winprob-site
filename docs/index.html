@@ -3,6 +3,16 @@
 <head>
 <meta charset="utf-8">
 <title>Fantasy Win Probability Tracker</title>
+<!-- Controls the color of the browser's OWN UI chrome on mobile (the
+     status bar area, and on some browsers the overscroll/bounce region)
+     -- entirely separate from any CSS background on html/body, and the
+     reason a plain CSS fix for the overscroll area alone didn't resolve
+     the black flash people were seeing above the leader gradient. Content
+     gets updated dynamically below (before first paint) and again
+     whenever the theme toggle changes it (see setTheme in app.js), so it
+     always matches whichever theme is actually active rather than a
+     static value that could mismatch a manually-toggled theme. -->
+<meta name="theme-color" content="#ffffff" id="themeColorMeta">
 <!-- Inline SVG data URI rather than a hosted image file -- keeps the
      favicon self-contained in this one file, matching how the rest of
      the site avoids separate asset files. -->
@@ -15,12 +25,15 @@
 <script>
   // Set the theme attribute before first paint, so there's no flash of the
   // wrong theme while app.js (loaded at the bottom of the page) is still
-  // starting up.
-  document.documentElement.setAttribute(
-    'data-theme',
+  // starting up. Also sets the theme-color meta tag to match, for the
+  // same reason -- otherwise the browser's own chrome briefly shows
+  // whatever the tag's static fallback is before app.js gets a chance to
+  // correct it.
+  const initialTheme =
     localStorage.getItem('winProbTheme') ||
-      (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-  );
+    (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', initialTheme);
+  document.getElementById('themeColorMeta').setAttribute('content', initialTheme === 'dark' ? '#14161a' : '#ffffff');
 </script>
 <style>
   /* Always reserve space for the vertical scrollbar, whether or not it's
