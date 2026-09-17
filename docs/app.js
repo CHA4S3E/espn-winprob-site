@@ -11,7 +11,17 @@ const themeToggle = document.getElementById('themeToggle');
 
 const charts = {}; // matchupId -> { mode, chart? , el?, needle? } depending on view
 let refreshTimer = null;
+// Timeline and Postcard are being deprecated -- hidden from the view
+// switcher unless explicitly re-enabled (see preferences.html). Default
+// OFF, matching the convention for other opt-in visual toggles.
+let showLegacyViews = localStorage.getItem('winProbShowLegacyViews') === 'true';
 let viewMode = localStorage.getItem('winProbViewMode') || 'espn'; // 'timeline' | 'postcard' | 'needle' | 'espn'
+if (!showLegacyViews && (viewMode === 'timeline' || viewMode === 'postcard')) {
+  // Falls back for THIS session without touching what's saved in
+  // localStorage -- if the preference gets turned back on later, whatever
+  // view they'd previously chosen is still there waiting for them.
+  viewMode = 'espn';
+}
 // Respects the OS's prefers-color-scheme on a first visit (no saved
 // preference yet) -- once someone manually toggles via themeToggle, that
 // explicit choice is saved and takes over from then on regardless of what
@@ -2538,6 +2548,13 @@ async function init() {
   }
 
   viewButtons.forEach((btn) => {
+    // Timeline/Postcard stay entirely out of the switcher (not just
+    // unclickable) when the legacy-views preference is off -- no click
+    // handler needed for a button nobody can see.
+    if (!showLegacyViews && (btn.dataset.view === 'timeline' || btn.dataset.view === 'postcard')) {
+      btn.hidden = true;
+      return;
+    }
     btn.classList.toggle('active', btn.dataset.view === viewMode);
     btn.addEventListener('click', () => setViewMode(btn.dataset.view));
   });
