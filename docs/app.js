@@ -421,10 +421,6 @@ function intensity(y) {
   return Math.min(Math.abs(y - 50) / 50, 1);
 }
 
-function dayLabel(ts) {
-  return new Date(ts).toLocaleDateString(undefined, { weekday: 'short' });
-}
-
 async function fetchMatchupData(leagueId, year, week) {
   const [snaps, { data: teams, error: teamErr }] = await Promise.all([
     fetchAllRows((from, to) =>
@@ -1134,10 +1130,6 @@ function computeChartPoints(homeRows, awayRows) {
     .filter((p) => p.y !== undefined); // safety: skip if somehow neither side has data yet
   const points = withCrossings(rawPoints);
 
-  const tickEvery = Math.max(Math.floor(rawPoints.length / 5), 1);
-  const dayTicks = {};
-  rawPoints.forEach((p, i) => { if (i % tickEvery === 0) dayTicks[p.x.toFixed(2)] = dayLabel(p.ts); });
-
   // The real data's x-range -- used to pin the x-axis min/max explicitly
   // (see renderLineChartCard) instead of letting Chart.js auto-calculate a
   // "nice" rounded range, which can leave a visible gap after the last real
@@ -1146,7 +1138,7 @@ function computeChartPoints(homeRows, awayRows) {
   // other even though they're all meant to fill the same width edge-to-edge.
   const maxX = rawPoints.length ? rawPoints[rawPoints.length - 1].x : 0;
 
-  return { points, rawPoints, dayTicks, maxX };
+  return { points, rawPoints, maxX };
 }
 
 function midY(segCtx) { return (segCtx.p0.parsed.y + segCtx.p1.parsed.y) / 2; }
@@ -1510,11 +1502,11 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length) return { card, entry: null };
 
-  const { points, rawPoints, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  const { points, rawPoints, maxX } = computeChartPoints(homeRows, awayRows);
   // Confidence band never applies to Postcard (compact) -- only Timeline.
   const showBandHere = showConfidenceBand && !compact;
   const mainIdx = showBandHere ? 2 : 0;
-  const state = { dayTicks, mainIdx };
+  const state = { mainIdx };
   const canvas = card.querySelector('canvas');
 
   const lineDatasets = [];
@@ -1611,12 +1603,11 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
           min: 0,
           max: maxX,
           grid: { display: !compact, color: themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)') },
-          ticks: compact ? { display: false } : {
-            color: themeVar('#555', '#aaa'),
-            callback: (v) => state.dayTicks[Number(v).toFixed(2)] ?? '',
-            autoSkip: false,
-            maxRotation: 0,
-          },
+          // No x-axis labels -- the old day-of-week text (e.g. "Sun") was
+          // tied to a since-replaced model and no longer means anything
+          // useful here. Grid lines are unaffected, controlled separately
+          // by the grid.display setting just above.
+          ticks: { display: false },
         },
       },
     },
@@ -1631,7 +1622,7 @@ function updateLineChartCard(entry, rows, home, away, allDone) {
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length || !entry.chart) return;
 
-  const { points, rawPoints, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  const { points, rawPoints, maxX } = computeChartPoints(homeRows, awayRows);
   const mainIdx = entry.chart._state.mainIdx;
   entry.chart.data.datasets[mainIdx].data = points;
   if (mainIdx > 0) {
@@ -1641,7 +1632,6 @@ function updateLineChartCard(entry, rows, home, away, allDone) {
     entry.chart.data.datasets[0].data = band.upper;
     entry.chart.data.datasets[1].data = band.lower;
   }
-  entry.chart._state.dayTicks = dayTicks;
   entry.chart.options.scales.x.max = maxX; // keep the pinned axis in sync as new points arrive
   entry.chart.update('none');
 
@@ -2038,7 +2028,7 @@ function renderEspnCard(rows, home, away, allDone) {
   const awayRows = rows.filter((s) => !s.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (!homeRows.length) return { card, entry: null };
 
-  const { points, rawPoints, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  const { points, rawPoints, maxX } = computeChartPoints(homeRows, awayRows);
   // mainIdx tracks where the "real" datasets (main line, hover guide,
   // hover dot) actually start -- 0 normally, or 2 when the confidence
   // band's two datasets are inserted ahead of them so the band renders
@@ -2055,7 +2045,6 @@ function renderEspnCard(rows, home, away, allDone) {
   // hover always reflects the latest data, not whatever existed when this
   // card was first created.
   const state = {
-    dayTicks,
     currentHomePct: homePct,
     upsetHistory: getUpsetWatchHistory(rows),
     currentUpsetInfo: upsetInfo,
@@ -2194,12 +2183,10 @@ function renderEspnCard(rows, home, away, allDone) {
           min: 0,
           max: maxX,
           grid: { color: themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)') },
-          ticks: {
-            color: themeVar('#555', '#aaa'),
-            callback: (v) => state.dayTicks[Number(v).toFixed(2)] ?? '',
-            autoSkip: false,
-            maxRotation: 0,
-          },
+          // No x-axis labels -- the old day-of-week text (e.g. "Sun") was
+          // tied to a since-replaced model and no longer means anything
+          // useful here. Grid lines are unaffected.
+          ticks: { display: false },
         },
       },
     },
@@ -2306,7 +2293,7 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   if (!homeRows.length || !entry.chart) return;
 
   const chart = entry.chart;
-  const { points, rawPoints, dayTicks, maxX } = computeChartPoints(homeRows, awayRows);
+  const { points, rawPoints, maxX } = computeChartPoints(homeRows, awayRows);
   const mainIdx = chart._state.mainIdx;
   chart.data.datasets[mainIdx].data = points;
   if (showConfidenceBand) {
@@ -2314,7 +2301,6 @@ function updateEspnCard(entry, rows, home, away, allDone) {
     chart.data.datasets[0].data = band.upper;
     chart.data.datasets[1].data = band.lower;
   }
-  chart._state.dayTicks = dayTicks;
   chart._state.currentHomePct = latestPct(rows);
   chart.options.scales.x.max = maxX;
   chart.update('none');
