@@ -1288,19 +1288,31 @@ function isWeekFullyDone(byMatchup) {
 let kickoffCountdownTarget = null; // Date | null
 let kickoffCountdownLabel = '';
 
+const KICKOFF_IMMINENT_MS = 60 * 60 * 1000; // 1 hour -- matches #kickoffCountdown.imminent in index.html
+
 function tickKickoffCountdown() {
   const el = document.getElementById('kickoffCountdown');
   if (!el) return;
-  if (!kickoffCountdownTarget) { el.hidden = true; return; }
-  const formatted = formatCountdown(kickoffCountdownTarget.getTime() - Date.now());
+  if (!kickoffCountdownTarget) {
+    el.hidden = true;
+    el.classList.remove('imminent');
+    return;
+  }
+  const remaining = kickoffCountdownTarget.getTime() - Date.now();
+  const formatted = formatCountdown(remaining);
   if (!formatted) {
     // Kickoff has arrived (or passed) since this was last checked -- hide
     // immediately rather than show a stale "0m 0s" or a negative countdown.
     kickoffCountdownTarget = null;
     el.hidden = true;
+    el.classList.remove('imminent');
     return;
   }
   el.innerHTML = `<span class="kickoff-label">${kickoffCountdownLabel}</span>${formatted}`;
+  // Starts pulsing in the final hour -- CSS handles the actual glow (see
+  // .imminent in index.html), including the reduced-motion override, so
+  // this is just responsible for toggling the class at the right moment.
+  el.classList.toggle('imminent', remaining <= KICKOFF_IMMINENT_MS);
   el.hidden = false;
 }
 
