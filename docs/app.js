@@ -1163,6 +1163,123 @@ function latestRow(rows, isHome) {
   return rows.filter((r) => r.is_home === isHome).sort((a, b) => new Date(b.ts) - new Date(a.ts))[0];
 }
 
+// ============================== KICKOFF COUNTDOWN ==============================
+// Shows a countdown to the CURRENT week's first kickoff, disappears once
+// that kickoff has happened, then reappears counting down to the NEXT
+// week's first kickoff once every matchup in the current week is Final.
+//
+// The frontend has never had access to real NFL kickoff times -- that
+// data only ever existed inside the poller's own logic (see
+// poller/lib/espnClient.js's fetchNflGameStatusMap), computed in memory
+// and never persisted to Supabase. Rather than change the poller, this
+// calls ESPN's PUBLIC scoreboard endpoint directly from the browser --
+// the same one the poller itself uses, and the exact same "earliest
+// kickoff across every event that week" computation, so a Wednesday
+// opener or any other unusual scheduling is handled identically to how
+// the poller's own plotting-window gate handles it. This endpoint needs
+// no league cookies (unlike the private fantasy API), but if it ever
+// blocks cross-origin browser requests, every failure path below just
+// hides the countdown rather than surfacing an error -- this is a
+// nice-to-have, not core functionality.
+const NFL_SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
+const weekStartCache = {}; // `${year}-${week}` -> Date | null
+
+async function fetchWeekStart(year, week) {
+  const cacheKey = `${year}-${week}`;
+  if (cacheKey in weekStartCache) return weekStartCache[cacheKey];
+  try {
+    const res = await fetch(`${NFL_SCOREBOARD_URL}?year=${year}&week=${week}&seasontype=2`);
+    if (!res.ok) throw new Error(`ESPN scoreboard ${res.status}`);
+    const data = await res.json();
+    let weekStart = null;
+    for (const event of data.events || []) {
+      if (!event.date) continue;
+      const eventDate = new Date(event.date);
+      if (!isNaN(eventDate) && (!weekStart || eventDate < weekStart)) weekStart = eventDate;
+    }
+    weekStartCache[cacheKey] = weekStart;
+    return weekStart;
+  } catch (err) {
+    console.warn('Could not fetch NFL schedule for kickoff countdown:', err.message);
+    weekStartCache[cacheKey] = null;
+    return null;
+  }
+}
+
+function formatCountdown(msRemaining) {
+  if (msRemaining <= 0) return null;
+  const totalSeconds = Math.floor(msRemaining / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
+// Same completion check the weekly recap and bye-week note already use --
+// every matchup's both sides must have all_starters_done, or an empty
+// week (no data at all, e.g. still waiting for the plotting window to
+// open) counts as "not done" so the countdown correctly targets the
+// current week rather than jumping ahead to the next one.
+function isWeekFullyDone(byMatchup) {
+  const matchupIds = Object.keys(byMatchup);
+  if (!matchupIds.length) return false;
+  return matchupIds.every((id) => {
+    const rows = byMatchup[id];
+    const homeLatest = latestRow(rows, true);
+    const awayLatest = latestRow(rows, false);
+    return !!(homeLatest?.all_starters_done && awayLatest?.all_starters_done);
+  });
+}
+
+let kickoffCountdownTarget = null; // Date | null
+let kickoffCountdownLabel = '';
+
+function tickKickoffCountdown() {
+  const el = document.getElementById('kickoffCountdown');
+  if (!el) return;
+  if (!kickoffCountdownTarget) { el.hidden = true; return; }
+  const formatted = formatCountdown(kickoffCountdownTarget.getTime() - Date.now());
+  if (!formatted) {
+    // Kickoff has arrived (or passed) since this was last checked -- hide
+    // immediately rather than show a stale "0m 0s" or a negative countdown.
+    kickoffCountdownTarget = null;
+    el.hidden = true;
+    return;
+  }
+  el.innerHTML = `<span class="kickoff-label">${kickoffCountdownLabel}</span>${formatted}`;
+  el.hidden = false;
+}
+
+// Only meaningful when looking at the CURRENT/latest year+week -- browsing
+// an older week via the dropdowns shouldn't show a countdown to some
+// kickoff that (relative to "now") may already be long past. selectedIndex
+// 0 is always the most recent option in both dropdowns, since they're
+// populated in descending order (see loadYearsWeeks).
+async function updateKickoffCountdown(byMatchup, year, week) {
+  if (yearSelect.selectedIndex !== 0 || weekSelect.selectedIndex !== 0) {
+    kickoffCountdownTarget = null;
+    tickKickoffCountdown();
+    return;
+  }
+
+  const weekDone = isWeekFullyDone(byMatchup);
+  const targetWeek = weekDone ? week + 1 : week;
+  const weekStart = await fetchWeekStart(year, targetWeek);
+
+  if (!weekStart || Date.now() >= weekStart.getTime()) {
+    kickoffCountdownTarget = null;
+    tickKickoffCountdown();
+    return;
+  }
+
+  kickoffCountdownTarget = weekStart;
+  kickoffCountdownLabel = `Week ${targetWeek} kicks off in`;
+  tickKickoffCountdown();
+}
+
 // Plain-language "why is this the number" sentence, built entirely from
 // aggregate data already on the page (each team's current actual/expected
 // score and win_prob) -- no per-player roster data is fetched by the
@@ -2195,6 +2312,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   renderRecapBanner(byMatchup, teamInfo);
   updateLeaderBar(byMatchup, teamInfo);
   renderByeWeekNote(byMatchup, teamInfo);
+  updateKickoffCountdown(byMatchup, year, week); // fire-and-forget -- doesn't block matchup rendering
 
   const { render, update } = VIEW_RENDERERS[viewMode];
 
@@ -2374,6 +2492,7 @@ async function init() {
   // place instead of rebuilding the DOM, so this can't disturb scroll
   // position.
   refreshTimer = setInterval(() => loadMatchups({ preserveCharts: true }), 30000);
+  setInterval(tickKickoffCountdown, 1000); // display-only tick, no network -- see updateKickoffCountdown for when the target itself gets (re)computed
 }
 
 init();
