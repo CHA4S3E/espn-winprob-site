@@ -103,6 +103,19 @@
     </label>
   </div>
 
+  <div class="setting-group">
+    <div class="setting-title">Reduce animations</div>
+    <div class="setting-desc">Turns off the pulsing glow on the Live badge, Upset Watch, and the kickoff countdown once it's within an hour of starting. Each alert stays visible as a plain static border/color -- only the pulsing itself is removed. Separate from your OS's own reduced-motion setting, which is always respected regardless of this toggle.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="reduceMotion">
+      <span>
+        <div class="option-label">Reduce animations (default: off)</div>
+        <div class="option-example">Stops the glow/pulse effects specifically -- card entrance and other page motion are unaffected</div>
+      </span>
+    </label>
+  </div>
+
   <a class="back-link" href="index.html">&larr; Back to matchups</a>
 </div>
 
@@ -134,6 +147,18 @@
   bandCheckbox.checked = localStorage.getItem(BAND_KEY) === 'true';
   bandCheckbox.addEventListener('change', () => {
     localStorage.setItem(BAND_KEY, bandCheckbox.checked ? 'true' : 'false');
+  });
+
+  // Defaults OFF -- only 'true' turns it on. Applying data-reduce-motion
+  // directly here (in addition to the main page's own anti-flash script)
+  // means this settings page's own animations respect the choice too,
+  // not just index.html.
+  const MOTION_KEY = 'winProbReduceMotion';
+  const motionCheckbox = document.getElementById('reduceMotion');
+  motionCheckbox.checked = localStorage.getItem(MOTION_KEY) === 'true';
+  motionCheckbox.addEventListener('change', () => {
+    localStorage.setItem(MOTION_KEY, motionCheckbox.checked ? 'true' : 'false');
+    document.documentElement.toggleAttribute('data-reduce-motion', motionCheckbox.checked);
   });
 </script>
 </body>
