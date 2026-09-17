@@ -349,6 +349,52 @@ async function loadYearsWeeks(leagueId) {
   updateWeeks();
 }
 
+// Periodically checks whether a NEWER week's data has started arriving
+// (the poller writing its first row once a new week's kickoff happens),
+// and if so, auto-advances the dropdowns to it -- without this, the week
+// selector only ever gets rebuilt on a league switch or the initial page
+// load, so a page left open across a week transition would otherwise just
+// keep sitting on the now-stale week forever.
+//
+// Only acts when the person is ALREADY on what they believe is the latest
+// week (selectedIndex 0 in both dropdowns, same convention
+// updateKickoffCountdown uses) -- if they've manually navigated to browse
+// an older week, this must never yank them away to something they didn't
+// ask for. Returns true if it performed a reload, so the caller can skip
+// a redundant one on the same cycle.
+async function checkForLatestWeekAdvance() {
+  if (yearSelect.selectedIndex !== 0 || weekSelect.selectedIndex !== 0) return false;
+
+  const leagueId = leagueSelect.value;
+  if (!leagueId) return false;
+
+  let data;
+  try {
+    data = await fetchAllRows((from, to) =>
+      sb.from('snapshots').select('year, week').eq('league_id', leagueId).order('id').range(from, to)
+    );
+  } catch {
+    return false; // transient error -- try again next cycle
+  }
+  if (!data.length) return false;
+
+  const years = [...new Set(data.map((d) => d.year))].sort((a, b) => b - a);
+  const latestYear = years[0];
+  const weeksForLatestYear = [...new Set(data.filter((d) => d.year === latestYear).map((d) => d.week))].sort((a, b) => b - a);
+  const latestWeek = weeksForLatestYear[0];
+
+  const currentYear = Number(yearSelect.value);
+  const currentWeek = Number(weekSelect.value);
+  if (latestYear === currentYear && latestWeek === currentWeek) return false; // nothing new -- skip the unnecessary DOM rebuild
+
+  // A newer week (or year) has appeared since the dropdowns were last
+  // populated -- rebuild them (loadYearsWeeks always defaults to the
+  // latest option in each) and reload the page's data to match.
+  await loadYearsWeeks(leagueId);
+  await loadMatchups({ preserveCharts: false });
+  return true;
+}
+
 function colorWithAlpha(hex, alpha) {
   const h = hex.replace('#', '');
   const bigint = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
@@ -2490,8 +2536,13 @@ async function init() {
   // Auto-refresh every 30s -- cheap read-only query, fine even if the
   // underlying poller only writes every ~5 min. Updates existing cards in
   // place instead of rebuilding the DOM, so this can't disturb scroll
-  // position.
-  refreshTimer = setInterval(() => loadMatchups({ preserveCharts: true }), 30000);
+  // position. Checks for a newly-arrived week first (see
+  // checkForLatestWeekAdvance) -- if that already performed a full
+  // reload, skip the redundant preserveCharts refresh on this same tick.
+  refreshTimer = setInterval(async () => {
+    const advanced = await checkForLatestWeekAdvance();
+    if (!advanced) loadMatchups({ preserveCharts: true });
+  }, 30000);
   setInterval(tickKickoffCountdown, 1000); // display-only tick, no network -- see updateKickoffCountdown for when the target itself gets (re)computed
 }
 
