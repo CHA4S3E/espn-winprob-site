@@ -34,6 +34,9 @@
     (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   document.documentElement.setAttribute('data-theme', initialTheme);
   document.getElementById('themeColorMeta').setAttribute('content', initialTheme === 'dark' ? '#14161a' : '#ffffff');
+  if (localStorage.getItem('winProbReduceMotion') === 'true') {
+    document.documentElement.setAttribute('data-reduce-motion', 'true');
+  }
 </script>
 <style>
   /* Always reserve space for the vertical scrollbar, whether or not it's
@@ -77,6 +80,8 @@
     --upset: #e8590c;
     --upset-glow-a: rgba(232, 89, 12, 0.35);
     --upset-glow-b: rgba(232, 89, 12, 0.85);
+    --accent-glow-a: rgba(26, 63, 160, 0.3);
+    --accent-glow-b: rgba(26, 63, 160, 0.8);
     /* Doppio One for team names/percentages/headings -- a display face
        that's already bold-by-design (it only ships in a single weight, no
        separate Bold variant, so display-font elements below deliberately
@@ -110,6 +115,8 @@
     --upset: #ff8a3d;
     --upset-glow-a: rgba(255, 138, 61, 0.4);
     --upset-glow-b: rgba(255, 138, 61, 0.9);
+    --accent-glow-a: rgba(58, 103, 223, 0.35);
+    --accent-glow-b: rgba(58, 103, 223, 0.9);
   }
 
   /* Highlighted/selected text uses the theme's own accent color rather
@@ -206,6 +213,16 @@
     display: block; font-family: var(--font-body); font-size: 10px;
     text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px;
   }
+  /* Starts pulsing once kickoff is within an hour (see tickKickoffCountdown
+     in app.js, which toggles this class) -- same glow technique as Upset
+     Watch and the Live badge, just using the accent color instead, so
+     the imminent-kickoff signal reads as part of the same visual language
+     as the rest of the site's "something worth noticing" cues. */
+  @keyframes countdownPulse {
+    0%, 100% { box-shadow: inset 0 0 0 1px var(--accent), 0 0 6px var(--accent-glow-a); }
+    50% { box-shadow: inset 0 0 0 1px var(--accent), 0 0 16px var(--accent-glow-b); }
+  }
+  #kickoffCountdown.imminent { animation: countdownPulse 2.4s ease-in-out infinite; }
 
   #recapBanner {
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
@@ -339,6 +356,17 @@
     .upset-watch { animation: none !important; box-shadow: inset 0 0 0 1.5px var(--upset) !important; }
     .upset-watch-badge.pulsing { animation: none !important; opacity: 1; }
   }
+  /* Explicit site preference (see preferences.html), separate from the OS-
+     level prefers-reduced-motion above -- deliberately narrower in scope:
+     only the three glow/pulse effects asked for (Live, Upset Watch,
+     kickoff countdown), not the card entrance fade, which is a different
+     kind of motion this preference was never meant to touch. Each keeps
+     its static border/indicator so the underlying alert is still visible
+     at a glance, just without the pulsing. */
+  html[data-reduce-motion="true"] .live { animation: none !important; }
+  html[data-reduce-motion="true"] .upset-watch { animation: none !important; box-shadow: inset 0 0 0 1.5px var(--upset) !important; }
+  html[data-reduce-motion="true"] .upset-watch-badge.pulsing { animation: none !important; opacity: 1; }
+  html[data-reduce-motion="true"] #kickoffCountdown.imminent { animation: none !important; box-shadow: inset 0 0 0 1px var(--accent) !important; }
 
   /* ---- "Why is this the number?" button + blurb, shared across all views ---- */
   .why-btn {
