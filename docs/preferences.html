@@ -104,6 +104,19 @@
   </div>
 
   <div class="setting-group">
+    <div class="setting-title">Legacy views</div>
+    <div class="setting-desc">Timeline and Postcard are being phased out in favor of ESPN and Forecast, and are hidden from the view switcher by default. Turn this on to bring them back.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="showLegacyViews">
+      <span>
+        <div class="option-label">Show Timeline &amp; Postcard views (default: off)</div>
+        <div class="option-example">Adds them back to the view switcher at the top of the page</div>
+      </span>
+    </label>
+  </div>
+
+  <div class="setting-group">
     <div class="setting-title">Reduce animations</div>
     <div class="setting-desc">Turns off the pulsing glow on the Live badge, Upset Watch, and the kickoff countdown once it's within an hour of starting. Each alert stays visible as a plain static border/color -- only the pulsing itself is removed. Separate from your OS's own reduced-motion setting, which is always respected regardless of this toggle.</div>
 
@@ -147,6 +160,14 @@
   bandCheckbox.checked = localStorage.getItem(BAND_KEY) === 'true';
   bandCheckbox.addEventListener('change', () => {
     localStorage.setItem(BAND_KEY, bandCheckbox.checked ? 'true' : 'false');
+  });
+
+  // Defaults OFF -- only 'true' brings the deprecated views back.
+  const LEGACY_VIEWS_KEY = 'winProbShowLegacyViews';
+  const legacyViewsCheckbox = document.getElementById('showLegacyViews');
+  legacyViewsCheckbox.checked = localStorage.getItem(LEGACY_VIEWS_KEY) === 'true';
+  legacyViewsCheckbox.addEventListener('change', () => {
+    localStorage.setItem(LEGACY_VIEWS_KEY, legacyViewsCheckbox.checked ? 'true' : 'false');
   });
 
   // Defaults OFF -- only 'true' turns it on. Applying data-reduce-motion
