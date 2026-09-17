@@ -168,6 +168,21 @@
      that distinction explicit instead of leaving it ambiguous. */
   #byeWeekNote { text-align: center; color: var(--muted); font-size: 12px; font-style: italic; margin: 0 0 16px; }
 
+  /* Only shown before the CURRENT/latest week's first kickoff (or, once
+     that week is fully Final, before the NEXT week's first kickoff) --
+     see updateKickoffCountdown in app.js. Hidden the rest of the time,
+     including while browsing older weeks via the dropdowns. */
+  #kickoffCountdown {
+    text-align: center; font-family: var(--font-display); font-weight: 400;
+    font-size: var(--text-xl); color: var(--accent); margin: 0 auto 20px; max-width: 400px;
+    padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg);
+    font-variant-numeric: tabular-nums;
+  }
+  #kickoffCountdown .kickoff-label {
+    display: block; font-family: var(--font-body); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px;
+  }
+
   #recapBanner {
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
     padding: 18px 20px 20px; margin: 0 auto 20px; max-width: 640px;
@@ -393,6 +408,8 @@
 <div id="wrap">
   <h2>Fantasy Win Probability</h2>
   <div class="sub">Updates automatically every ~1 minute while games are live.</div>
+
+  <div id="kickoffCountdown" hidden></div>
 
   <div id="recapBanner" hidden></div>
 
