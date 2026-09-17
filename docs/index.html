@@ -34,7 +34,18 @@
      right edge shrinks" symptom. Reserving the space permanently means it
      can never appear/disappear and shift anything.
   */
-  html { scrollbar-gutter: stable; overflow-y: scroll; }
+  html {
+    scrollbar-gutter: stable; overflow-y: scroll;
+    /* Without this, the overscroll/rubber-band area above the very top of
+       the page (or below the bottom) falls back to the browser's own
+       default background (usually white) rather than the theme's --bg --
+       since that bounce area is painted using the <html> element's own
+       background, not <body>'s, regardless of how far <body> otherwise
+       fills the page. Most noticeable on mobile Safari, and especially
+       jarring in dark mode where a flash of white briefly appears above
+       the leader gradient when scrolling past the top. */
+    background: var(--bg); transition: background 0.2s;
+  }
 
   :root {
     --bg: #ffffff;
