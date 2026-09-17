@@ -286,6 +286,11 @@ function setTheme(next) {
   theme = next;
   localStorage.setItem('winProbTheme', theme);
   document.documentElement.setAttribute('data-theme', theme);
+  // Keeps the browser's own UI chrome color (status bar, overscroll area
+  // on mobile) in sync with a manually-toggled theme -- see the meta
+  // tag's own comment in index.html for why this exists at all.
+  const themeColorMeta = document.getElementById('themeColorMeta');
+  if (themeColorMeta) themeColorMeta.setAttribute('content', theme === 'dark' ? '#14161a' : '#ffffff');
   if (themeToggle) themeToggle.textContent = theme === 'dark' ? '\u2600\ufe0f Light' : '\ud83c\udf19 Dark';
   loadMatchups({ preserveCharts: false }); // re-fetch so team colors re-run through themedColor()
 }
