@@ -463,7 +463,15 @@
      percentage row convention (including the same fading-dash
      treatment), so this reads as a natural sibling of that card rather
      than a different visual language entirely. ---- */
-  .fc-top-row { display: flex; gap: 22px; align-items: center; margin-bottom: 18px; }
+  .fc-top-row {
+    display: flex; gap: 22px; align-items: center; margin-bottom: 18px;
+    /* Centers the gauge+info group as a compact unit rather than
+       stretching .fc-info-col to fill the card's full width -- #wrap
+       caps the page at 900px, so on a wide card a flex:1 info column
+       (and its flex:1 dash) stretched across hundreds of pixels of
+       empty space between the team name and the percentage. */
+    justify-content: center;
+  }
   .fc-gauge-col { flex: 0 0 180px; text-align: center; }
   .needle-gauge { width: 180px; margin: 0 auto; }
   .needle-svg { width: 100%; height: auto; display: block; }
@@ -473,11 +481,13 @@
     display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 12px;
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid currentColor;
   }
-  .fc-info-col { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 12px; min-width: 0; }
+  .fc-info-col { flex: 0 1 380px; display: flex; flex-direction: column; justify-content: center; gap: 12px; min-width: 0; }
   .fc-team-row { display: flex; align-items: center; gap: 10px; }
   .fc-team-name { font-family: var(--font-display); font-weight: 400; font-size: var(--text-base); }
-  .fc-team-dash { flex: 1; height: 2px; background: linear-gradient(90deg, currentColor 0%, transparent 92%); opacity: 0.9; }
-  .fc-team-pct { font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl); font-variant-numeric: tabular-nums; }
+  /* Capped rather than flex:1 -- a short connecting dash, not a stretch
+     to fill however much column width happens to be available. */
+  .fc-team-dash { flex: 1 1 auto; max-width: 60px; height: 2px; background: linear-gradient(90deg, currentColor 0%, transparent 92%); opacity: 0.9; }
+  .fc-team-pct { font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl); font-variant-numeric: tabular-nums; margin-left: auto; }
   .needle-sub { font-size: var(--text-sm); color: var(--muted); margin-top: 2px; text-align: center; }
 
   /* ---- Forecasting content -- tiles rather than a flat title/note
