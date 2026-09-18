@@ -30,7 +30,6 @@ function systemPrefersDark() {
   return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 let theme = localStorage.getItem('winProbTheme') || (systemPrefersDark() ? 'dark' : 'light'); // 'light' | 'dark'
-let tooltipDetail = localStorage.getItem('winProbTooltipDetail') || 'condensed'; // 'condensed' | 'full' -- set on preferences.html
 // Defaults on (only off if explicitly set to 'false') -- shows, on hover
 // in ESPN view, whether Upset Watch was active at that historical point.
 let showUpsetHistory = localStorage.getItem('winProbShowUpsetHistory') !== 'false'; // set on preferences.html
@@ -1406,49 +1405,7 @@ function explainMatchup(rows, home, away, allDone) {
     }
   }
 
-  if (tooltipDetail !== 'full') return sentence;
-
-  // Full detail: exact numbers, recent momentum, and an Upset Watch note
-  // when relevant -- all computed from data already on the page, no
-  // extra fetch needed.
-  const extra = [];
-  if (allDone) {
-    extra.push(`${home.name}: ${homeRow.actual_score.toFixed(1)} final  |  ${away.name}: ${awayRow.actual_score.toFixed(1)} final`);
-  } else {
-    const homeRemaining = Math.max(homeRow.expected_score - homeRow.actual_score, 0);
-    const awayRemaining = Math.max(awayRow.expected_score - awayRow.actual_score, 0);
-    extra.push(`${home.name}: ${homeRow.actual_score.toFixed(1)} actual, ${homeRow.expected_score.toFixed(1)} projected (${homeRemaining.toFixed(1)} left)`);
-    extra.push(`${away.name}: ${awayRow.actual_score.toFixed(1)} actual, ${awayRow.expected_score.toFixed(1)} projected (${awayRemaining.toFixed(1)} left)`);
-
-    const momentum = computeRecentMomentum(rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts)));
-    if (momentum) {
-      const team = momentum.delta > 0 ? home : away;
-      extra.push(`Momentum: ${team.name} +${Math.abs(momentum.delta).toFixed(1)}% win probability in the last ~15 min`);
-    }
-  }
-
-  const homeRowsSorted = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
-  const { episodes } = walkUpsetState(homeRowsSorted.map((r) => r.win_prob));
-  if (episodes.length) {
-    const topEpisode = episodes.reduce((best, e) => (!best || e.peakFavoritePct > best.peakFavoritePct ? e : best), null);
-    const favoriteTeam = topEpisode.favoriteSide === 'home' ? home : away;
-    const upsetTeam = topEpisode.upsetSide === 'home' ? home : away;
-    if (allDone) {
-      const isTie = homeRow.actual_score === awayRow.actual_score;
-      const winner = isTie ? null : (homeRow.actual_score > awayRow.actual_score ? home : away);
-      if (isTie) {
-        extra.push(`This game ended in a tie after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}% -- ${upsetTeam.name} pushed it all the way there.`);
-      } else if (winner === upsetTeam) {
-        extra.push(`This was an Upset Watch game: ${upsetTeam.name} came back after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}%.`);
-      } else {
-        extra.push(`Upset Watch triggered mid-game (${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}%), but ${favoriteTeam.name} held on.`);
-      }
-    } else {
-      extra.push(`This game has seen an Upset Watch alert, after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}% win probability.`);
-    }
-  }
-
-  return extra.length ? sentence + '\n' + extra.join('\n') : sentence;
+  return sentence;
 }
 
 // 15-minute-window win_prob delta for one team's own sorted rows -- only
@@ -1568,23 +1525,6 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
               const team = above ? home.name : away.name;
               const pct = above ? item.parsed.y : 100 - item.parsed.y;
               return `${team}: ${Math.round(pct)}%`;
-            },
-            // Underlying model numbers at this point, for the curious --
-            // rounded to 1 decimal since the raw stored values are long
-            // floats (e.g. 148.73891118999998) that would make for an
-            // unreadably long tooltip line otherwise. Only shown when the
-            // "Full" tooltip detail preference is set (see preferences.html);
-            // condensed (win % only) is the default. Synthetic 50%-crossing
-            // points (see withCrossings) don't correspond to a real snapshot,
-            // so they have no underlying scores -- skip the extra lines then.
-            afterLabel: (item) => {
-              if (tooltipDetail !== 'full') return undefined;
-              const p = item.raw;
-              if (p.homeActual === undefined || p.awayActual === undefined) return undefined;
-              return [
-                `${home.name}: ${p.homeActual.toFixed(1)} actual / ${p.homeExpected.toFixed(1)} proj`,
-                `${away.name}: ${p.awayActual.toFixed(1)} actual / ${p.awayExpected.toFixed(1)} proj`,
-              ];
             },
           },
         },
@@ -1752,11 +1692,44 @@ function buildForecastSection(rows, home, away, allDone) {
   const awayRow = latestRow(rows, false);
   if (!homeRow || !awayRow) return '';
 
+  const homeRowsSorted = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+
+  // Upset Watch note -- the same tie-aware three-way distinction (actual
+  // upset / tie / favorite held on) the weekly recap and "why" blurb use
+  // elsewhere, scanned across this matchup's full history regardless of
+  // live/Final state. This used to be part of the "why" blurb's optional
+  // Full-detail mode; now that the detail-level preference is gone, it
+  // lives permanently here instead, since the Forecasting view is where
+  // this kind of deeper analysis belongs by default.
+  function buildUpsetNote() {
+    const { episodes } = walkUpsetState(homeRowsSorted.map((r) => r.win_prob));
+    if (!episodes.length) return '';
+    const topEpisode = episodes.reduce((best, e) => (!best || e.peakFavoritePct > best.peakFavoritePct ? e : best), null);
+    const favoriteTeam = topEpisode.favoriteSide === 'home' ? home : away;
+    const upsetTeam = topEpisode.upsetSide === 'home' ? home : away;
+    let note;
+    if (allDone) {
+      const isTie = homeRow.actual_score === awayRow.actual_score;
+      const winner = isTie ? null : (homeRow.actual_score > awayRow.actual_score ? home : away);
+      if (isTie) {
+        note = `This game ended in a tie after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}% -- ${upsetTeam.name} pushed it all the way there.`;
+      } else if (winner === upsetTeam) {
+        note = `This was an Upset Watch game: ${upsetTeam.name} came back after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}%.`;
+      } else {
+        note = `Upset Watch triggered mid-game (${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}%), but ${favoriteTeam.name} held on.`;
+      }
+    } else {
+      note = `This game has seen an Upset Watch alert, after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}% win probability.`;
+    }
+    return `<div class="forecast-title">Upset Watch</div><div class="forecast-note">${note}</div>`;
+  }
+
   if (allDone) {
     return `<div class="forecast-section">
       <div class="forecast-title">Final</div>
       <div class="forecast-row"><span style="color:${home.color}">${home.name}</span><b>${homeRow.actual_score.toFixed(1)}</b></div>
       <div class="forecast-row"><span style="color:${away.color}">${away.name}</span><b>${awayRow.actual_score.toFixed(1)}</b></div>
+      ${buildUpsetNote()}
     </div>`;
   }
 
@@ -1780,6 +1753,10 @@ function buildForecastSection(rows, home, away, allDone) {
   const pointsNeeded = Math.abs(homeRow.expected_score - awayRow.expected_score);
 
   const decidedEstimate = computeTimeUntilDecided(rows);
+  const momentum = computeRecentMomentum(homeRowsSorted);
+  const momentumNote = momentum
+    ? `<div class="forecast-title">Momentum</div><div class="forecast-note">${(momentum.delta > 0 ? home : away).name} +${Math.abs(momentum.delta).toFixed(1)}% win probability in the last ~15 min.</div>`
+    : '';
 
   return `
     <div class="forecast-section">
@@ -1789,6 +1766,8 @@ function buildForecastSection(rows, home, away, allDone) {
       <div class="forecast-title">Points Needed</div>
       <div class="forecast-note">${trailing.name} needs about ${pointsNeeded.toFixed(1)} more points than currently projected to take the lead over ${favored.name}.</div>
       ${decidedEstimate ? `<div class="forecast-title">Time Until Likely Decided</div><div class="forecast-note">${decidedEstimate} (rough estimate).</div>` : ''}
+      ${momentumNote}
+      ${buildUpsetNote()}
     </div>
   `;
 }
