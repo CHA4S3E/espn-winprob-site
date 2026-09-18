@@ -57,27 +57,6 @@
   <div class="sub">These are saved on this device and apply next time you load the main page.</div>
 
   <div class="setting-group">
-    <div class="setting-title">Detail level</div>
-    <div class="setting-desc">Applies to both the Timeline/Postcard chart tooltip and the "Why is this the number?" blurb on every card.</div>
-
-    <label class="option-row">
-      <input type="radio" name="tooltipDetail" value="condensed">
-      <span>
-        <div class="option-label">Condensed (default)</div>
-        <div class="option-example">Chart tooltip shows just the win percentage; the "why" blurb stays a single plain-language sentence</div>
-      </span>
-    </label>
-
-    <label class="option-row">
-      <input type="radio" name="tooltipDetail" value="full">
-      <span>
-        <div class="option-label">Full detail</div>
-        <div class="option-example">Chart tooltip adds each team's actual/projected score; the "why" blurb adds exact numbers, recent momentum, and any Upset Watch history for that game</div>
-      </span>
-    </label>
-  </div>
-
-  <div class="setting-group">
     <div class="setting-title">Upset Watch history</div>
     <div class="setting-desc">In ESPN view, hovering over a past point on the chart can show whether Upset Watch was active at that moment in the game.</div>
 
@@ -133,16 +112,6 @@
 </div>
 
 <script>
-  const KEY = 'winProbTooltipDetail';
-  const radios = document.querySelectorAll('input[name="tooltipDetail"]');
-  const current = localStorage.getItem(KEY) || 'condensed';
-  radios.forEach((r) => {
-    r.checked = r.value === current;
-    r.addEventListener('change', () => {
-      if (r.checked) localStorage.setItem(KEY, r.value);
-    });
-  });
-
   // Defaults on -- only 'false' turns it off, so an unset value (a
   // person who never opened this page) still gets the feature.
   const HISTORY_KEY = 'winProbShowUpsetHistory';
