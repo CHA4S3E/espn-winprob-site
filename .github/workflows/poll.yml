@@ -1,40 +1,50 @@
 name: Poll ESPN win probabilities
- 
+
 on:
+  # GitHub's internal `schedule` trigger goes through a separate, low-
+  # priority queue that (confirmed via this repo's own run history, and
+  # widely reported for 2026) can be swept as infrequently as once or twice
+  # a day for smaller/newer accounts -- completely independent of the cron
+  # expression itself. Kept here only as an occasional safety-net fallback,
+  # NOT as the real 5-minute cadence.
   schedule:
-    # Every 5 minutes, GitHub's shortest supported interval.
-    # Offset from :00/:05/:10... (the default nearly everyone uses) so this
-    # lands in a less-contested slot on GitHub's shared runner queue instead
-    # of piling up with everyone else's cron jobs at the round-number marks.
-    # Actual runs may still lag during high platform load, especially
-    # Sunday afternoons -- expected and harmless for this chart.
-    - cron: '3-59/5 * * * *'
-  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
- 
+    - cron: '7 * * * *' # roughly hourly fallback, offset from the top of the hour
+  # The REAL 5-minute cadence comes from an external cron service (e.g.
+  # cron-job.org, free) calling this via GitHub's REST API:
+  #   POST https://api.github.com/repos/<owner>/<repo>/actions/workflows/poll.yml/dispatches
+  #   Headers: Authorization: Bearer <PAT>, Accept: application/vnd.github+json
+  #   Body: {"ref":"main"}
+  # workflow_dispatch (whether clicked manually or called via the API above)
+  # is treated as a normal API-triggered run, NOT the throttled schedule
+  # queue -- which is exactly why every manual run in the Actions tab has
+  # fired instantly while every Scheduled one lagged for hours.
+  workflow_dispatch: {}
+
 jobs:
   poll:
     runs-on: ubuntu-latest
-    # Caps a single run well under the 5-minute interval so a slow/stuck
-    # ESPN request can't still be "in progress" when the next tick fires --
-    # GitHub skips (rather than queues) a scheduled run if the previous one
-    # hasn't finished, so an unbounded run can silently cascade into
-    # dropped ticks on top of normal platform lag.
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
- 
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
- 
+
       - name: Install dependencies
         working-directory: poller
         run: npm ci
- 
+
       - name: Run poller
         working-directory: poller
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # Temporary -- prints the exact expected/actual/pending/lineup
+          # values computed for each matchup right before the guard runs,
+          # since a REJECTED write is never persisted anywhere and
+          # otherwise leaves no trace of what was actually computed.
+          # Remove this line (or set to '') once done diagnosing, since it
+          # adds a real amount of log volume at a ~1-minute poll cadence.
+          DEBUG_SNAPSHOTS: '1'
         run: node poll.js
-        
