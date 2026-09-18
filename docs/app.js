@@ -2382,7 +2382,21 @@ function renderEspnCard(rows, home, away, allDone) {
             color: (c) => (c.tick.value === 50 ? themeVar('#999', '#888') : themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)')),
             lineWidth: (c) => (c.tick.value === 50 ? 1.5 : 1),
           },
-          ticks: { callback: (v) => (v === 0 || v === 50 || v === 100 ? v : ''), color: themeVar('#555', '#aaa') },
+          ticks: {
+            // Mirrored scale: 100 (this team's color) at the top, 50
+            // (neutral, unchanged) in the middle, 100 (the OTHER team's
+            // color) at the bottom -- not a literal 0. Distance from
+            // center always means "how decisive," and since the number
+            // alone can't say which team's 100 it is, color is what
+            // differentiates the two sides, matching the same convention
+            // used in the Forecasting view's Probability Swing bar.
+            callback: (v) => (v === 0 ? 100 : (v === 50 || v === 100 ? v : '')),
+            color: (c) => {
+              if (c.tick.value === 100) return home.color;
+              if (c.tick.value === 0) return away.color;
+              return themeVar('#555', '#aaa');
+            },
+          },
         },
         x: {
           type: 'linear',
