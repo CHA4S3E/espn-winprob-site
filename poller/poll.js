@@ -165,6 +165,23 @@ async function pollLeague(league) {
     const awayTeamId = teamIdByEspnId[awayC.side.teamId];
     if (!homeTeamId || !awayTeamId) continue;
 
+    // Opt-in verbose logging (set DEBUG_SNAPSHOTS=1 in the environment) --
+    // prints exactly what's about to be sent to the guard/insert function
+    // for this matchup, since a REJECTED write is never persisted
+    // anywhere -- without this, there's no way to see what was actually
+    // computed and blocked, only that something's missing from the table.
+    if (process.env.DEBUG_SNAPSHOTS) {
+      console.log(
+        `[${league.slug}] matchup ${matchup.id} computed (pre-guard):\n` +
+          `  home: expected=${homeC.expected.toFixed(2)} actual=${homeC.actual.toFixed(2)} ` +
+          `winProb=${homeWinProb.toFixed(2)} pending=${homeC.hasPendingPregamePlayer} ` +
+          `fingerprint=${homeC.lineupFingerprint}\n` +
+          `  away: expected=${awayC.expected.toFixed(2)} actual=${awayC.actual.toFixed(2)} ` +
+          `winProb=${awayWinProb.toFixed(2)} pending=${awayC.hasPendingPregamePlayer} ` +
+          `fingerprint=${awayC.lineupFingerprint}`
+      );
+    }
+
     // Both sides validated and written atomically together -- see
     // db/005_matchup_level_validation.sql for why this replaced two
     // separate per-team calls: a bad read for one team's data also
