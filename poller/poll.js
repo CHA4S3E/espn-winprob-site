@@ -124,11 +124,10 @@ async function pollLeague(league) {
       for (const entry of side.rosterForCurrentScoringPeriod?.entries || []) {
         attachProTeamAbbrev(entry.playerPoolEntry.player);
       }
-      const { expected, actual, allDone, totalCount, doneCount, remainingFractionSum, lineupFingerprint } = teamExpected(
-        side.rosterForCurrentScoringPeriod?.entries,
-        nflStatusMap
-      );
-      return { side, isHome, expected, allDone, actual, totalCount, doneCount, remainingFractionSum, lineupFingerprint };
+      const {
+        expected, actual, allDone, totalCount, doneCount, remainingFractionSum, lineupFingerprint, hasPendingPregamePlayer,
+      } = teamExpected(side.rosterForCurrentScoringPeriod?.entries, nflStatusMap);
+      return { side, isHome, expected, allDone, actual, totalCount, doneCount, remainingFractionSum, lineupFingerprint, hasPendingPregamePlayer };
     });
 
     const totalProjectedBoth = computed.reduce((sum, c) => sum + c.expected, 0);
@@ -183,11 +182,13 @@ async function pollLeague(league) {
       p_home_expected_score: homeC.expected,
       p_home_win_prob: homeWinProb,
       p_home_lineup_fingerprint: homeC.lineupFingerprint,
+      p_home_has_pending_pregame: homeC.hasPendingPregamePlayer,
       p_away_team_id: awayTeamId,
       p_away_actual_score: awayC.actual,
       p_away_expected_score: awayC.expected,
       p_away_win_prob: awayWinProb,
       p_away_lineup_fingerprint: awayC.lineupFingerprint,
+      p_away_has_pending_pregame: awayC.hasPendingPregamePlayer,
       p_all_starters_done: allStartersDone,
     });
 
@@ -199,9 +200,9 @@ async function pollLeague(league) {
       rejectedCount++;
       console.warn(
         `[${league.slug}] matchup ${matchup.id}: rejected this poll's data for BOTH teams -- ` +
-          `either an implausible actual_score drop, or an unexplained expected_score jump OR drop ` +
-          `with an unchanged lineup (likely a bad ESPN read, or a starter switching to/from Out ` +
-          `before their own kickoff)`
+          `either an implausible actual_score drop, an unexplained expected_score jump with an ` +
+          `unchanged lineup, or an unexplained expected_score drop while a starter's own game ` +
+          `hasn't kicked off yet (likely a temporary Out designation, not a confirmed final state)`
       );
       continue;
     }
