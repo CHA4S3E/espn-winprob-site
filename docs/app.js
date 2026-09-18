@@ -1268,7 +1268,8 @@ function formatCountdown(msRemaining) {
   const seconds = totalSeconds % 60;
   if (days > 0) return `${days}d ${hours}h ${minutes}m`;
   if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
-  return `${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`; // final minute -- just the seconds, no redundant "0m" prefix
 }
 
 // Same completion check the weekly recap and bye-week note already use --
@@ -1291,13 +1292,14 @@ let kickoffCountdownTarget = null; // Date | null
 let kickoffCountdownLabel = '';
 
 const KICKOFF_IMMINENT_MS = 60 * 60 * 1000; // 1 hour -- matches #kickoffCountdown.imminent in index.html
+const KICKOFF_FINAL_MINUTE_MS = 60 * 1000; // 1 minute -- matches #kickoffCountdown.final-minute in index.html
 
 function tickKickoffCountdown() {
   const el = document.getElementById('kickoffCountdown');
   if (!el) return;
   if (!kickoffCountdownTarget) {
     el.hidden = true;
-    el.classList.remove('imminent');
+    el.classList.remove('imminent', 'final-minute');
     return;
   }
   const remaining = kickoffCountdownTarget.getTime() - Date.now();
@@ -1307,14 +1309,17 @@ function tickKickoffCountdown() {
     // immediately rather than show a stale "0m 0s" or a negative countdown.
     kickoffCountdownTarget = null;
     el.hidden = true;
-    el.classList.remove('imminent');
+    el.classList.remove('imminent', 'final-minute');
     return;
   }
   el.innerHTML = `<span class="kickoff-label">${kickoffCountdownLabel}</span>${formatted}`;
-  // Starts pulsing in the final hour -- CSS handles the actual glow (see
-  // .imminent in index.html), including the reduced-motion override, so
-  // this is just responsible for toggling the class at the right moment.
+  // Starts pulsing in the final hour, then gets a bigger, faster pulse in
+  // the final minute specifically (see .imminent / .final-minute in
+  // index.html) -- CSS handles the actual visuals, including the
+  // reduced-motion override, so this is just responsible for toggling
+  // the classes at the right moments.
   el.classList.toggle('imminent', remaining <= KICKOFF_IMMINENT_MS);
+  el.classList.toggle('final-minute', remaining <= KICKOFF_FINAL_MINUTE_MS);
   el.hidden = false;
 }
 
