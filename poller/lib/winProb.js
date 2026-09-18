@@ -74,6 +74,23 @@ function getStatPoints(player, statSourceId) {
   return entry ? entry.appliedTotal || 0 : 0;
 }
 
+// True if this specific player's own NFL game hasn't kicked off yet.
+// Deliberately distinct from "bye" (status === undefined, no game at all
+// this week) -- a bye player can never become "pending" since there's no
+// kickoff to wait for. Only an explicit 'pre' state counts. This is the
+// signal the dedupe logic (see poll.js / migration 009) uses to tell "an
+// injury-driven projection swing that hasn't been confirmed by a real
+// kickoff yet" apart from "this team's projection changed for a reason
+// that's actually final" -- while ANY starter's own game is still 'pre',
+// their current designation (healthy or Out) hasn't been tested by
+// anything real actually happening, so a sudden drop in THEIR
+// contribution is presumed transient until either their game starts or
+// the manager benches them for someone else.
+function isPlayerPending(player, nflStatusMap) {
+  const status = nflStatusMap ? nflStatusMap[player.proTeamAbbrev] : undefined;
+  return status !== undefined && status.state === 'pre';
+}
+
 // A stable fingerprint of exactly who's in the starting lineup right now
 // (bench/IR excluded) -- just the sorted list of player IDs, joined into a
 // string. Sorted so the fingerprint never changes just because ESPN happens
@@ -108,6 +125,7 @@ function teamExpected(roster, nflStatusMap) {
   let totalCount = 0;
   let doneCount = 0;
   let remainingFractionSum = 0; // time-weighted "remaining player-equivalents" -- see computeDynamicStddev
+  let hasPendingPregamePlayer = false; // see isPlayerPending -- used by the dedupe/hold-steady logic
   for (const entry of roster || []) {
     if (entry.lineupSlotId === LINEUP_SLOT_BENCH || entry.lineupSlotId === LINEUP_SLOT_IR) continue;
     totalCount++;
@@ -118,6 +136,7 @@ function teamExpected(roster, nflStatusMap) {
     remainingFractionSum += remainingFraction;
     if (done) doneCount++;
     else allDone = false;
+    if (isPlayerPending(player, nflStatusMap)) hasPendingPregamePlayer = true;
   }
   return {
     expected,
@@ -127,6 +146,7 @@ function teamExpected(roster, nflStatusMap) {
     doneCount,
     remainingFractionSum,
     lineupFingerprint: buildLineupFingerprint(roster),
+    hasPendingPregamePlayer,
   };
 }
 
@@ -239,6 +259,7 @@ module.exports = {
   playerExpected,
   teamExpected,
   buildLineupFingerprint,
+  isPlayerPending,
   computeDynamicStddev,
   winProbability,
   matchupWinProbability,
