@@ -82,6 +82,11 @@
     --upset-glow-b: rgba(232, 89, 12, 0.85);
     --accent-glow-a: rgba(26, 63, 160, 0.3);
     --accent-glow-b: rgba(26, 63, 160, 0.8);
+    /* Distinct from --upset (an already-triggered alert) -- this is for
+       "approaching but hasn't triggered yet," so it needs its own color
+       rather than borrowing the active-alert one, or the two states
+       would be visually indistinguishable. */
+    --warn: #b8860b;
     /* Doppio One for team names/percentages/headings -- a display face
        that's already bold-by-design (it only ships in a single weight, no
        separate Bold variant, so display-font elements below deliberately
@@ -117,6 +122,7 @@
     --upset-glow-b: rgba(255, 138, 61, 0.9);
     --accent-glow-a: rgba(58, 103, 223, 0.35);
     --accent-glow-b: rgba(58, 103, 223, 0.9);
+    --warn: #e0a33e;
   }
 
   /* Highlighted/selected text uses the theme's own accent color rather
@@ -442,35 +448,90 @@
   .espn-pct { font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl); font-variant-numeric: tabular-nums; margin-left: auto; }
   .espn-chartBox { position: relative; height: 220px; width: 100%; margin: 6px 0; }
 
-  /* ---- Needle view (gauge grid) ---- */
-  #matchups.view-needle {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px;
-  }
+  /* ---- Needle/Forecasting view -- full-width stacked cards like ESPN
+     view, not a grid of narrow ones. The whole point of the spacious,
+     two-column layout below is a wide card; a narrow grid cell would
+     leave no room for the needle and the info column to sit side by
+     side. ---- */
+  #matchups.view-needle { display: flex; flex-direction: column; gap: 28px; }
   .needle-card {
-    border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px 18px; background: var(--card-bg); text-align: center;
+    border: 1px solid var(--border); border-radius: 14px; padding: 20px 24px 24px; background: var(--card-bg);
   }
-  .needle-gauge { max-width: 220px; margin: 0 auto; }
+
+  /* ---- Top row: needle on the left, team identity on the right -- the
+     right column deliberately mirrors the ESPN card's own name/dash/
+     percentage row convention (including the same fading-dash
+     treatment), so this reads as a natural sibling of that card rather
+     than a different visual language entirely. ---- */
+  .fc-top-row { display: flex; gap: 22px; align-items: center; margin-bottom: 18px; }
+  .fc-gauge-col { flex: 0 0 180px; text-align: center; }
+  .needle-gauge { width: 180px; margin: 0 auto; }
   .needle-svg { width: 100%; height: auto; display: block; }
   .needle-pointer { transition: transform 0.4s ease; }
-  .needle-verdict { font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl); letter-spacing: 0.01em; margin-top: 6px; }
-  .needle-sub { font-size: var(--text-sm); color: var(--muted); margin-top: 2px; }
-
-  /* ---- Forecasting section -- the Needle view's new content beyond the
-     gauge itself: projected final score range, points needed to win, and
-     a rough time-until-decided estimate. Left-aligned inside an
-     otherwise center-aligned card since these are label/value rows, not
-     more short center-friendly phrases like the verdict above them. ---- */
-  .forecast-section { text-align: left; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-  .forecast-title {
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--muted); margin: 10px 0 4px;
+  .needle-verdict { font-family: var(--font-display); font-weight: 400; font-size: var(--text-lg); letter-spacing: 0.01em; margin-top: 4px; }
+  .fc-confidence-chip {
+    display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 12px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid currentColor;
   }
-  .forecast-title:first-child { margin-top: 0; }
-  .forecast-row { display: flex; align-items: baseline; gap: 6px; font-size: 13px; padding: 2px 0; }
-  .forecast-row span:first-child { flex: 1; }
-  .forecast-row b { font-variant-numeric: tabular-nums; }
-  .forecast-range { color: var(--muted); font-size: 11px; }
-  .forecast-note { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .fc-info-col { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 12px; min-width: 0; }
+  .fc-team-row { display: flex; align-items: center; gap: 10px; }
+  .fc-team-name { font-family: var(--font-display); font-weight: 400; font-size: var(--text-base); }
+  .fc-team-dash { flex: 1; height: 2px; background: linear-gradient(90deg, currentColor 0%, transparent 92%); opacity: 0.9; }
+  .fc-team-pct { font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl); font-variant-numeric: tabular-nums; }
+  .needle-sub { font-size: var(--text-sm); color: var(--muted); margin-top: 2px; text-align: center; }
+
+  /* ---- Forecasting content -- tiles rather than a flat title/note
+     stack, reusing the SAME --input-bg tinted-tile convention the
+     weekly recap's own cards already use, for visual consistency
+     between the two. Flexbox (not grid) for the paired-stat row for the
+     same reason the recap grid uses it: an odd tile count (Confidence
+     Narrowing only shows sometimes) would otherwise leave a lone tile
+     left-aligned with an awkward empty gap on a fixed 2-column grid. ---- */
+  .forecast-section { text-align: left; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .fc-tile-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+  .fc-tile { background: var(--input-bg); border-radius: 10px; padding: 14px 16px; flex: 1 1 45%; min-width: 160px; }
+  .fc-tile-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); margin-bottom: 8px;
+  }
+  .fc-tile-row { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; font-size: 13px; padding: 2px 0; }
+  .fc-tile-row b { font-variant-numeric: tabular-nums; }
+  .fc-tile-range { color: var(--muted); font-size: 11px; }
+  .fc-tile-note { font-size: 12.5px; line-height: 1.5; color: var(--fg); }
+
+  .fc-full-tile { background: var(--input-bg); border-radius: 10px; padding: 14px 16px 12px; margin-bottom: 12px; }
+  .fc-full-tile .fc-tile-note, .fc-full-tile .fc-timeline-caption { margin-top: 2px; }
+
+  /* Volatility: lead-ownership strip, color intensity scaled by how
+     decisive each stretch was (not a flat team color), so a
+     barely-ahead stretch looks faint and a blowout stretch looks fully
+     saturated. */
+  .fc-timeline { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: 8px 0 6px; position: relative; }
+  .fc-timeline .seg { height: 100%; }
+  .fc-timeline .flip { position: absolute; top: -3px; width: 2px; height: 16px; background: var(--fg); opacity: 0.5; }
+  .fc-timeline-caption { font-size: 12px; color: var(--muted); }
+
+  /* Probability Swing: a diverging bar centered on 50 -- each team's own
+     color extends from center toward its own peak, with "100" labeled
+     in each team's color at either end and "50" neutral in the middle,
+     so distance from center always means "how far this team got,"
+     while color (not position) says which team. */
+  .fc-swing-bar { position: relative; height: 8px; border-radius: 4px; background: var(--border); margin: 8px 0 6px; }
+  .fc-swing-range { position: absolute; top: 0; height: 100%; border-radius: 4px; }
+  .fc-swing-marker { position: absolute; top: -3px; width: 2px; height: 14px; }
+  .fc-swing-labels { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); }
+
+  /* Upset-primed proximity meter -- a threshold you can see closing in,
+     rather than a sentence. Uses --warn (distinct from --upset, the
+     already-triggered alert color) so the two states read as visually
+     different, since they mean different things. */
+  .fc-primed { background: color-mix(in srgb, var(--warn) 10%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+  .fc-primed-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--warn); margin-bottom: 6px; }
+  .fc-primed .fc-tile-note { margin-bottom: 10px; }
+  .fc-meter { position: relative; height: 7px; border-radius: 4px; background: var(--border); margin-bottom: 4px; }
+  .fc-meter-fill { position: absolute; top: 0; left: 0; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #4fbd82, var(--warn)); }
+  .fc-meter-marker { position: absolute; top: -3px; width: 3px; height: 13px; background: var(--fg); border-radius: 2px; }
+  .fc-meter-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
 
   a.settings-link { display: block; text-align: center; margin-top: 10px; font-size: 13px; color: var(--accent); }
   #settingsLinks { margin-top: 26px; }
