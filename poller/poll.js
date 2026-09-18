@@ -199,8 +199,9 @@ async function pollLeague(league) {
       rejectedCount++;
       console.warn(
         `[${league.slug}] matchup ${matchup.id}: rejected this poll's data for BOTH teams -- ` +
-          `either an implausible actual_score drop, or an unexplained expected_score jump with an ` +
-          `unchanged lineup (likely a bad ESPN read)`
+          `either an implausible actual_score drop, or an unexplained expected_score jump OR drop ` +
+          `with an unchanged lineup (likely a bad ESPN read, or a starter switching to/from Out ` +
+          `before their own kickoff)`
       );
       continue;
     }
