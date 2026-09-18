@@ -1687,6 +1687,123 @@ function computeTimeUntilDecided(rows) {
     : `Roughly ${(minutesToDecided / 60).toFixed(1)} more hours at the current pace`;
 }
 
+// Describes MODEL CERTAINTY (how much the projection could still move),
+// not how close the game currently looks -- those are different axes
+// that can genuinely diverge. A game can show a decisive 92% early on
+// while still having high stddev (most players haven't finished, so
+// that number could move a lot); calling that a "toss-up" would be
+// wrong, since the CURRENT read isn't close at all -- it's just not
+// locked in yet.
+function confidenceLabel(stddev) {
+  if (stddev <= 10) return { text: 'High confidence', color: '#4fbd82' };
+  if (stddev <= 16) return { text: 'Moderate confidence', color: 'var(--warn)' };
+  return { text: 'Wide open \u2014 plenty left to play', color: 'var(--muted)' };
+}
+
+// Compares the projection's confidence-interval margin at the FIRST
+// recorded snapshot against the latest one -- shows how much more
+// certain the model has become as the game has progressed, not just
+// what the current range is.
+function computeConfidenceNarrowing(rows) {
+  const homeSorted = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const awaySorted = rows.filter((r) => !r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (homeSorted.length < 3) return null;
+  const first = homeSorted[0], firstAway = awaySorted[0];
+  const latest = homeSorted[homeSorted.length - 1], latestAway = awaySorted[awaySorted.length - 1];
+  const marginFirst = FORECAST_CI_Z * impliedStddev(first.expected_score, firstAway.expected_score, first.win_prob);
+  const marginLatest = FORECAST_CI_Z * impliedStddev(latest.expected_score, latestAway.expected_score, latest.win_prob);
+  if (marginLatest >= marginFirst - 2) return null; // hasn't meaningfully narrowed yet
+  return { marginFirst, marginLatest };
+}
+
+// Each team's OWN peak percentage this game -- expressed on a mirrored
+// 100-50-100 scale (see buildSwingBar) rather than a single 0-100 range,
+// since a raw "34%-81%" range doesn't say which team either number
+// belongs to. homePeak is home's best moment; awayPeak is away's best
+// moment (100 minus home's worst moment, converted into away's terms).
+function computeProbabilitySwing(rows) {
+  const homeSorted = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (homeSorted.length < 2) return null;
+  const values = homeSorted.map((r) => r.win_prob);
+  const homePeak = Math.max(...values);
+  const awayPeak = 100 - Math.min(...values);
+  if (homePeak + awayPeak - 100 < 15) return null; // not a meaningful swing
+  return { homePeak, awayPeak, current: values[values.length - 1] };
+}
+// Renders the swing as a diverging bar centered on 50 -- away's color
+// extends left toward its own peak, home's color extends right toward
+// its own peak, mirroring "100 at both ends, 50 in the middle, color
+// tells you which side" -- distance from center means "how far this
+// team got," color says which team, since the number alone can't.
+function buildSwingBar(swing, home, away) {
+  const homePeakPos = swing.homePeak;
+  const awayPeakPos = 100 - swing.awayPeak;
+  const currentColor = swing.current >= 50 ? home.color : away.color;
+  // Clamped to 0: if one team led the ENTIRE game, the other team's own
+  // "peak" is still a losing percentage (below 50) -- without this
+  // clamp, that side's width computes negative (invalid CSS), since the
+  // bar assumes each side's peak falls on its own half. When a team
+  // never actually crossed 50%, their portion of the bar simply doesn't
+  // render, rather than showing a broken negative-width sliver.
+  const awayWidth = Math.max(0, 50 - awayPeakPos);
+  const homeWidth = Math.max(0, homePeakPos - 50);
+  return `
+    <div class="fc-swing-bar">
+      <div class="fc-swing-range" style="left:${awayPeakPos}%; width:${awayWidth}%; background:${colorWithAlpha(away.color, 0.55)}"></div>
+      <div class="fc-swing-range" style="left:50%; width:${homeWidth}%; background:${colorWithAlpha(home.color, 0.55)}"></div>
+      <div class="fc-swing-marker" style="left:${swing.current}%; background:${currentColor}"></div>
+    </div>
+    <div class="fc-swing-labels">
+      <span style="color:${away.color}">100</span>
+      <span>50</span>
+      <span style="color:${home.color}">100</span>
+    </div>
+  `;
+}
+
+// Lead-ownership timeline for the volatility visual -- tracks average
+// intensity (distance from 50%, same convention the chart fill and
+// gauge bands use) per segment, not just which side was ahead, so a
+// barely-ahead stretch renders faint and a blowout stretch renders
+// fully saturated rather than both looking like the same flat color.
+function computeLeadChangeSegments(rows) {
+  const homeSorted = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (!homeSorted.length) return null;
+  const segments = [];
+  let side = null, startIdx = 0, intensitySum = 0;
+  const pushSegment = (endIdx) => {
+    const count = endIdx - startIdx;
+    segments.push({ side, count, avgIntensity: intensitySum / count });
+    intensitySum = 0;
+  };
+  homeSorted.forEach((r, i) => {
+    const newSide = r.win_prob >= 50 ? 'home' : 'away';
+    if (side === null) side = newSide;
+    else if (newSide !== side) { pushSegment(i); startIdx = i; side = newSide; }
+    intensitySum += intensity(r.win_prob);
+  });
+  pushSegment(homeSorted.length);
+  return { segments, changes: segments.length - 1, total: homeSorted.length };
+}
+
+// How close the currently-armed favorite is to actually triggering an
+// Upset Watch alert -- reuses the REAL walkUpsetState thresholds rather
+// than approximating them. Only surfaces once genuinely close (55%+ of
+// the way from arm to trigger), not the instant something arms, and
+// never alongside an ALREADY-triggered alert (watch===true), which gets
+// its own separate badge/border treatment elsewhere on this same card.
+function computeUpsetProximity(rows) {
+  const homeSorted = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  if (homeSorted.length < 2) return null;
+  const { armed, watch } = walkUpsetState(homeSorted.map((r) => r.win_prob));
+  if (!armed || watch) return null;
+  const currentHomePct = homeSorted[homeSorted.length - 1].win_prob;
+  const currentFavoritePct = armed === 'home' ? currentHomePct : 100 - currentHomePct;
+  const proximityPct = Math.max(0, Math.min(100, ((UPSET_ARM - currentFavoritePct) / (UPSET_ARM - UPSET_TRIGGER_LOW)) * 100));
+  if (proximityPct < 55) return null;
+  return { favoriteSide: armed, currentFavoritePct, proximityPct };
+}
+
 function buildForecastSection(rows, home, away, allDone) {
   const homeRow = latestRow(rows, true);
   const awayRow = latestRow(rows, false);
@@ -1697,10 +1814,7 @@ function buildForecastSection(rows, home, away, allDone) {
   // Upset Watch note -- the same tie-aware three-way distinction (actual
   // upset / tie / favorite held on) the weekly recap and "why" blurb use
   // elsewhere, scanned across this matchup's full history regardless of
-  // live/Final state. This used to be part of the "why" blurb's optional
-  // Full-detail mode; now that the detail-level preference is gone, it
-  // lives permanently here instead, since the Forecasting view is where
-  // this kind of deeper analysis belongs by default.
+  // live/Final state.
   function buildUpsetNote() {
     const { episodes } = walkUpsetState(homeRowsSorted.map((r) => r.win_prob));
     if (!episodes.length) return '';
@@ -1721,14 +1835,18 @@ function buildForecastSection(rows, home, away, allDone) {
     } else {
       note = `This game has seen an Upset Watch alert, after ${favoriteTeam.name} peaked at ${Math.round(topEpisode.peakFavoritePct)}% win probability.`;
     }
-    return `<div class="forecast-title">Upset Watch</div><div class="forecast-note">${note}</div>`;
+    return `<div class="fc-full-tile"><div class="fc-tile-label">Upset Watch</div><div class="fc-tile-note">${note}</div></div>`;
   }
 
   if (allDone) {
     return `<div class="forecast-section">
-      <div class="forecast-title">Final</div>
-      <div class="forecast-row"><span style="color:${home.color}">${home.name}</span><b>${homeRow.actual_score.toFixed(1)}</b></div>
-      <div class="forecast-row"><span style="color:${away.color}">${away.name}</span><b>${awayRow.actual_score.toFixed(1)}</b></div>
+      <div class="fc-tile-grid">
+        <div class="fc-tile" style="flex-basis:100%">
+          <div class="fc-tile-label">Final</div>
+          <div class="fc-tile-row"><span style="color:${home.color}">${home.name}</span><b>${homeRow.actual_score.toFixed(1)}</b></div>
+          <div class="fc-tile-row"><span style="color:${away.color}">${away.name}</span><b>${awayRow.actual_score.toFixed(1)}</b></div>
+        </div>
+      </div>
       ${buildUpsetNote()}
     </div>`;
   }
@@ -1741,10 +1859,10 @@ function buildForecastSection(rows, home, away, allDone) {
   // uncertainty of its own -- show its actual score as fixed rather than
   // a fake range around a number that isn't going to move.
   const rangeFor = (row) => {
-    if (row.all_starters_done) return `${row.actual_score.toFixed(0)} <span class="forecast-range">(locked in)</span>`;
+    if (row.all_starters_done) return `${row.actual_score.toFixed(0)} <span class="fc-tile-range">(locked in)</span>`;
     const low = Math.max(row.actual_score, row.expected_score - margin);
     const high = row.expected_score + margin;
-    return `${row.expected_score.toFixed(0)} <span class="forecast-range">(${low.toFixed(0)}-${high.toFixed(0)})</span>`;
+    return `${row.expected_score.toFixed(0)} <span class="fc-tile-range">(${low.toFixed(0)}-${high.toFixed(0)})</span>`;
   };
 
   const homeFavored = homeRow.win_prob >= 50;
@@ -1754,19 +1872,83 @@ function buildForecastSection(rows, home, away, allDone) {
 
   const decidedEstimate = computeTimeUntilDecided(rows);
   const momentum = computeRecentMomentum(homeRowsSorted);
-  const momentumNote = momentum
-    ? `<div class="forecast-title">Momentum</div><div class="forecast-note">${(momentum.delta > 0 ? home : away).name} +${Math.abs(momentum.delta).toFixed(1)}% win probability in the last ~15 min.</div>`
+  const narrowing = computeConfidenceNarrowing(rows);
+  const swing = computeProbabilitySwing(rows);
+  const leadChanges = computeLeadChangeSegments(rows);
+  const proximity = computeUpsetProximity(rows);
+
+  const gridTiles = [
+    `<div class="fc-tile">
+      <div class="fc-tile-label">Projected Final Score</div>
+      <div class="fc-tile-row"><span style="color:${home.color}">${home.name}</span><b>${rangeFor(homeRow)}</b></div>
+      <div class="fc-tile-row"><span style="color:${away.color}">${away.name}</span><b>${rangeFor(awayRow)}</b></div>
+    </div>`,
+    `<div class="fc-tile">
+      <div class="fc-tile-label">Points Needed</div>
+      <div class="fc-tile-note">${trailing.name} needs about ${pointsNeeded.toFixed(1)} more points than currently projected to take the lead over ${favored.name}.</div>
+    </div>`,
+  ];
+  if (momentum) {
+    gridTiles.push(`<div class="fc-tile">
+      <div class="fc-tile-label">Momentum</div>
+      <div class="fc-tile-note">${(momentum.delta > 0 ? home : away).name} +${Math.abs(momentum.delta).toFixed(1)}% win probability in the last ~15 min.</div>
+    </div>`);
+  }
+  if (narrowing) {
+    gridTiles.push(`<div class="fc-tile">
+      <div class="fc-tile-label">Confidence Narrowing</div>
+      <div class="fc-tile-note">\u00b1${narrowing.marginFirst.toFixed(0)} pregame &rarr; <b>\u00b1${narrowing.marginLatest.toFixed(0)} now</b></div>
+    </div>`);
+  }
+
+  let volatilityHtml = '';
+  if (leadChanges) {
+    const segHtml = leadChanges.segments.map((s) => {
+      const color = s.side === 'home' ? home.color : away.color;
+      const alpha = 0.15 + s.avgIntensity * 0.65;
+      return `<div class="seg" style="width:${(s.count / leadChanges.total * 100).toFixed(1)}%; background:${colorWithAlpha(color, alpha)}"></div>`;
+    }).join('');
+    let cum = 0;
+    const flipHtml = leadChanges.segments.slice(0, -1).map((s) => { cum += s.count / leadChanges.total * 100; return `<div class="flip" style="left:${cum.toFixed(1)}%"></div>`; }).join('');
+    volatilityHtml = `<div class="fc-full-tile">
+      <div class="fc-tile-label">Volatility</div>
+      <div class="fc-timeline">${segHtml}${flipHtml}</div>
+      <div class="fc-timeline-caption">${leadChanges.changes} lead change${leadChanges.changes === 1 ? '' : 's'}${leadChanges.changes >= 3 ? ' \u2014 this one has gone back and forth all game.' : leadChanges.changes === 0 ? ' \u2014 one team has led wire to wire.' : '.'}</div>
+    </div>`;
+  }
+
+  let swingHtml = '';
+  if (swing) {
+    swingHtml = `<div class="fc-full-tile">
+      <div class="fc-tile-label">Probability Swing</div>
+      ${buildSwingBar(swing, home, away)}
+      <div class="fc-timeline-caption"><span style="color:${home.color}">${home.name}</span> peaked at ${swing.homePeak.toFixed(0)}%, <span style="color:${away.color}">${away.name}</span> peaked at ${swing.awayPeak.toFixed(0)}%.</div>
+    </div>`;
+  }
+
+  let primedHtml = '';
+  if (proximity) {
+    const favTeam = proximity.favoriteSide === 'home' ? home : away;
+    const upsetTeam = proximity.favoriteSide === 'home' ? away : home;
+    primedHtml = `<div class="fc-primed">
+      <div class="fc-primed-label">\u26a0 One Push From Upset Watch</div>
+      <div class="fc-tile-note"><b>${upsetTeam.name}</b> is closing in on triggering an alert against <b>${favTeam.name}</b>.</div>
+      <div class="fc-meter"><div class="fc-meter-fill" style="width:${proximity.proximityPct.toFixed(0)}%"></div><div class="fc-meter-marker" style="left:${proximity.proximityPct.toFixed(0)}%"></div></div>
+      <div class="fc-meter-labels"><span>Armed at ${UPSET_ARM}%</span><span>Triggers at ${UPSET_TRIGGER_LOW}%</span></div>
+    </div>`;
+  }
+
+  const decidedHtml = decidedEstimate
+    ? `<div class="fc-full-tile"><div class="fc-tile-label">Time Until Likely Decided</div><div class="fc-tile-note">${decidedEstimate} (rough estimate).</div></div>`
     : '';
 
   return `
     <div class="forecast-section">
-      <div class="forecast-title">Projected Final Score</div>
-      <div class="forecast-row"><span style="color:${home.color}">${home.name}</span><b>${rangeFor(homeRow)}</b></div>
-      <div class="forecast-row"><span style="color:${away.color}">${away.name}</span><b>${rangeFor(awayRow)}</b></div>
-      <div class="forecast-title">Points Needed</div>
-      <div class="forecast-note">${trailing.name} needs about ${pointsNeeded.toFixed(1)} more points than currently projected to take the lead over ${favored.name}.</div>
-      ${decidedEstimate ? `<div class="forecast-title">Time Until Likely Decided</div><div class="forecast-note">${decidedEstimate} (rough estimate).</div>` : ''}
-      ${momentumNote}
+      <div class="fc-tile-grid">${gridTiles.join('')}</div>
+      ${volatilityHtml}
+      ${swingHtml}
+      ${primedHtml}
+      ${decidedHtml}
       ${buildUpsetNote()}
     </div>
   `;
@@ -1828,6 +2010,11 @@ function renderNeedleCard(rows, home, away, allDone) {
   const verdict = needleVerdict(homePct, home, away);
   const isLive = !allDone && isRecentlyActive(rows);
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
+  const homeRow = latestRow(rows, true);
+  const awayRow = latestRow(rows, false);
+  const conf = (!allDone && homeRow && awayRow)
+    ? confidenceLabel(impliedStddev(homeRow.expected_score, awayRow.expected_score, homeRow.win_prob))
+    : null;
 
   const card = document.createElement('div');
   card.className = 'needle-card' + (upsetInfo ? ' upset-watch' : '');
@@ -1835,9 +2022,26 @@ function renderNeedleCard(rows, home, away, allDone) {
   card.innerHTML = `
     <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</div>
-    <div class="needle-gauge">${buildNeedleSvg(home, away)}</div>
-    <div class="needle-verdict" style="color:${verdict.color}">${verdict.text}</div>
-    <div class="needle-sub">${home.name} vs ${away.name}
+    <div class="fc-top-row">
+      <div class="fc-gauge-col">
+        <div class="needle-gauge">${buildNeedleSvg(home, away)}</div>
+        <div class="needle-verdict" style="color:${verdict.color}">${verdict.text}</div>
+        <div class="fc-confidence-chip" style="color:${conf ? conf.color : ''}" ${conf ? '' : 'hidden'}>${conf ? conf.text : ''}</div>
+      </div>
+      <div class="fc-info-col">
+        <div class="fc-team-row">
+          <span class="fc-team-name" style="color:${home.color}">${home.name}</span>
+          <span class="fc-team-dash" style="color:${home.color}"></span>
+          <span class="fc-team-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
+        </div>
+        <div class="fc-team-row">
+          <span class="fc-team-name" style="color:${away.color}">${away.name}</span>
+          <span class="fc-team-dash" style="color:${away.color}"></span>
+          <span class="fc-team-pct" style="color:${away.color}">${Math.round(100 - homePct)}%</span>
+        </div>
+      </div>
+    </div>
+    <div class="needle-sub">
       <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
     </div>
     <div class="why-blurb" hidden>${explainMatchup(rows, home, away, allDone)}</div>
@@ -1863,6 +2067,24 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
   verdictEl.style.color = verdict.color;
   const needle = card.querySelector('.needle-pointer');
   if (needle) needle.style.transform = `rotate(${needleRotationDeg(homePct)}deg)`;
+
+  const homeRow = latestRow(rows, true);
+  const awayRow = latestRow(rows, false);
+  const confEl = card.querySelector('.fc-confidence-chip');
+  if (confEl) {
+    if (!allDone && homeRow && awayRow) {
+      const conf = confidenceLabel(impliedStddev(homeRow.expected_score, awayRow.expected_score, homeRow.win_prob));
+      confEl.textContent = conf.text;
+      confEl.style.color = conf.color;
+      confEl.hidden = false;
+    } else {
+      confEl.hidden = true;
+    }
+  }
+
+  const teamPcts = card.querySelectorAll('.fc-team-pct');
+  if (teamPcts[0]) teamPcts[0].textContent = `${Math.round(homePct)}%`;
+  if (teamPcts[1]) teamPcts[1].textContent = `${Math.round(100 - homePct)}%`;
 
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
   card.classList.toggle('upset-watch', !!upsetInfo);
