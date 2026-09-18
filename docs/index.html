@@ -207,11 +207,12 @@
     text-align: center; font-family: var(--font-display); font-weight: 400;
     font-size: var(--text-xl); color: var(--accent); margin: 0 auto 20px; max-width: 400px;
     padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg);
-    font-variant-numeric: tabular-nums;
+    font-variant-numeric: tabular-nums; transition: font-size 0.4s ease;
   }
   #kickoffCountdown .kickoff-label {
     display: block; font-family: var(--font-body); font-size: 10px;
     text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px;
+    transition: opacity 0.4s ease;
   }
   /* Starts pulsing once kickoff is within an hour (see tickKickoffCountdown
      in app.js, which toggles this class) -- same glow technique as Upset
@@ -223,6 +224,21 @@
     50% { box-shadow: inset 0 0 0 1px var(--accent), 0 0 16px var(--accent-glow-b); }
   }
   #kickoffCountdown.imminent { animation: countdownPulse 2.4s ease-in-out infinite; }
+
+  /* The final 60 seconds get a deliberately bigger moment rather than
+     treating the whole "within an hour" stretch identically -- larger
+     text, a faster and stronger pulse, and the label fading back so the
+     number itself is unmistakably the focal point. font-size transitions
+     smoothly into place (see the base rule above) instead of snapping. */
+  @keyframes countdownFinalPulse {
+    0%, 100% { box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 10px var(--accent-glow-a); }
+    50% { box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 30px var(--accent-glow-b); }
+  }
+  #kickoffCountdown.final-minute {
+    font-size: calc(var(--text-xl) * 1.8);
+    animation: countdownFinalPulse 0.9s ease-in-out infinite;
+  }
+  #kickoffCountdown.final-minute .kickoff-label { opacity: 0.6; }
 
   #recapBanner {
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
@@ -367,6 +383,11 @@
   html[data-reduce-motion="true"] .upset-watch { animation: none !important; box-shadow: inset 0 0 0 1.5px var(--upset) !important; }
   html[data-reduce-motion="true"] .upset-watch-badge.pulsing { animation: none !important; opacity: 1; }
   html[data-reduce-motion="true"] #kickoffCountdown.imminent { animation: none !important; box-shadow: inset 0 0 0 1px var(--accent) !important; }
+  html[data-reduce-motion="true"] #kickoffCountdown.final-minute { animation: none !important; box-shadow: inset 0 0 0 1.5px var(--accent) !important; }
+  /* The size increase itself still happens with reduced motion on (it's
+     informative, not decorative) -- only the animated grow-into-place
+     transition is suppressed, snapping directly to size instead. */
+  html[data-reduce-motion="true"] #kickoffCountdown { transition: none; }
 
   /* ---- "Why is this the number?" button + blurb, shared across all views ---- */
   .why-btn {
