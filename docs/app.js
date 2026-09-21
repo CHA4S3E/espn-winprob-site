@@ -552,10 +552,10 @@ function nearestByTs(sortedRows, targetTs) {
 // in the database -- it reads win_prob history, it never writes anything,
 // so it cannot create, duplicate, or otherwise affect any real snapshot
 // row, and has no interaction with the poller at all.
-const UPSET_ARM = 90;
-const UPSET_TRIGGER_LOW = 65; // home side triggers below this
-const UPSET_TRIGGER_HIGH = 100 - UPSET_TRIGGER_LOW; // away side triggers above this (35)
-const UPSET_CLEAR = 70; // the upset side reaching this many % clears the watch
+const UPSET_ARM = 85; // lowered from 90 -- a team peaking at 85-89% was previously excluded entirely, even from a genuine, dramatic collapse, since arming never happened at all below 90
+const UPSET_ARM_TRIGGER_GAP = 25; // same gap size as the old fixed 90-to-65 pairing, now measured from wherever the armed side ACTUALLY peaked rather than always from a flat 90 -- so a 99% peak needs to fall further to trigger than an 85% peak does, matching how much more dominant it actually was
+const UPSET_CLEAR = 70; // the challenger's OWN threshold reaching this clears the watch -- unchanged, this is about the NEW favorite's own established dominance, unrelated to the original favorite's peak
+const UPSET_CLEAR_HYSTERESIS_BUFFER = 5; // the old system's own implicit 65-to-70 gap. With a FIXED trigger floor this fell out automatically; with a dynamic one it doesn't -- a peak above 95% pushes the dynamic trigger floor (peak-25) ABOVE the flat 70% clear line, which would let the alert clear while still technically below its own trigger threshold and flicker on ordinary noise. This buffer guarantees the gap between trigger and the favorite's own reclaim floor is always at least 5 points, at any peak height.
 
 // sortedHomeWinProbs: home's win_prob values in ascending ts order.
 // Returns the state as of the LAST value (for live card display) plus
@@ -595,32 +595,42 @@ function walkUpsetState(sortedHomeWinProbs, onStep) {
       }
       watch = false; upsetSide = null;
     } else {
-      if (armed === 'home' && !watch && hp < UPSET_TRIGGER_LOW) {
+      // Dynamic trigger floor: how far the armed side has to fall from
+      // its OWN peak, not a flat number every team is measured against
+      // regardless of how dominant they actually were.
+      const triggerFloor = peak !== null ? peak - UPSET_ARM_TRIGGER_GAP : null;
+      if (armed === 'home' && !watch && triggerFloor !== null && hp < triggerFloor) {
         watch = true; upsetSide = 'away';
         episodes.push({ ...currentEpisode, upsetSide: 'away' });
-      } else if (armed === 'away' && !watch && hp > UPSET_TRIGGER_HIGH) {
+      } else if (armed === 'away' && !watch && triggerFloor !== null && (100 - hp) < triggerFloor) {
         watch = true; upsetSide = 'home';
         episodes.push({ ...currentEpisode, upsetSide: 'home' });
       }
-      // Clear uses ONE consistent threshold (UPSET_CLEAR, 70) regardless
-      // of which side ends up crossing it -- hp >= 70 means home
-      // reclaimed control, hp <= 30 (its mirror) means away did. Which of
-      // those two it is matters for what happens to `armed`, though:
+      // Clear: the CHALLENGER'S own threshold (UPSET_CLEAR, flat 70) is
+      // unchanged either way. The FAVORITE'S OWN reclaim floor, though,
+      // has to track its own trigger floor plus the hysteresis buffer
+      // (see UPSET_CLEAR_HYSTERESIS_BUFFER above) rather than also being
+      // a flat 70 -- otherwise a very high peak makes the dynamic trigger
+      // floor exceed 70, and the alert could clear while still below its
+      // own trigger line.
       //   - If the side that reclaims is the SAME side that was already
-      //     armed, that team already proved it could reach 90+ earlier in
-      //     this exact stretch -- surviving a scare and climbing back
-      //     doesn't erase that, so it stays armed with its peak intact,
-      //     only the scare itself (watch) clears. It does NOT need to
-      //     re-earn arming by climbing all the way back to 90.
+      //     armed, that team already proved it could reach the arm
+      //     threshold earlier in this exact stretch -- surviving a scare
+      //     and climbing back doesn't erase that, so it stays armed with
+      //     its peak intact, only the scare itself (watch) clears. It
+      //     does NOT need to re-earn arming by climbing all the way back.
       //   - If the side that reclaims is the OTHER side (the one that was
       //     threatening), that's a genuine changeover -- a different team
       //     is now in charge, so the old arm status no longer applies and
-      //     that team must earn its own by reaching 90/10 itself.
+      //     that team must earn its own by reaching the arm threshold
+      //     itself.
       if (watch) {
-        const homeReclaimed = hp >= UPSET_CLEAR;
-        const awayReclaimed = hp <= 100 - UPSET_CLEAR;
-        if (homeReclaimed || awayReclaimed) {
-          const reclaimingSide = homeReclaimed ? 'home' : 'away';
+        const favoriteReclaimFloor = Math.max(UPSET_CLEAR, triggerFloor + UPSET_CLEAR_HYSTERESIS_BUFFER);
+        const favoritePct = armed === 'home' ? hp : 100 - hp;
+        const favoriteReclaimed = favoritePct >= favoriteReclaimFloor;
+        const challengerReclaimed = (100 - favoritePct) >= UPSET_CLEAR;
+        if (favoriteReclaimed || challengerReclaimed) {
+          const reclaimingSide = favoriteReclaimed ? armed : (armed === 'home' ? 'away' : 'home');
           watch = false; upsetSide = null;
           if (reclaimingSide !== armed) {
             armed = null; peak = null; currentEpisode = null;
@@ -1792,16 +1802,22 @@ function computeLeadChangeSegments(rows) {
 // the way from arm to trigger), not the instant something arms, and
 // never alongside an ALREADY-triggered alert (watch===true), which gets
 // its own separate badge/border treatment elsewhere on this same card.
+// Distance is always measured against UPSET_ARM_TRIGGER_GAP (a constant
+// 25 points), regardless of how high the actual peak was -- a team that
+// peaked at 99% and a team that peaked at 85% are each exactly as close
+// to their OWN trigger once they've each fallen 25 points from their own
+// peak, even though their current percentages differ.
 function computeUpsetProximity(rows) {
   const homeSorted = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (homeSorted.length < 2) return null;
-  const { armed, watch } = walkUpsetState(homeSorted.map((r) => r.win_prob));
-  if (!armed || watch) return null;
+  const { armed, watch, peak } = walkUpsetState(homeSorted.map((r) => r.win_prob));
+  if (!armed || watch || peak === null) return null;
   const currentHomePct = homeSorted[homeSorted.length - 1].win_prob;
   const currentFavoritePct = armed === 'home' ? currentHomePct : 100 - currentHomePct;
-  const proximityPct = Math.max(0, Math.min(100, ((UPSET_ARM - currentFavoritePct) / (UPSET_ARM - UPSET_TRIGGER_LOW)) * 100));
+  const triggerFloor = peak - UPSET_ARM_TRIGGER_GAP;
+  const proximityPct = Math.max(0, Math.min(100, ((peak - currentFavoritePct) / UPSET_ARM_TRIGGER_GAP) * 100));
   if (proximityPct < 55) return null;
-  return { favoriteSide: armed, currentFavoritePct, proximityPct };
+  return { favoriteSide: armed, currentFavoritePct, proximityPct, peakPct: peak, triggerPct: triggerFloor };
 }
 
 function buildForecastSection(rows, home, away, allDone) {
@@ -1934,7 +1950,7 @@ function buildForecastSection(rows, home, away, allDone) {
       <div class="fc-primed-label">\u26a0 One Push From Upset Watch</div>
       <div class="fc-tile-note"><b>${upsetTeam.name}</b> is closing in on triggering an alert against <b>${favTeam.name}</b>.</div>
       <div class="fc-meter"><div class="fc-meter-fill" style="width:${proximity.proximityPct.toFixed(0)}%"></div><div class="fc-meter-marker" style="left:${proximity.proximityPct.toFixed(0)}%"></div></div>
-      <div class="fc-meter-labels"><span>Armed at ${UPSET_ARM}%</span><span>Triggers at ${UPSET_TRIGGER_LOW}%</span></div>
+      <div class="fc-meter-labels"><span>Peaked at ${proximity.peakPct.toFixed(0)}%</span><span>Triggers at ${proximity.triggerPct.toFixed(0)}%</span></div>
     </div>`;
   }
 
