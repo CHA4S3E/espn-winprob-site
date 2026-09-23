@@ -125,7 +125,7 @@ async function loadLeagueData(leagueId) {
   // realistically exceed, silently truncating the result to an arbitrary
   // subset that might not include any final rows at all.
   const [{ data: teams, error: teamsError }, { data: snapshots, error: snapshotsError }] = await Promise.all([
-    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji)').eq('league_id', leagueId),
+    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId),
     sb.from('snapshots')
       .select('year, week, matchup_id, team_id, actual_score, all_starters_done, ts')
       .eq('league_id', leagueId)
@@ -141,6 +141,7 @@ async function loadLeagueData(leagueId) {
       name: settings.display_name || t.espn_team_name,
       color: settings.color || '#888888',
       emoji: settings.emoji || '',
+      logoUrl: settings.logo_url || '',
     };
   }
   allRows = snapshots;
@@ -151,6 +152,15 @@ async function loadLeagueData(leagueId) {
     weeks.map((w) => `<option value="${w}">Through week ${w}</option>`).join('');
 
   render();
+}
+
+// Logo if uploaded, else the older emoji field, else nothing -- same
+// fallback order as the main matchup page, so a team shows consistently
+// across both places regardless of whether they've uploaded a logo yet.
+function renderTeamIcon(team) {
+  if (team.logoUrl) return `<img class="team-icon-img" src="${team.logoUrl}" alt="">`;
+  if (team.emoji) return `<span>${team.emoji}</span>`;
+  return '';
 }
 
 function render() {
@@ -187,7 +197,7 @@ function render() {
     return `
       <div class="standings-row" style="--team-color:${s.team.color}">
         <div class="col-rank">${i + 1}</div>
-        <div class="col-team"><span class="team-name">${s.team.emoji ? s.team.emoji + ' ' : ''}${s.team.name}</span></div>
+        <div class="col-team"><span class="team-name">${renderTeamIcon(s.team)}${s.team.name}</span></div>
         <div class="col-record">${s.wins}-${s.losses}${s.ties ? '-' + s.ties : ''}</div>
         <div class="col-pct">${s.winPct.toFixed(3).replace(/^0/, '')}</div>
         <div class="col-pf">${s.pointsFor.toFixed(1)}</div>
