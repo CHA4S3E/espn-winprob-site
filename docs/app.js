@@ -425,7 +425,7 @@ async function fetchMatchupData(leagueId, year, week) {
     fetchAllRows((from, to) =>
       sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').range(from, to)
     ),
-    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji)').eq('league_id', leagueId),
+    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId),
   ]);
   if (teamErr) throw teamErr;
 
@@ -438,6 +438,7 @@ async function fetchMatchupData(leagueId, year, week) {
       color,
       wasAdjusted,
       emoji: settings.emoji || '',
+      logoUrl: settings.logo_url || '',
     };
   });
 
@@ -448,7 +449,7 @@ async function fetchMatchupData(leagueId, year, week) {
 
   const teamInfo = {};
   for (const e of rawEntries) {
-    teamInfo[e.id] = { name: e.name, color: deconflicted[e.id], emoji: e.emoji };
+    teamInfo[e.id] = { name: e.name, color: deconflicted[e.id], emoji: e.emoji, logoUrl: e.logoUrl };
   }
 
   const byMatchup = {};
@@ -855,8 +856,8 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     // partial recap (some games still live) would be misleading.
     if (!homeLatest?.all_starters_done || !awayLatest?.all_starters_done) return null;
 
-    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#888', emoji: '' };
-    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#888', emoji: '' };
+    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#888', emoji: '' , logoUrl: '' };
+    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#888', emoji: '' , logoUrl: '' };
     const homeScore = homeLatest.actual_score;
     const awayScore = awayLatest.actual_score;
     const margin = Math.abs(homeScore - awayScore);
@@ -2216,6 +2217,18 @@ function setUpsetBadgeState(canvas, { text, visible, pulsing, color }) {
   else badge.style.removeProperty('color');
 }
 
+// Logo if uploaded, else the older emoji field, else nothing -- lets
+// teams that haven't uploaded a logo yet keep showing whatever emoji
+// they already had set, rather than every team going blank the instant
+// this feature shipped. object-fit:cover (see .team-icon-img CSS) keeps
+// a non-square source image from looking squished, matching how the
+// upload flow already center-crops to square before it's ever stored.
+function renderTeamIcon(team) {
+  if (team.logoUrl) return `<img class="team-icon-img" src="${team.logoUrl}" alt="">`;
+  if (team.emoji) return team.emoji;
+  return '';
+}
+
 function renderEspnCard(rows, home, away, allDone) {
   const homePct = latestPct(rows);
   const isLive = !allDone && isRecentlyActive(rows);
@@ -2231,14 +2244,14 @@ function renderEspnCard(rows, home, away, allDone) {
       <span class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</span>
     </div>
     <div class="espn-row espn-row-top">
-      <span class="espn-emoji">${home.emoji || ''}</span>
+      <span class="espn-emoji">${renderTeamIcon(home)}</span>
       <span class="espn-name" style="color:${home.color}">${home.name}</span>
       <span class="espn-dash" style="background:${home.color}"></span>
       <span class="espn-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
     </div>
     <div class="espn-chartBox"><canvas></canvas></div>
     <div class="espn-row espn-row-bottom">
-      <span class="espn-emoji">${away.emoji || ''}</span>
+      <span class="espn-emoji">${renderTeamIcon(away)}</span>
       <span class="espn-name" style="color:${away.color}">${away.name}</span>
       <span class="espn-dash" style="background:${away.color}"></span>
       <span class="espn-pct" style="color:${away.color}">${Math.round(100 - homePct)}%</span>
@@ -2639,8 +2652,8 @@ async function loadMatchups({ preserveCharts = false } = {}) {
       const awayRow = rows.find((r) => !r.is_home);
       if (!homeRow || !awayRow) continue;
 
-      const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0', emoji: '' };
-      const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b', emoji: '' };
+      const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0', emoji: '' , logoUrl: '' };
+      const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b', emoji: '' , logoUrl: '' };
       const allDone = !!(latestRow(rows, true)?.all_starters_done && latestRow(rows, false)?.all_starters_done);
 
       const { card, entry } = render(rows, home, away, allDone);
@@ -2663,8 +2676,8 @@ async function loadMatchups({ preserveCharts = false } = {}) {
       return loadMatchups({ preserveCharts: false }); // matchup set or mode changed -- fall back once
     }
 
-    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0', emoji: '' };
-    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b', emoji: '' };
+    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0', emoji: '' , logoUrl: '' };
+    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b', emoji: '' , logoUrl: '' };
     const allDone = !!(latestRow(rows, true)?.all_starters_done && latestRow(rows, false)?.all_starters_done);
     update(entry, rows, home, away, allDone);
   }
