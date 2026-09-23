@@ -12,9 +12,28 @@
   .team-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
   .team-row .espn-name { flex: 1; color: #777; font-size: 13px; }
   .team-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; }
-  .team-row input.emoji-input { flex: none; width: 44px; text-align: center; font-size: 18px; }
   .team-row input[type="color"] { width: 40px; height: 32px; border: 1px solid #ccc; border-radius: 4px; padding: 2px; }
   .team-row input:disabled, .team-row input[type="color"]:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Logo upload -- a square button that IS the preview, so clicking the
+     logo itself (or its placeholder) is what opens the file picker,
+     rather than a separate "choose file" control sitting next to it. */
+  .logo-cell { position: relative; flex: none; }
+  .logo-upload-btn {
+    width: 44px; height: 44px; border-radius: 8px; border: 1px solid #ccc;
+    background: #f5f5f5; padding: 0; overflow: hidden; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .logo-upload-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .logo-upload-btn:hover:not(:disabled) { border-color: #1a3fa0; }
+  .logo-preview { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .logo-fallback { width: 100%; height: 100%; align-items: center; justify-content: center; font-size: 18px; color: #999; }
+  .logo-remove-btn {
+    position: absolute; top: -6px; right: -6px; width: 18px; height: 18px;
+    border-radius: 50%; border: 1px solid #ccc; background: #fff; color: #a04000;
+    font-size: 12px; line-height: 1; padding: 0; cursor: pointer;
+  }
+  .logo-remove-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   #savedNote { font-size: 12px; color: #888; height: 18px; margin-top: 10px; }
   a.back { display: block; margin-top: 24px; font-size: 13px; color: #1a3fa0; }
   #lockNote {
