@@ -117,11 +117,22 @@ async function loadLeagueData(leagueId) {
   standingsTable.style.display = 'none';
   emptyState.style.display = 'none';
 
+  // Only ever need rows where a matchup actually went final -- this is a
+  // small fraction of total polls (most polls during a live game have
+  // all_starters_done=false), and filtering here avoids Supabase's
+  // default 1000-row cap on unpaginated queries, which an unfiltered
+  // query against a full season's worth of ~1-minute polling could
+  // realistically exceed, silently truncating the result to an arbitrary
+  // subset that might not include any final rows at all.
   const [{ data: teams, error: teamsError }, { data: snapshots, error: snapshotsError }] = await Promise.all([
     sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji)').eq('league_id', leagueId),
-    sb.from('snapshots').select('year, week, matchup_id, team_id, actual_score, all_starters_done, ts').eq('league_id', leagueId),
+    sb.from('snapshots')
+      .select('year, week, matchup_id, team_id, actual_score, all_starters_done, ts')
+      .eq('league_id', leagueId)
+      .eq('all_starters_done', true),
   ]);
   if (teamsError || snapshotsError) { showError('Could not load standings data', teamsError || snapshotsError); return; }
+  console.log(`Loaded ${teams.length} teams and ${snapshots.length} final-matchup snapshot rows for this league.`);
 
   teamInfo = {};
   for (const t of teams) {
