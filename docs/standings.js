@@ -1,5 +1,24 @@
+// If config.js failed to load (wrong path, 404, etc.), SUPABASE_CONFIG
+// won't exist -- destructuring it directly would throw immediately and
+// halt this entire script before anything else runs, which is its own
+// silent-failure trap (the page would just sit on its default "Loading"
+// text forever with nothing in the console explaining why).
+if (!window.SUPABASE_CONFIG) {
+  document.getElementById('loadingState').textContent =
+    'Could not find Supabase configuration (config.js). Check that config.js is deployed alongside this page.';
+  throw new Error('window.SUPABASE_CONFIG is missing -- config.js did not load or ran after this script');
+}
 const { url, anonKey } = window.SUPABASE_CONFIG;
 const supabase = window.supabase.createClient(url, anonKey);
+
+function showError(headline, detail) {
+  console.error(headline, detail);
+  const loadingEl = document.getElementById('loadingState');
+  loadingEl.style.display = 'block';
+  loadingEl.textContent = `${headline} -- check the browser console for details.`;
+  document.getElementById('standingsTable').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'none';
+}
 
 const leagueSelect = document.getElementById('leagueSelect');
 const weekSelect = document.getElementById('weekSelect');
@@ -87,9 +106,10 @@ function computeStandings(rows, teamInfoMap, throughWeek) {
 // ============================================================
 async function loadLeagues() {
   const { data, error } = await supabase.from('leagues').select('id, name').order('name');
-  if (error) { console.error(error); return; }
+  if (error) { showError('Could not load leagues', error); return; }
+  if (!data.length) { showError('No leagues found', 'The leagues table returned zero rows for this Supabase project.'); return; }
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
-  if (data.length) await loadLeagueData(data[0].id);
+  await loadLeagueData(data[0].id);
 }
 
 async function loadLeagueData(leagueId) {
@@ -101,7 +121,7 @@ async function loadLeagueData(leagueId) {
     supabase.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji)').eq('league_id', leagueId),
     supabase.from('snapshots').select('year, week, matchup_id, team_id, actual_score, all_starters_done, ts').eq('league_id', leagueId),
   ]);
-  if (teamsError || snapshotsError) { console.error(teamsError || snapshotsError); return; }
+  if (teamsError || snapshotsError) { showError('Could not load standings data', teamsError || snapshotsError); return; }
 
   teamInfo = {};
   for (const t of teams) {
