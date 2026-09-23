@@ -9,7 +9,7 @@ if (!window.SUPABASE_CONFIG) {
   throw new Error('window.SUPABASE_CONFIG is missing -- config.js did not load or ran after this script');
 }
 const { url, anonKey } = window.SUPABASE_CONFIG;
-const supabase = window.supabase.createClient(url, anonKey);
+const sb = window.supabase.createClient(url, anonKey);
 
 function showError(headline, detail) {
   console.error(headline, detail);
@@ -105,7 +105,7 @@ function computeStandings(rows, teamInfoMap, throughWeek) {
 // Data loading
 // ============================================================
 async function loadLeagues() {
-  const { data, error } = await supabase.from('leagues').select('id, name').order('name');
+  const { data, error } = await sb.from('leagues').select('id, name').order('name');
   if (error) { showError('Could not load leagues', error); return; }
   if (!data.length) { showError('No leagues found', 'The leagues table returned zero rows for this Supabase project.'); return; }
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
@@ -118,8 +118,8 @@ async function loadLeagueData(leagueId) {
   emptyState.style.display = 'none';
 
   const [{ data: teams, error: teamsError }, { data: snapshots, error: snapshotsError }] = await Promise.all([
-    supabase.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji)').eq('league_id', leagueId),
-    supabase.from('snapshots').select('year, week, matchup_id, team_id, actual_score, all_starters_done, ts').eq('league_id', leagueId),
+    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji)').eq('league_id', leagueId),
+    sb.from('snapshots').select('year, week, matchup_id, team_id, actual_score, all_starters_done, ts').eq('league_id', leagueId),
   ]);
   if (teamsError || snapshotsError) { showError('Could not load standings data', teamsError || snapshotsError); return; }
 
