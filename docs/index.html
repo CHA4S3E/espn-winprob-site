@@ -442,7 +442,15 @@
   .espn-header .postcard-status { margin-bottom: 0; margin-left: auto; }
   .espn-header .why-blurb { margin: 0 0 0 10px; flex: 1; }
   .espn-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
-  .espn-emoji { font-size: 20px; line-height: 1; min-width: 1.2em; text-align: center; }
+  .espn-emoji { font-size: 20px; line-height: 1; min-width: 1.2em; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
+  /* Sized to roughly match the emoji it replaces, so swapping between a
+     team that has a logo and one that still just has an emoji doesn't
+     shift the row's layout. object-fit:cover matters even though uploads
+     are already center-cropped to square client-side -- a browser
+     rendering an old/cached image before that logic existed, or any
+     future path that stores a non-square image, still won't look
+     squished. */
+  .team-icon-img { width: 22px; height: 22px; border-radius: 5px; object-fit: cover; display: block; }
   .espn-name { font-family: var(--font-display); font-weight: 400; font-size: var(--text-base); letter-spacing: 0.01em; }
   .espn-dash { flex: 1; height: 3px; border-radius: 2px; opacity: 0.4; margin: 0 6px; }
   .espn-pct { font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl); font-variant-numeric: tabular-nums; margin-left: auto; }
