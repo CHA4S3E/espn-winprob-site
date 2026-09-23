@@ -81,6 +81,11 @@
     font-family: var(--font-display); font-weight: 400; font-size: var(--text-lg);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;
   }
+  /* Inline with the team name text (not a flex layout), since .team-name
+     itself needs to stay a single truncating text node for the ellipsis
+     overflow above to work -- vertical-align keeps a same-height image
+     from throwing off the text baseline next to it. */
+  .team-icon-img { width: 18px; height: 18px; border-radius: 4px; object-fit: cover; vertical-align: middle; margin-right: 6px; }
   .col-record, .col-pct, .col-pf, .col-pa { font-variant-numeric: tabular-nums; text-align: right; font-size: var(--text-base); }
   .col-pct { color: var(--muted); }
   .col-pf, .col-pa { font-size: var(--text-sm); color: var(--muted); }
