@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Standings — Fantasy Win Probability Tracker</title>
+<meta name="theme-color" content="#ffffff" id="themeColorMeta">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%F0%9F%8F%88</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const initialTheme =
+    localStorage.getItem('winProbTheme') ||
+    (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', initialTheme);
+  document.getElementById('themeColorMeta').setAttribute('content', initialTheme === 'dark' ? '#14161a' : '#ffffff');
+</script>
+<style>
+  html { scrollbar-gutter: stable; overflow-y: scroll; background: var(--bg); }
+
+  :root {
+    --bg: #ffffff; --fg: #222222; --muted: #888888; --border: #eeeeee;
+    --card-bg: #ffffff; --input-bg: #fafafa; --input-border: #cccccc;
+    --btn-border: #dddddd; --btn-hover: #f5f5f5; --accent: #1a3fa0;
+    --win: #2e8b57; --loss: #c0392b; --tie: #888888;
+    --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
+    --font-body: 'Inter', -apple-system, Arial, sans-serif;
+    --text-xs: 11px; --text-sm: 12px; --text-base: 14px; --text-lg: 16px;
+    --text-xl: 20px; --text-2xl: 26px; --text-3xl: 34px;
+  }
+  html[data-theme="dark"] {
+    --bg: #14161a; --fg: #e8e8e8; --muted: #9aa0a6; --border: #2a2d33;
+    --card-bg: #1c1f24; --input-bg: #20232a; --input-border: #3a3d44;
+    --btn-border: #3a3d44; --btn-hover: #262a31; --accent: #3a67df;
+    --win: #4fbd82; --loss: #e0574a; --tie: #9aa0a6;
+  }
+  ::selection { background: var(--accent); color: #fff; }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: var(--font-body); background: var(--bg); color: var(--fg);
+    margin: 0; padding: 30px 20px 60px; -webkit-font-smoothing: antialiased;
+  }
+  #wrap { max-width: 720px; margin: 0 auto; }
+
+  h1 {
+    font-family: var(--font-display); font-weight: 400; font-size: var(--text-3xl);
+    text-align: center; margin: 0 0 4px;
+  }
+  .sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 24px; }
+
+  #controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 28px; }
+  select {
+    padding: 7px 12px; font-size: var(--text-base); font-family: var(--font-body);
+    border-radius: 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--fg);
+  }
+
+  #standingsTable { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+  .standings-header, .standings-row {
+    display: grid;
+    grid-template-columns: 40px 1fr 74px 56px 64px 64px 52px;
+    align-items: center; gap: 10px; padding: 12px 14px;
+  }
+  .standings-header {
+    font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted); background: var(--input-bg); border-bottom: 1px solid var(--border);
+  }
+  .standings-row {
+    background: var(--card-bg); border-left: 3px solid var(--team-color, var(--border));
+    border-bottom: 1px solid var(--border);
+  }
+  .standings-row:last-child { border-bottom: none; }
+
+  .col-rank {
+    font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl);
+    color: var(--muted); text-align: center;
+  }
+  .col-team { min-width: 0; }
+  .team-name {
+    font-family: var(--font-display); font-weight: 400; font-size: var(--text-lg);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;
+  }
+  .col-record, .col-pct, .col-pf, .col-pa { font-variant-numeric: tabular-nums; text-align: right; font-size: var(--text-base); }
+  .col-pct { color: var(--muted); }
+  .col-pf, .col-pa { font-size: var(--text-sm); color: var(--muted); }
+  .col-streak {
+    font-family: var(--font-display); font-weight: 400; font-size: var(--text-base);
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .streak-w { color: var(--win); }
+  .streak-l { color: var(--loss); }
+  .streak-t { color: var(--tie); }
+
+  @media (max-width: 480px) {
+    .standings-header, .standings-row { grid-template-columns: 32px 1fr 66px 50px 56px 44px; }
+    .col-pa, .header-pa { display: none; }
+    .team-name { font-size: var(--text-base); }
+  }
+
+  #emptyState, #loadingState {
+    text-align: center; color: var(--muted); font-size: var(--text-base); padding: 40px 20px;
+  }
+
+  a.back-link { display: block; text-align: center; margin-top: 24px; font-size: var(--text-sm); color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>Standings</h1>
+  <div class="sub" id="subtext">Season record, based on completed weeks</div>
+
+  <div id="controls">
+    <select id="leagueSelect"></select>
+    <select id="weekSelect"></select>
+  </div>
+
+  <div id="loadingState">Loading standings…</div>
+  <div id="standingsTable" style="display:none"></div>
+  <div id="emptyState" style="display:none">No completed weeks yet this season — check back once week 1 wraps up.</div>
+
+  <a class="back-link" href="index.html">&larr; Back to matchups</a>
+</div>
+
+<script src="config.js"></script>
+<script src="standings.js"></script>
+</body>
+</html>
