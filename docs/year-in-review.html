@@ -27,7 +27,7 @@
     --card-bg: #ffffff; --input-bg: #fafafa; --input-border: #cccccc; --accent: #1a3fa0;
     --gold: #e0b23d; --silver: #b8bec7; --bronze: #c17a4a;
     --win: #2e8b57; --loss: #c0392b;
-    --hero-overlay-a: rgba(16,18,22,0.5); --hero-overlay-b: rgba(16,18,22,0.96);
+    --hero-overlay-a: rgba(255,255,255,0.5); --hero-overlay-b: rgba(255,255,255,0.96);
     --chart-gridline: rgba(0,0,0,0.08); --chart-baseline: rgba(0,0,0,0.2); --marker-outline: #ffffff;
     --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
     --font-body: 'Inter', -apple-system, Arial, sans-serif;
@@ -78,11 +78,12 @@
     position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column;
     align-items: center; justify-content: center; text-align: center;
     background: linear-gradient(180deg, var(--hero-overlay-a), var(--hero-overlay-b) 65%);
-    color: #eaeaea; /* fixed, not var(--fg) -- the hero stays dark/dramatic regardless of
-                        the page's own light/dark theme, so its text can't follow --fg,
-                        which flips to dark text in light mode and would be invisible here */
+    color: var(--fg); /* now that the overlay itself flips between a dark and light
+                          gradient per theme, the text needs to follow --fg too --
+                          it was hardcoded light before, back when the overlay was
+                          unconditionally dark in both themes */
   }
-  #heroContent .year { font-family: var(--font-display); font-weight: 400; font-size: 15px; color: #9aa0a6; letter-spacing: 0.08em; text-transform: uppercase; }
+  #heroContent .year { font-family: var(--font-display); font-weight: 400; font-size: 15px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
   #heroContent h1 { font-family: var(--font-display); font-weight: 400; font-size: 42px; margin: 4px 0 0; }
 
   #liteNote {
