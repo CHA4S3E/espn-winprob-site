@@ -1,52 +1,54 @@
-<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <title>Year in Review — Mockup</title>
+<title>Year in Review — Fantasy Win Probability Tracker</title>
+<meta name="theme-color" content="#101216" id="themeColorMeta">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
     --bg: #101216; --fg: #eaeaea; --muted: #8a8f98; --border: #2a2d34;
     --card-bg: #1c1f26; --input-bg: #21242c;
+    --card-bg: #1c1f26; --input-bg: #21242c; --input-border: #3a3d44; --accent: #3a67df;
     --gold: #e0b23d; --silver: #b8bec7; --bronze: #c17a4a;
     --win: #4fbd82; --loss: #e0574a;
     --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
-    --font-body: 'Inter', -apple-system, Arial, sans-serif;
-  }
-  * { box-sizing: border-box; }
-  body {
-    font-family: var(--font-body); background: var(--bg); color: var(--fg);
+@@ -21,12 +23,14 @@
     margin: 0; padding: 0 0 80px; -webkit-font-smoothing: antialiased;
   }
   .page { max-width: 900px; margin: 0 auto; padding: 0 20px; }
   .mockup-note {
     background: #2a2410; border-bottom: 1px solid #4a3f1a; color: #e0c060;
     text-align: center; font-size: 12.5px; padding: 8px; font-family: var(--font-body);
+
+  #controls { display: flex; gap: 10px; justify-content: center; padding: 16px 0 0; }
+  select {
+    padding: 7px 12px; font-size: 14px; font-family: var(--font-body);
+    border-radius: 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--fg);
   }
+  #loadingState, #emptyState { text-align: center; color: var(--muted); font-size: 14px; padding: 60px 20px; }
 
   /* ==== Hero: diagonal drifting logo banner ==== */
-  #hero { position: relative; height: 340px; overflow: hidden; margin-bottom: 8px; }
+  #hero { position: relative; height: 240px; overflow: hidden; margin-bottom: 8px; }
   #logoBannerLayer {
     position: absolute; inset: -20% -10%; transform: rotate(-8deg);
-    display: flex; flex-direction: column; gap: 30px; opacity: 1;
-  }
-  .logo-row { display: flex; gap: 30px; animation: driftRow 40s linear infinite; width: max-content; }
+@@ -36,10 +40,11 @@
   .logo-row.reverse { animation-direction: reverse; }
   @keyframes driftRow { from { transform: translateX(0); } to { transform: translateX(-50%); } }
   .logo-chip {
-    width: 130px; height: 130px; border-radius: 22px; flex: none;
+    width: 46px; height: 46px; border-radius: 10px; flex: none;
+    width: 46px; height: 46px; border-radius: 10px; flex: none; overflow: hidden;
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-display); font-size: 44px; color: #fff;
+    font-family: var(--font-display); font-size: 18px; color: #fff;
   }
+  .logo-chip img { width: 100%; height: 100%; object-fit: cover; }
   html[data-reduce-motion="true"] .logo-row { animation: none; }
 
   #heroContent {
-    position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; text-align: center;
-    background: linear-gradient(180deg, rgba(16,18,22,0.5), rgba(16,18,22,0.96) 65%);
-  }
+@@ -50,7 +55,6 @@
   #heroContent .year { font-family: var(--font-display); font-weight: 400; font-size: 15px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
   #heroContent h1 { font-family: var(--font-display); font-weight: 400; font-size: 42px; margin: 4px 0 0; }
 
@@ -54,21 +56,18 @@
   #podium { display: flex; align-items: flex-end; justify-content: center; gap: 14px; margin: 10px 0 50px; }
   .podium-slot { display: flex; flex-direction: column; align-items: center; width: 150px; }
   .podium-team-name { font-family: var(--font-display); font-weight: 400; font-size: 14px; text-align: center; margin-bottom: 8px; line-height: 1.2; }
-  .podium-record { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
-  .podium-block {
-    width: 100%; border-radius: 10px 10px 0 0; display: flex; align-items: flex-start;
-    justify-content: center; padding-top: 10px; font-family: var(--font-display); font-size: 30px; color: #1a1a1a;
-  }
-  .podium-slot.gold .podium-block { height: 130px; background: linear-gradient(180deg, var(--gold), #a9791f); }
+@@ -63,45 +67,32 @@
   .podium-slot.silver .podium-block { height: 96px; background: linear-gradient(180deg, var(--silver), #7d838c); }
   .podium-slot.bronze .podium-block { height: 74px; background: linear-gradient(180deg, var(--bronze), #8a4f28); }
   .podium-trophy { font-size: 26px; margin-bottom: 2px; }
+  .podium-unset { color: var(--muted); font-size: 22px; }
 
   /* ==== Section headers ==== */
   .section-title {
     font-family: var(--font-display); font-weight: 400; font-size: 22px;
     text-align: center; margin: 50px 0 4px;
   }
+  .section-title { font-family: var(--font-display); font-weight: 400; font-size: 22px; text-align: center; margin: 50px 0 4px; }
   .section-sub { text-align: center; color: var(--muted); font-size: 12.5px; margin-bottom: 22px; }
 
   /* ==== Season race chart ==== */
@@ -88,6 +87,8 @@
     font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px;
     display: flex; align-items: center; gap: 6px;
   }
+  .award-card::before { content: ""; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: var(--accent-color, var(--border)); }
+  .award-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
   .award-headline { font-family: var(--font-display); font-weight: 400; font-size: 19px; margin-bottom: 4px; }
   .award-detail { font-size: 13px; color: var(--muted); line-height: 1.5; }
   .award-pair { display: flex; gap: 14px; flex-wrap: wrap; }
@@ -98,6 +99,8 @@
   @media (max-width: 560px) { .award-grid-2up { grid-template-columns: 1fr; } }
 
   /* ==== Upset crop chart ==== */
+  .team-icon-img { width: 18px; height: 18px; border-radius: 4px; object-fit: cover; vertical-align: middle; margin-right: 4px; }
+
   .upset-chart-wrap { margin: 12px 0 6px; }
   .upset-chart-labels { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin-top: 4px; }
 
@@ -105,11 +108,7 @@
   .allplay-row { margin-bottom: 12px; }
   .allplay-team { font-family: var(--font-display); font-size: 14px; margin-bottom: 4px; }
   .allplay-bars { display: flex; flex-direction: column; gap: 4px; }
-  .allplay-bar-track { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
-  .allplay-bar-fill-wrap { flex: 1; height: 8px; background: var(--input-bg); border-radius: 4px; overflow: hidden; }
-  .allplay-bar-fill { height: 100%; border-radius: 4px; }
-
-  a.back-link { display: block; text-align: center; margin-top: 30px; font-size: 13px; color: #6a8fe0; }
+@@ -113,374 +104,75 @@
 </style>
 </head>
 <body>
@@ -158,6 +157,9 @@
   <div class="award-grid" id="soCloseAward"></div>
 
   <a class="back-link" href="index.html">&larr; Back to matchups</a>
+<div id="controls">
+  <select id="leagueSelect"></select>
+  <select id="yearSelect"></select>
 </div>
 
 <script>
@@ -177,25 +179,19 @@ const TEAMS = {
 
 // ============================================================
 // Logo banner -- placeholder colored chips with initials, since this
-// mockup has no real uploaded logos to draw from. Each row cycles
-// through ALL teams repeatedly (not a one-time split) so a row always
-// looks full and dense even with a short team list, with each row
-// starting at a different offset so the three rows don't show an
-// identical sequence. Duplicated once per row so the looping animation
-// has no visible seam.
+// mockup has no real uploaded logos to draw from. Duplicated so the
+// looping animation has no visible seam.
 // ============================================================
 function initials(name) { return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
-const TEAM_KEYS = Object.keys(TEAMS);
-const CHIPS_PER_ROW = Math.max(10, TEAM_KEYS.length);
-function buildLogoRow(el, rowIdx) {
-  const order = [];
-  for (let i = 0; i < CHIPS_PER_ROW; i++) order.push(TEAM_KEYS[(i + rowIdx) % TEAM_KEYS.length]);
+function buildLogoRow(el, order) {
   const chips = order.map(k => `<div class="logo-chip" style="background:${TEAMS[k].color}">${initials(TEAMS[k].name)}</div>`).join('');
   el.innerHTML = chips + chips; // duplicate for seamless looping
 }
-buildLogoRow(document.getElementById('logoRow1'), 0);
-buildLogoRow(document.getElementById('logoRow2'), 1);
-buildLogoRow(document.getElementById('logoRow3'), 2);
+buildLogoRow(document.getElementById('logoRow1'), ['conquerors','bababooey','crabs','endseason','algorithm']);
+buildLogoRow(document.getElementById('logoRow2'), ['zerowins','waivers','kickoff','conquerors','bababooey']);
+buildLogoRow(document.getElementById('logoRow3'), ['crabs','endseason','algorithm','zerowins','waivers']);
+<div id="loadingState">Loading your season…</div>
+<div id="emptyState" style="display:none"></div>
 
 // ============================================================
 // Podium
@@ -215,6 +211,16 @@ document.getElementById('podium').innerHTML = [2, 1, 3].map(place => {
       <div class="podium-team-name" style="color:${t.color}">${t.name}</div>
       <div class="podium-record">${p.record}</div>
       <div class="podium-block"><span class="podium-trophy">${placeTrophy[place]}</span></div>
+<div id="content" style="display:none">
+  <div id="hero">
+    <div id="logoBannerLayer">
+      <div class="logo-row" id="logoRow1"></div>
+      <div class="logo-row reverse" id="logoRow2"></div>
+      <div class="logo-row" id="logoRow3"></div>
+    </div>
+    <div id="heroContent">
+      <div class="year" id="heroYear"></div>
+      <h1>🏆 Year in Review</h1>
     </div>
   `;
 }).join('');
@@ -311,6 +317,9 @@ document.getElementById('dramaAwards').innerHTML = `
     <div class="upset-chart-wrap">${buildUpsetCropChart(UPSET_SEQUENCE, UPSET_PEAK, UPSET_TRIGGER)}</div>
     <div class="upset-chart-labels"><span>Late 3rd quarter</span><span>Final</span></div>
   </div>
+  <div class="page">
+    <div id="podium"></div>
+    <div class="award-grid" id="peoplesChampionAward"></div>
 
   <div class="award-card" style="--accent-color:#e0574a">
     <div class="award-pair">
@@ -323,6 +332,12 @@ document.getElementById('dramaAwards').innerHTML = `
         <div class="award-label">💥 Biggest Blowout</div>
         <div class="award-headline"><span style="color:${TEAMS.conquerors.color}">${TEAMS.conquerors.name}</span> 156.2 &ndash; 68.9 <span style="color:${TEAMS.kickoff.color}">${TEAMS.kickoff.name}</span></div>
         <div class="award-detail">Week 3 &middot; decided by 87.3 points</div>
+    <div id="raceSection">
+      <div class="section-title">The Season, Week by Week</div>
+      <div class="section-sub">Every team's spot in the standings, tracked all year</div>
+      <div id="raceChartCard">
+        <svg id="raceSvg" viewBox="0 0 800 280" preserveAspectRatio="none" style="width:100%;height:280px;overflow:visible"></svg>
+        <div id="raceLegend"></div>
       </div>
     </div>
   </div>
@@ -339,6 +354,10 @@ document.getElementById('dramaAwards').innerHTML = `
         <div class="award-headline" style="color:${TEAMS.conquerors.color}">${TEAMS.conquerors.name}</div>
         <div class="award-detail">Led wire-to-wire in 4 different games this season -- never dropped below 50% win probability once</div>
       </div>
+    <div class="section-title">The Drama</div>
+    <div class="section-sub">The moments that actually made this season</div>
+    <div id="dramaSection">
+      <div class="award-grid" id="dramaAwards"></div>
     </div>
   </div>
 
@@ -354,6 +373,10 @@ document.getElementById('dramaAwards').innerHTML = `
         <div class="award-headline" style="color:${TEAMS.waivers.color}">${TEAMS.waivers.name}</div>
         <div class="award-detail">Averaged just +4.1 in wins, but -41.8 in losses -- every win was a nail-biter, every loss was a blowout</div>
       </div>
+    <div class="section-title">The Numbers</div>
+    <div class="section-sub">Best and worst, by the raw stats</div>
+    <div id="numbersSection">
+      <div class="award-grid-2up" id="numbersAwards"></div>
     </div>
   </div>
 `;
@@ -425,6 +448,10 @@ function allPlayBar(label, wins, losses, color) {
       <span style="width:90px">${label}</span>
       <div class="allplay-bar-fill-wrap"><div class="allplay-bar-fill" style="width:${pct}%;background:${color}"></div></div>
       <span style="width:40px;text-align:right">${wins}-${losses}</span>
+    <div class="section-title">The Luck Factor</div>
+    <div class="section-sub">How much of this season came down to matchups, not just play</div>
+    <div id="luckSection">
+      <div class="award-grid" id="luckAwards"></div>
     </div>
   `;
 }
@@ -444,6 +471,11 @@ document.getElementById('luckAwards').innerHTML = `
         ${allPlayBar('Actual', 9, 5, TEAMS.waivers.color)}
         ${allPlayBar('All-play', 6, 8, '#6a8fe0')}
       </div>
+
+    <div id="upsetLeaderboardSection">
+      <div class="section-title">Upset Watch, Season Totals</div>
+      <div class="section-sub">Beyond the one biggest moment above — who lived on the edge all year</div>
+      <div class="award-grid-2up" id="upsetLeaderboard"></div>
     </div>
   </div>
 
@@ -459,6 +491,9 @@ document.getElementById('luckAwards').innerHTML = `
         <div class="award-headline" style="color:${TEAMS.zerowins.color}">${TEAMS.zerowins.name}</div>
         <div class="award-detail">Opponents averaged only 102.1 pts/week &mdash; well under the league average</div>
       </div>
+    <div id="soCloseSection">
+      <div class="section-title">So Close</div>
+      <div class="award-grid" id="soCloseAward"></div>
     </div>
   </div>
 `;
@@ -471,6 +506,7 @@ document.getElementById('upsetLeaderboard').innerHTML = `
     <div class="award-label">🚨 Most Times Armed</div>
     <div class="award-headline" style="color:${TEAMS.crabs.color}">${TEAMS.crabs.name}</div>
     <div class="award-detail">Reached 85%+ win probability 5 separate times this season -- more nail-biting near-misses than anyone else</div>
+    <a class="back-link" href="index.html">&larr; Back to matchups</a>
   </div>
   <div class="award-card" style="--accent-color:#b378d1">
     <div class="award-label">🔄 Most Comebacks Completed</div>
@@ -478,6 +514,7 @@ document.getElementById('upsetLeaderboard').innerHTML = `
     <div class="award-detail">Completed 3 separate Upset Watch comebacks -- nobody pulled off more genuine reversals</div>
   </div>
 `;
+</div>
 
 // ============================================================
 // So Close award
@@ -490,5 +527,7 @@ document.getElementById('soCloseAward').innerHTML = `
   </div>
 `;
 </script>
+<script src="config.js"></script>
+<script src="year-in-review.js"></script>
 </body>
 </html>
