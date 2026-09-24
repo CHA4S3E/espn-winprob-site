@@ -390,10 +390,27 @@ document.getElementById('addLegacyTeamBtn').addEventListener('click', async () =
 
 async function loadLegacyMatchupForm() {
   const leagueId = leagueSelect.value;
-  const { data } = await sb.from('legacy_teams').select('id, name').eq('league_id', leagueId).order('name');
-  const options = (data || []).map((t) => `<option value="${t.id}">${t.name}</option>`).join('');
-  document.getElementById('legacyHomeTeamSelect').innerHTML = options;
-  document.getElementById('legacyAwayTeamSelect').innerHTML = options;
+  // Offers BOTH still-active teams and historical/defunct ones -- a
+  // legacy-year matchup commonly involves one of each, not just two
+  // defunct teams. Each option's value is prefixed with its source
+  // ("live:" or "legacy:") so the submit handler knows which column to
+  // write the selected id into.
+  const [{ data: liveTeams }, { data: legacyTeams }] = await Promise.all([
+    sb.from('teams').select('id, espn_team_name, team_settings(display_name)').eq('league_id', leagueId).order('espn_team_name'),
+    sb.from('legacy_teams').select('id, name').eq('league_id', leagueId).order('name'),
+  ]);
+  const liveOptions = (liveTeams || [])
+    .map((t) => `<option value="live:${t.id}">${(t.team_settings && t.team_settings.display_name) || t.espn_team_name}</option>`)
+    .join('');
+  const legacyOptions = (legacyTeams || [])
+    .map((t) => `<option value="legacy:${t.id}">${t.name}</option>`)
+    .join('');
+  const combined = `
+    <optgroup label="Active teams">${liveOptions}</optgroup>
+    <optgroup label="Historical / defunct teams">${legacyOptions}</optgroup>
+  `;
+  document.getElementById('legacyHomeTeamSelect').innerHTML = combined;
+  document.getElementById('legacyAwayTeamSelect').innerHTML = combined;
 }
 
 document.getElementById('addLegacyMatchupBtn').addEventListener('click', async () => {
@@ -401,19 +418,27 @@ document.getElementById('addLegacyMatchupBtn').addEventListener('click', async (
   const leagueId = leagueSelect.value;
   const year = Number(document.getElementById('legacyYearInput').value);
   const week = Number(document.getElementById('legacyWeekInput').value);
-  const homeTeamId = document.getElementById('legacyHomeTeamSelect').value;
-  const awayTeamId = document.getElementById('legacyAwayTeamSelect').value;
+  const homeSelected = document.getElementById('legacyHomeTeamSelect').value; // "live:<id>" or "legacy:<id>"
+  const awaySelected = document.getElementById('legacyAwayTeamSelect').value;
   const homeScore = Number(document.getElementById('legacyHomeScoreInput').value);
   const awayScore = Number(document.getElementById('legacyAwayScoreInput').value);
 
-  if (!year || !week || !homeTeamId || !awayTeamId || Number.isNaN(homeScore) || Number.isNaN(awayScore)) {
+  if (!year || !week || !homeSelected || !awaySelected || Number.isNaN(homeScore) || Number.isNaN(awayScore)) {
     alert('Fill in year, week, both teams, and both scores.'); return;
   }
-  if (homeTeamId === awayTeamId) { alert('Home and away team must be different.'); return; }
+  if (homeSelected === awaySelected) { alert('Home and away team must be different.'); return; }
 
-  const { error } = await sb.from('legacy_matchups').insert({
-    league_id: leagueId, year, week, home_team_id: homeTeamId, away_team_id: awayTeamId, home_score: homeScore, away_score: awayScore,
-  });
+  const [homeSource, homeId] = homeSelected.split(':');
+  const [awaySource, awayId] = awaySelected.split(':');
+  const payload = {
+    league_id: leagueId, year, week, home_score: homeScore, away_score: awayScore,
+    home_legacy_team_id: homeSource === 'legacy' ? homeId : null,
+    home_live_team_id: homeSource === 'live' ? homeId : null,
+    away_legacy_team_id: awaySource === 'legacy' ? awayId : null,
+    away_live_team_id: awaySource === 'live' ? awayId : null,
+  };
+
+  const { error } = await sb.from('legacy_matchups').insert(payload);
   if (error) { alert('Could not add result: ' + error.message); return; }
 
   document.getElementById('legacyHomeScoreInput').value = '';
@@ -423,28 +448,40 @@ document.getElementById('addLegacyMatchupBtn').addEventListener('click', async (
 
 async function loadLegacyMatchupList() {
   const leagueId = leagueSelect.value;
-  const [{ data: matchups, error }, { data: teams }] = await Promise.all([
-    sb.from('legacy_matchups').select('id, year, week, home_team_id, away_team_id, home_score, away_score').eq('league_id', leagueId).order('year', { ascending: false }).order('week'),
+  const [{ data: matchups, error }, { data: liveTeams }, { data: legacyTeams }] = await Promise.all([
+    sb.from('legacy_matchups')
+      .select('id, year, week, home_legacy_team_id, away_legacy_team_id, home_live_team_id, away_live_team_id, home_score, away_score')
+      .eq('league_id', leagueId).order('year', { ascending: false }).order('week'),
+    sb.from('teams').select('id, espn_team_name, team_settings(display_name)').eq('league_id', leagueId),
     sb.from('legacy_teams').select('id, name').eq('league_id', leagueId),
   ]);
   const listEl = document.getElementById('legacyMatchupList');
   if (error) { listEl.textContent = 'Error: ' + error.message; return; }
 
+  // One combined lookup covering both sources -- a matchup row only ever
+  // has ONE of the two id columns set per side, so looking a resolved id
+  // up here works regardless of which table it actually came from.
   const nameById = {};
-  (teams || []).forEach((t) => (nameById[t.id] = t.name));
+  (liveTeams || []).forEach((t) => (nameById[t.id] = (t.team_settings && t.team_settings.display_name) || t.espn_team_name));
+  (legacyTeams || []).forEach((t) => (nameById[t.id] = t.name));
 
   const grouped = {};
   (matchups || []).forEach((m) => {
     const key = `${m.year} — Week ${m.week}`;
     if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(m);
+    grouped[key].push({
+      id: m.id,
+      homeId: m.home_legacy_team_id || m.home_live_team_id,
+      awayId: m.away_legacy_team_id || m.away_live_team_id,
+      home_score: m.home_score, away_score: m.away_score,
+    });
   });
 
   listEl.innerHTML = Object.entries(grouped).map(([label, rows]) => `
     <div class="legacy-matchup-week-group">${label}</div>
     ${rows.map((m) => `
       <div class="legacy-matchup-row" data-matchup-id="${m.id}">
-        <span>${nameById[m.home_team_id] || '?'} ${m.home_score} &ndash; ${m.away_score} ${nameById[m.away_team_id] || '?'}</span>
+        <span>${nameById[m.homeId] || '?'} ${m.home_score} &ndash; ${m.away_score} ${nameById[m.awayId] || '?'}</span>
         <button type="button" class="legacy-remove-btn legacy-remove-matchup-btn">Remove</button>
       </div>
     `).join('')}
