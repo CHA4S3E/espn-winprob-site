@@ -121,10 +121,21 @@ function renderLogoBanner(teamInfo) {
   const chipHtml = (t) => t.logoUrl
     ? `<div class="logo-chip"><img src="${t.logoUrl}" alt=""></div>`
     : `<div class="logo-chip" style="background:${t.color}">${initials(t.name)}</div>`;
-  // Split teams across 3 rows round-robin, duplicated within each row so
-  // the CSS loop (translateX 0 to -50%) has no visible seam.
+  // Each row cycles through ALL teams repeatedly (not a one-time split)
+  // so a row always has enough chips to look full and dense, even with
+  // only a handful of teams in the league -- a strict no-repeat split
+  // would leave a short league's rows sparse with big gaps. Each row
+  // starts at a different offset into the team list so the three rows
+  // don't all show the identical sequence, then each row's full chip
+  // list is duplicated once for the CSS loop (translateX 0 to -50%) to
+  // have no visible seam.
+  const CHIPS_PER_ROW = Math.max(10, teams.length);
   const rows = [[], [], []];
-  teams.forEach((t, i) => rows[i % 3].push(t));
+  for (let rowIdx = 0; rowIdx < 3; rowIdx++) {
+    for (let i = 0; i < CHIPS_PER_ROW; i++) {
+      rows[rowIdx].push(teams[(i + rowIdx) % teams.length]);
+    }
+  }
   rows.forEach((rowTeams, i) => {
     const el = document.getElementById(`logoRow${i + 1}`);
     if (!rowTeams.length) { el.innerHTML = ''; return; }
