@@ -108,7 +108,7 @@
   .section-title { font-family: var(--font-display); font-weight: 400; font-size: 22px; text-align: center; margin: 50px 0 4px; }
   .section-sub { text-align: center; color: var(--muted); font-size: 12.5px; margin-bottom: 22px; }
 
-  #raceChartCard { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-bottom: 10px; }
+  .yir-chart-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-bottom: 10px; }
   /* These style raw SVG generated in JS (race chart gridlines/ticks, the
      crop chart's 50% baseline and marker outlines) -- plain presentation
      attributes baked into the SVG string can't reference CSS variables
@@ -117,7 +117,7 @@
   .yir-race-tick { fill: var(--muted); }
   .yir-chart-baseline { stroke: var(--chart-baseline); }
   .yir-marker-outline { stroke: var(--marker-outline); }
-  #raceLegend { display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: center; margin-top: 12px; font-size: 11.5px; }
+  #raceLegend, #powerLegend { display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: center; margin-top: 12px; font-size: 11.5px; }
   .race-legend-item { display: flex; align-items: center; gap: 5px; }
   .race-legend-swatch { width: 10px; height: 10px; border-radius: 3px; }
 
@@ -178,9 +178,18 @@
     <div id="raceSection">
       <div class="section-title">The Season, Week by Week</div>
       <div class="section-sub">Every team's spot in the standings, tracked all year</div>
-      <div id="raceChartCard">
+      <div class="yir-chart-card">
         <svg id="raceSvg" viewBox="0 0 800 280" preserveAspectRatio="none" style="width:100%;height:280px;overflow:visible"></svg>
         <div id="raceLegend"></div>
+      </div>
+    </div>
+
+    <div id="powerSection">
+      <div class="section-title">Power Rankings, Week by Week</div>
+      <div class="section-sub">Opponent-adjusted, recency-weighted, luck-corrected -- not just win-loss record</div>
+      <div class="yir-chart-card">
+        <svg id="powerSvg" viewBox="0 0 800 280" preserveAspectRatio="none" style="width:100%;height:280px;overflow:visible"></svg>
+        <div id="powerLegend"></div>
       </div>
     </div>
 
