@@ -254,11 +254,14 @@ function renderPeoplesChampion(champion, teamInfo, standings) {
   const el = document.getElementById('peoplesChampionAward');
   if (!champion) { el.innerHTML = ''; return; }
   const team = teamInfo[champion.teamId];
+  const finishText = champion.actualRank === null
+    ? "didn't finish on the podium at all"
+    : `finished ${ordinal(champion.actualRank)}, not 1st`;
   el.innerHTML = `
     <div class="award-card" style="--accent-color:#e0b23d">
       <div class="award-label">👑 The People's Champion</div>
       <div class="award-headline">${teamNameHtml(team)}</div>
-      <div class="award-detail">Scored more total points than anyone in the league this season (${champion.totalPoints.toFixed(1)}) -- but finished ${ordinal(champion.actualRank)}, not 1st. Standings are win-loss, not points. This is who actually had the best team.</div>
+      <div class="award-detail">Scored more total points than anyone in the league this season (${champion.totalPoints.toFixed(1)}) -- but ${finishText}. Standings are win-loss, not points. This is who actually had the best team.</div>
     </div>
   `;
 }
@@ -455,13 +458,32 @@ function computeStandings(rows, teamInfoMap, throughWeek) {
 // to tell), rather than showing a redundant "champion out-scored
 // everyone" card that just restates the podium.
 // ============================================================
-function computePeoplesChampion(standings) {
+// Prefers the ACTUAL champion (from the manually-entered podium, which
+// reflects the real playoff result) over the regular-season standings
+// leader whenever a podium has been set -- these can genuinely differ
+// (regular-season seeding vs. who actually won the bracket), and that
+// difference is the entire reason the manual podium override exists.
+// Falls back to the regular-season leader only when no podium exists yet
+// (a season still in progress, or a legacy year nobody's entered a
+// podium for).
+function computePeoplesChampion(standings, podiumResults) {
   if (!standings.length) return null;
   const byPoints = [...standings].sort((a, b) => b.pointsFor - a.pointsFor);
   const pointsLeader = byPoints[0];
-  const actualLeader = standings[0];
-  if (pointsLeader.teamId === actualLeader.teamId) return null;
-  return { teamId: pointsLeader.teamId, totalPoints: pointsLeader.pointsFor, actualRank: standings.findIndex(s => s.teamId === pointsLeader.teamId) + 1 };
+
+  const podiumFirst = (podiumResults || []).find((r) => r.place === 1);
+  const actualChampionId = podiumFirst ? podiumFirst.team_id : standings[0].teamId;
+  if (pointsLeader.teamId === actualChampionId) return null;
+
+  let actualRank = null; // null means "not shown on the podium at all" when a podium exists
+  if (podiumResults && podiumResults.length) {
+    const theirPodiumEntry = podiumResults.find((r) => r.team_id === pointsLeader.teamId);
+    actualRank = theirPodiumEntry ? theirPodiumEntry.place : null;
+  } else {
+    actualRank = standings.findIndex((s) => s.teamId === pointsLeader.teamId) + 1;
+  }
+
+  return { teamId: pointsLeader.teamId, totalPoints: pointsLeader.pointsFor, actualRank };
 }
 
 // ============================================================
@@ -892,7 +914,7 @@ function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSer
   renderLiteNote(isLite);
   renderLogoBanner(teamInfo);
   renderPodium(standings, teamInfo, podiumResults);
-  renderPeoplesChampion(computePeoplesChampion(standings), teamInfo, standings);
+  renderPeoplesChampion(computePeoplesChampion(standings, podiumResults), teamInfo, standings);
 
   const raceData = computeSeasonRaceData(finalRows, teamInfo, maxWeek);
   drawRaceChart(raceData, teamInfo, maxWeek);
