@@ -11,6 +11,10 @@
   select { padding: 6px 10px; font-size: 14px; margin-bottom: 20px; border-radius: 6px; border: 1px solid #ccc; }
   .team-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
   .legacy-team-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
+  .final-standing-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+  .final-standing-row input[type="number"] { width: 50px; padding: 5px; border: 1px solid #ccc; border-radius: 4px; text-align: center; }
+  .final-standing-row .team-label { flex: 1; }
+  .final-standing-row .team-source-tag { font-size: 10px; color: #999; text-transform: uppercase; }
   .legacy-team-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; }
   .legacy-team-row input[type="color"] { width: 40px; height: 32px; border: 1px solid #ccc; border-radius: 4px; padding: 2px; }
   .legacy-remove-btn { background: #fff; border: 1px solid #a04000; color: #a04000; border-radius: 5px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
@@ -69,20 +73,23 @@
   <div id="teamList"></div>
   <div id="savedNote"></div>
 
-  <h2 style="margin-top:36px">Season Results</h2>
-  <div class="sub">Used by Year in Review, once the season (and any playoffs) are actually decided. Leave blank until then.</div>
+  <h2 style="margin-top:36px">Final Season Standings</h2>
+  <div class="sub">
+    The actual final placement for every team that year, once playoffs are decided -- this can differ from
+    regular-season win-loss order, which is exactly why it's set here rather than computed automatically.
+    Leave a team blank to leave its placement unset. Used for the podium (1st/2nd/3rd), the People's Champion
+    award, and anywhere else Year in Review shows how a team actually finished.
+  </div>
   <div id="seasonResultsPanel">
-    <label style="display:block;margin-bottom:10px">
+    <label style="display:block;margin-bottom:14px">
       Year: <select id="resultsYearSelect"></select>
     </label>
-    <label style="display:block;margin-bottom:6px">🥇 1st place: <select class="podium-select" data-place="1"></select></label>
-    <label style="display:block;margin-bottom:6px">🥈 2nd place: <select class="podium-select" data-place="2"></select></label>
-    <label style="display:block;margin-bottom:14px">🥉 3rd place: <select class="podium-select" data-place="3"></select></label>
-    <label style="display:block;margin-bottom:14px">
-      Playoff spots (how many teams made the playoffs):
+    <div id="finalStandingsList"></div>
+    <label style="display:block;margin:14px 0">
+      Playoff spots (how many teams made the playoffs -- separate from final placement, used for the "So Close" award):
       <input type="number" id="playoffSpotsInput" min="1" max="20" style="width:60px">
     </label>
-    <button id="saveSeasonResultsBtn" type="button">Save Season Results</button>
+    <button id="saveSeasonResultsBtn" type="button">Save Final Standings</button>
   </div>
 
   <a class="back" href="index.html">&larr; Back to charts</a>
