@@ -33,6 +33,7 @@ function updateLockUI() {
   }
   teamList.querySelectorAll('input').forEach((el) => (el.disabled = !unlocked));
   teamList.querySelectorAll('.logo-upload-btn, .logo-remove-btn').forEach((el) => (el.disabled = !unlocked));
+  document.querySelectorAll('#seasonResultsPanel select, #seasonResultsPanel input, #seasonResultsPanel button').forEach((el) => (el.disabled = !unlocked));
 }
 
 unlockBtn.addEventListener('click', () => {
@@ -57,8 +58,8 @@ async function loadLeagues() {
   const { data, error } = await sb.from('leagues').select('id, name').order('name');
   if (error) return;
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
-  leagueSelect.onchange = loadTeams;
-  if (data.length) loadTeams();
+  leagueSelect.onchange = () => { loadTeams(); loadSeasonResultsPanel(); };
+  if (data.length) { loadTeams(); loadSeasonResultsPanel(); }
 }
 
 async function loadTeams() {
@@ -204,5 +205,72 @@ async function saveTeamSettings(teamId, color, displayName) {
   clearTimeout(saveTimeout);
   saveTimeout = setTimeout(() => (savedNote.textContent = ''), 1800);
 }
+
+// ============================================================
+// Season Results panel -- podium + playoff spots, for Year in Review.
+// This has no per-keystroke autosave like the team rows above; it's
+// meant to be filled in once, deliberately, after the season ends.
+// ============================================================
+async function loadSeasonResultsPanel() {
+  const leagueId = leagueSelect.value;
+
+  const { data: years } = await sb.from('snapshots').select('year').eq('league_id', leagueId);
+  const distinctYears = [...new Set((years || []).map((r) => r.year))].sort((a, b) => b - a);
+  const yearSelect = document.getElementById('resultsYearSelect');
+  yearSelect.innerHTML = distinctYears.map((y) => `<option value="${y}">${y}</option>`).join('');
+
+  const { data: teams } = await sb
+    .from('teams')
+    .select('id, espn_team_name, team_settings(display_name)')
+    .eq('league_id', leagueId)
+    .order('espn_team_name');
+  const teamOptions = (teams || [])
+    .map((t) => `<option value="${t.id}">${(t.team_settings && t.team_settings.display_name) || t.espn_team_name}</option>`)
+    .join('');
+  document.querySelectorAll('.podium-select').forEach((sel) => { sel.innerHTML = `<option value="">-- not set --</option>` + teamOptions; });
+
+  yearSelect.onchange = loadSeasonResultsForYear;
+  if (distinctYears.length) await loadSeasonResultsForYear();
+  updateLockUI();
+}
+
+async function loadSeasonResultsForYear() {
+  const leagueId = leagueSelect.value;
+  const year = Number(document.getElementById('resultsYearSelect').value);
+
+  const { data: league } = await sb.from('leagues').select('playoff_spots').eq('id', leagueId).single();
+  document.getElementById('playoffSpotsInput').value = league && league.playoff_spots != null ? league.playoff_spots : '';
+
+  const { data: results } = await sb.from('season_results').select('place, team_id').eq('league_id', leagueId).eq('year', year);
+  document.querySelectorAll('.podium-select').forEach((sel) => {
+    const place = Number(sel.dataset.place);
+    const match = (results || []).find((r) => r.place === place);
+    sel.value = match ? match.team_id : '';
+  });
+}
+
+document.getElementById('saveSeasonResultsBtn').addEventListener('click', async () => {
+  if (!unlocked) return;
+  const leagueId = leagueSelect.value;
+  const year = Number(document.getElementById('resultsYearSelect').value);
+  const playoffSpotsRaw = document.getElementById('playoffSpotsInput').value;
+  const playoffSpots = playoffSpotsRaw === '' ? null : Number(playoffSpotsRaw);
+
+  const podiumRows = [...document.querySelectorAll('.podium-select')]
+    .filter((sel) => sel.value)
+    .map((sel) => ({ league_id: leagueId, year, place: Number(sel.dataset.place), team_id: sel.value }));
+
+  const results = await Promise.all([
+    sb.from('leagues').update({ playoff_spots: playoffSpots }).eq('id', leagueId),
+    podiumRows.length
+      ? sb.from('season_results').upsert(podiumRows, { onConflict: 'league_id,year,place' })
+      : Promise.resolve({ error: null }),
+  ]);
+  const error = results.find((r) => r.error)?.error;
+
+  savedNote.textContent = error ? 'Failed to save: ' + error.message : 'Saved \u2713';
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => (savedNote.textContent = ''), 1800);
+});
 
 loadLeagues();
