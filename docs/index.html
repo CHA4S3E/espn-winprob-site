@@ -496,6 +496,15 @@
     justify-content: center;
     text-align: center;
   }
+  /* Setting `display` on the class above is exactly what breaks the
+     hidden attribute otherwise: the browser's own [hidden] { display:
+     none } rule is equal specificity to a plain class selector, and an
+     author rule at equal specificity always wins over that built-in
+     default regardless of source order -- so without this override, the
+     stage rendered visible any time toggling the `hidden` attribute
+     off/on was the ONLY thing app.js did, i.e. always, whether or not
+     championship week was actually active. */
+  .championship-stage[hidden] { display: none; }
   .championship-stage::before {
     content: '';
     position: absolute;
