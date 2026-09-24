@@ -49,6 +49,13 @@
 
   a.back-link { display: inline-block; margin-top: 8px; font-size: 13px; color: var(--accent); text-decoration: none; }
   a.back-link:hover { text-decoration: underline; }
+
+  /* Visually separated from the ordinary preferences above -- these
+     toggles bypass a real condition rather than just adjusting how
+     something looks, so they get their own labeled section and a dashed
+     border to read as distinct rather than blending into the list. */
+  .debug-heading { margin: 30px 0 4px; font-size: 15px; }
+  .setting-group-debug { border-style: dashed; }
 </style>
 </head>
 <body>
@@ -121,7 +128,10 @@
     </label>
   </div>
 
-  <div class="setting-group">
+  <h2 class="debug-heading">Debug</h2>
+  <div class="sub">These bypass the normal condition each feature waits for, purely so the look can be previewed on demand -- not meant to be left on once you're done looking.</div>
+
+  <div class="setting-group setting-group-debug">
     <div class="setting-title">Year in Review</div>
     <div class="setting-desc">Once week 17 (the last week of the season) is complete, a "Year in Review" button appears at the top of the main page automatically. This lets you see it early, before the season has actually finished.</div>
 
@@ -130,6 +140,19 @@
       <span>
         <div class="option-label">Show Year in Review early (default: off)</div>
         <div class="option-example">Makes the button appear regardless of whether week 17 is done -- useful for previewing it, not meant to be left on all season</div>
+      </span>
+    </label>
+  </div>
+
+  <div class="setting-group setting-group-debug">
+    <div class="setting-title">Championship Week</div>
+    <div class="setting-desc">In week 17, before kickoff, a hero banner with a sweeping spotlight effect appears above the matchups, and cards get reordered/ribboned by playoff stakes (championship game first, then each placement game down the bracket). This forces that treatment on regardless of which week is actually selected.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="debugChampionshipWeek">
+      <span>
+        <div class="option-label">Force Championship Week look (default: off)</div>
+        <div class="option-example">Pregame/live still follows real data for whatever week you're viewing -- pick a week with no scores yet to see the spotlight sweep, or one already underway to see the tier-ordered live cards</div>
       </span>
     </label>
   </div>
@@ -195,6 +218,17 @@
   yirEarlyCheckbox.checked = localStorage.getItem(YIR_EARLY_KEY) === 'true';
   yirEarlyCheckbox.addEventListener('change', () => {
     localStorage.setItem(YIR_EARLY_KEY, yirEarlyCheckbox.checked ? 'true' : 'false');
+  });
+
+  // Defaults OFF -- only 'true' forces the Championship Week hero banner
+  // and tier-ordered/ribboned cards on regardless of which week is
+  // actually selected. Pregame vs. live within that forced view still
+  // reads real score data for whatever week happens to be showing.
+  const CHAMP_DEBUG_KEY = 'winProbDebugChampionshipWeek';
+  const champDebugCheckbox = document.getElementById('debugChampionshipWeek');
+  champDebugCheckbox.checked = localStorage.getItem(CHAMP_DEBUG_KEY) === 'true';
+  champDebugCheckbox.addEventListener('change', () => {
+    localStorage.setItem(CHAMP_DEBUG_KEY, champDebugCheckbox.checked ? 'true' : 'false');
   });
 </script>
 </body>
