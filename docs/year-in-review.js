@@ -96,7 +96,7 @@ async function loadYear(leagueId, year) {
         .select('year, week, matchup_id, team_id, is_home, actual_score, expected_score, win_prob, all_starters_done, ts')
         .eq('league_id', leagueId).eq('year', year).order('ts').range(from, to)
     ),
-    sb.from('season_results').select('place, team_id').eq('league_id', leagueId).eq('year', year),
+    sb.from('season_results').select('place, legacy_team_id, live_team_id').eq('league_id', leagueId).eq('year', year),
     sb.from('leagues').select('playoff_spots').eq('id', leagueId).single(),
   ]);
   if (teamsError) { showEmpty('Could not load team info -- check the console.'); console.error(teamsError); return; }
@@ -182,7 +182,11 @@ async function loadYear(leagueId, year) {
 
   renderEverything({
     year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, isLite,
-    podiumResults: seasonResults || [], playoffSpots: league ? league.playoff_spots : null,
+    // Coalesced here so renderPodium never needs to know which table a
+    // given result's team id actually came from -- same pattern as the
+    // legacy_matchups fix.
+    podiumResults: (seasonResults || []).map((r) => ({ place: r.place, team_id: r.legacy_team_id || r.live_team_id })),
+    playoffSpots: league ? league.playoff_spots : null,
   });
 
   loadingState.style.display = 'none';
