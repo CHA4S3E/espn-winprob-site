@@ -108,6 +108,19 @@
     </label>
   </div>
 
+  <div class="setting-group">
+    <div class="setting-title">Year in Review</div>
+    <div class="setting-desc">Once week 17 (the last week of the season) is complete, a "Year in Review" button appears at the top of the main page automatically. This lets you see it early, before the season has actually finished.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="yearInReviewEarly">
+      <span>
+        <div class="option-label">Show Year in Review early (default: off)</div>
+        <div class="option-example">Makes the button appear regardless of whether week 17 is done -- useful for previewing it, not meant to be left on all season</div>
+      </span>
+    </label>
+  </div>
+
   <a class="back-link" href="index.html">&larr; Back to matchups</a>
 </div>
 
@@ -149,6 +162,15 @@
   motionCheckbox.addEventListener('change', () => {
     localStorage.setItem(MOTION_KEY, motionCheckbox.checked ? 'true' : 'false');
     document.documentElement.toggleAttribute('data-reduce-motion', motionCheckbox.checked);
+  });
+
+  // Defaults OFF -- only 'true' shows the Year in Review button before
+  // the season has actually finished.
+  const YIR_EARLY_KEY = 'winProbYearInReviewEarly';
+  const yirEarlyCheckbox = document.getElementById('yearInReviewEarly');
+  yirEarlyCheckbox.checked = localStorage.getItem(YIR_EARLY_KEY) === 'true';
+  yirEarlyCheckbox.addEventListener('change', () => {
+    localStorage.setItem(YIR_EARLY_KEY, yirEarlyCheckbox.checked ? 'true' : 'false');
   });
 </script>
 </body>
