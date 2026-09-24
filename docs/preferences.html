@@ -157,6 +157,32 @@
     </label>
   </div>
 
+  <div class="setting-group setting-group-debug">
+    <div class="setting-title">Thanksgiving Week</div>
+    <div class="setting-desc">Whichever week actually contains Thanksgiving gets falling leaves in the background, pumpkins and a leaf garland on ESPN/Forecasting cards, and a hint in the kickoff countdown in the days before. This forces that look on for whichever week is currently selected, regardless of the real schedule.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="debugThanksgivingWeek">
+      <span>
+        <div class="option-label">Force Thanksgiving Week look (default: off)</div>
+        <div class="option-example">Overrides Christmas Week below if both are somehow on -- Thanksgiving wins</div>
+      </span>
+    </label>
+  </div>
+
+  <div class="setting-group setting-group-debug">
+    <div class="setting-title">Christmas Week</div>
+    <div class="setting-desc">Whichever week actually contains Christmas gets falling snow in the background and a string-light garland on ESPN/Forecasting cards, colored by each matchup's two teams -- if Upset Watch fires on a card, its lights switch to the alert color and pulse together. This forces that look on for whichever week is currently selected, regardless of the real schedule.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="debugChristmasWeek">
+      <span>
+        <div class="option-label">Force Christmas Week look (default: off)</div>
+        <div class="option-example">Trigger a real Upset Watch on the selected week's data (or use the Championship Week debug view alongside it) to see the lights sync to the alert color</div>
+      </span>
+    </label>
+  </div>
+
   <a class="back-link" href="index.html">&larr; Back to matchups</a>
 </div>
 
@@ -229,6 +255,26 @@
   champDebugCheckbox.checked = localStorage.getItem(CHAMP_DEBUG_KEY) === 'true';
   champDebugCheckbox.addEventListener('change', () => {
     localStorage.setItem(CHAMP_DEBUG_KEY, champDebugCheckbox.checked ? 'true' : 'false');
+  });
+
+  // Defaults OFF -- only 'true' forces the Thanksgiving/Christmas look on
+  // for whichever week is currently selected, regardless of whether that
+  // week's real NFL schedule actually contains the holiday (see
+  // weekIsThanksgiving/weekIsChristmas in app.js for the real check this
+  // bypasses). Same "preview on demand" convention as Championship Week
+  // above.
+  const THANKSGIVING_DEBUG_KEY = 'winProbDebugThanksgivingWeek';
+  const thanksgivingDebugCheckbox = document.getElementById('debugThanksgivingWeek');
+  thanksgivingDebugCheckbox.checked = localStorage.getItem(THANKSGIVING_DEBUG_KEY) === 'true';
+  thanksgivingDebugCheckbox.addEventListener('change', () => {
+    localStorage.setItem(THANKSGIVING_DEBUG_KEY, thanksgivingDebugCheckbox.checked ? 'true' : 'false');
+  });
+
+  const CHRISTMAS_DEBUG_KEY = 'winProbDebugChristmasWeek';
+  const christmasDebugCheckbox = document.getElementById('debugChristmasWeek');
+  christmasDebugCheckbox.checked = localStorage.getItem(CHRISTMAS_DEBUG_KEY) === 'true';
+  christmasDebugCheckbox.addEventListener('change', () => {
+    localStorage.setItem(CHRISTMAS_DEBUG_KEY, christmasDebugCheckbox.checked ? 'true' : 'false');
   });
 </script>
 </body>
