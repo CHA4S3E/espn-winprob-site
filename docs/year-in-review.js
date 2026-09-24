@@ -195,8 +195,8 @@ function drawRaceChart(raceData, teamInfo, maxWeek) {
 
   let svgHtml = '';
   for (let r = 1; r <= numTeams; r++) {
-    svgHtml += `<line x1="${padL}" y1="${y(r)}" x2="${W - padR}" y2="${y(r)}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
-    svgHtml += `<text x="4" y="${y(r) + 4}" font-size="10" fill="#8a8f98">${r}</text>`;
+    svgHtml += `<line x1="${padL}" y1="${y(r)}" x2="${W - padR}" y2="${y(r)}" class="yir-race-gridline" stroke-width="1"/>`;
+    svgHtml += `<text x="4" y="${y(r) + 4}" font-size="10" class="yir-race-tick">${r}</text>`;
   }
   for (const teamId of teamIds) {
     const team = teamInfo[teamId];
@@ -216,6 +216,14 @@ function drawRaceChart(raceData, teamInfo, maxWeek) {
 // happened -- a few polls before the peak through a few polls after the
 // trigger -- rather than the whole game, so the moment is legible
 // without needing to read a multi-hour axis.
+// Crops the win_prob graph to the drama window -- a couple polls before
+// the peak through to the ACTUAL END of the game, not just a few polls
+// past the trigger, so the resolution is visible, not cut off right as
+// the collapse starts. Styled to match the real ESPN card's chart:
+// segment-colored by whichever side is actually ahead at each point
+// (home color above the 50% line, away color below), with a gradient
+// fill down to that same 50% line, rather than one flat-colored line
+// for the whole thing.
 function buildUpsetCropChart(homeWinProbs, episode) {
   const favoritePcts = homeWinProbs.map((v) => (episode.favoriteSide === 'home' ? v : 100 - v));
   const peakIdx = favoritePcts.indexOf(episode.peakFavoritePct);
@@ -224,39 +232,88 @@ function buildUpsetCropChart(homeWinProbs, episode) {
   if (triggerIdx === -1) triggerIdx = favoritePcts.length - 1;
 
   const startIdx = Math.max(0, peakIdx - 2);
-  const endIdx = Math.min(homeWinProbs.length - 1, triggerIdx + 3);
+  const endIdx = homeWinProbs.length - 1; // always run to the actual end of the game, not just past the trigger
   const croppedHome = homeWinProbs.slice(startIdx, endIdx + 1);
   const localPeakIdx = peakIdx - startIdx;
   const localTriggerIdx = triggerIdx - startIdx;
+  const localFinalIdx = croppedHome.length - 1;
 
-  const W = 500, H = 120, padL = 28, padR = 10, padT = 14, padB = 20;
+  const W = 500, H = 140, padL = 28, padR = 10, padT = 16, padB = 20;
   const xPos = (i) => padL + (croppedHome.length > 1 ? (i / (croppedHome.length - 1)) * (W - padL - padR) : (W - padL - padR) / 2);
   const yPos = (v) => padT + ((100 - v) / 100) * (H - padT - padB);
+  const y50 = yPos(50);
 
-  const favoriteColor = episode.favoriteSide === 'home' ? episode.homeColor : episode.awayColor;
-  const upsetColor = episode.upsetSide === 'home' ? episode.homeColor : episode.awayColor;
+  const homeColor = episode.homeColor, awayColor = episode.awayColor;
+  const gradId = `yirGrad${Math.random().toString(36).slice(2, 8)}`; // unique per chart so multiple crops on one page don't share/clobber defs
 
-  const path = croppedHome.map((v, i) => `${xPos(i).toFixed(1)},${yPos(v).toFixed(1)}`).join(' ');
+  // Split into segments colored by whichever side is actually ahead,
+  // interpolating the exact crossing point whenever a segment straddles
+  // the 50% line -- same convention the real ESPN chart uses.
+  const segments = [];
+  for (let i = 0; i < croppedHome.length - 1; i++) {
+    const v1 = croppedHome[i], v2 = croppedHome[i + 1];
+    const side1 = v1 >= 50 ? 'home' : 'away';
+    const side2 = v2 >= 50 ? 'home' : 'away';
+    if (side1 === side2) {
+      segments.push({ x1: i, y1: v1, x2: i + 1, y2: v2, side: side1 });
+    } else {
+      const t = (50 - v1) / (v2 - v1);
+      const crossX = i + t;
+      segments.push({ x1: i, y1: v1, x2: crossX, y2: 50, side: side1 });
+      segments.push({ x1: crossX, y1: 50, x2: i + 1, y2: v2, side: side2 });
+    }
+  }
+
+  const fillPolys = segments.map((s) => {
+    const x1 = xPos(s.x1), y1 = yPos(s.y1), x2 = xPos(s.x2), y2 = yPos(s.y2);
+    const fillId = s.side === 'home' ? `${gradId}Home` : `${gradId}Away`;
+    return `<polygon points="${x1.toFixed(1)},${y1.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y50.toFixed(1)} ${x1.toFixed(1)},${y50.toFixed(1)}" fill="url(#${fillId})"/>`;
+  }).join('');
+
+  const lines = segments.map((s) => {
+    const color = s.side === 'home' ? homeColor : awayColor;
+    return `<line x1="${xPos(s.x1).toFixed(1)}" y1="${yPos(s.y1).toFixed(1)}" x2="${xPos(s.x2).toFixed(1)}" y2="${yPos(s.y2).toFixed(1)}" stroke="${color}" stroke-width="2.5"/>`;
+  }).join('');
+
   let html = `
-    <line x1="${padL}" y1="${yPos(50)}" x2="${W - padR}" y2="${yPos(50)}" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="3,3"/>
-    <polyline points="${path}" fill="none" stroke="${favoriteColor}" stroke-width="2.5"/>
+    <defs>
+      <linearGradient id="${gradId}Home" x1="0" y1="${padT}" x2="0" y2="${y50}" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="${homeColor}" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="${homeColor}" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="${gradId}Away" x1="0" y1="${H - padB}" x2="0" y2="${y50}" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="${awayColor}" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="${awayColor}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    ${fillPolys}
+    <line x1="${padL}" y1="${y50}" x2="${W - padR}" y2="${y50}" class="yir-chart-baseline" stroke-width="1" stroke-dasharray="3,3"/>
+    ${lines}
   `;
+
   if (localPeakIdx >= 0 && localPeakIdx < croppedHome.length) {
+    const peakColor = episode.favoriteSide === 'home' ? homeColor : awayColor;
     html += `
-      <circle cx="${xPos(localPeakIdx)}" cy="${yPos(croppedHome[localPeakIdx])}" r="4" fill="${favoriteColor}"/>
-      <text x="${xPos(localPeakIdx)}" y="${yPos(croppedHome[localPeakIdx]) - 10}" font-size="10" fill="${favoriteColor}" text-anchor="middle">Peak ${episode.peakFavoritePct.toFixed(0)}%</text>
+      <circle cx="${xPos(localPeakIdx)}" cy="${yPos(croppedHome[localPeakIdx])}" r="4" fill="${peakColor}" class="yir-marker-outline" stroke-width="1.5"/>
+      <text x="${xPos(localPeakIdx)}" y="${yPos(croppedHome[localPeakIdx]) - 10}" font-size="10" fill="${peakColor}" text-anchor="middle">Peak ${episode.peakFavoritePct.toFixed(0)}%</text>
     `;
   }
   if (localTriggerIdx >= 0 && localTriggerIdx < croppedHome.length && localTriggerIdx !== localPeakIdx) {
     const triggerFavoritePct = episode.favoriteSide === 'home' ? croppedHome[localTriggerIdx] : 100 - croppedHome[localTriggerIdx];
+    const triggerActualSide = croppedHome[localTriggerIdx] >= 50 ? 'home' : 'away';
+    const triggerColor = triggerActualSide === 'home' ? homeColor : awayColor;
     html += `
-      <circle cx="${xPos(localTriggerIdx)}" cy="${yPos(croppedHome[localTriggerIdx])}" r="4" fill="#ff8a3d"/>
+      <circle cx="${xPos(localTriggerIdx)}" cy="${yPos(croppedHome[localTriggerIdx])}" r="4" fill="#ff8a3d" class="yir-marker-outline" stroke-width="1.5"/>
       <text x="${xPos(localTriggerIdx)}" y="${yPos(croppedHome[localTriggerIdx]) + 16}" font-size="10" fill="#ff8a3d" text-anchor="middle">Triggered ${triggerFavoritePct.toFixed(0)}%</text>
     `;
   }
-  const finalIdx = croppedHome.length - 1;
-  html += `<circle cx="${xPos(finalIdx)}" cy="${yPos(croppedHome[finalIdx])}" r="4" fill="${upsetColor}"/>`;
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:120px;overflow:visible">${html}</svg>`;
+  if (localFinalIdx !== localPeakIdx && localFinalIdx !== localTriggerIdx) {
+    const finalSide = croppedHome[localFinalIdx] >= 50 ? 'home' : 'away';
+    const finalColor = finalSide === 'home' ? homeColor : awayColor;
+    html += `<circle cx="${xPos(localFinalIdx)}" cy="${yPos(croppedHome[localFinalIdx])}" r="4" fill="${finalColor}" class="yir-marker-outline" stroke-width="1.5"/>`;
+  }
+
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:140px;overflow:visible">${html}</svg>`;
 }
 
 // ============================================================
