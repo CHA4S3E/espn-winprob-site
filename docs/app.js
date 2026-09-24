@@ -569,8 +569,9 @@ function applyTierRibbon(card, tierData) {
 // wrong some seasons.
 let debugThanksgivingWeek = localStorage.getItem('winProbDebugThanksgivingWeek') === 'true'; // set on preferences.html
 let debugChristmasWeek = localStorage.getItem('winProbDebugChristmasWeek') === 'true'; // set on preferences.html
-let currentSeasonalTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' -- the CURRENTLY SELECTED week's theme, set once per loadMatchups call, read by the card render/update functions
-let kcHintTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' -- the theme of the week the kickoff countdown is counting down TO (see updateKickoffCountdown), independent of currentSeasonalTheme
+let debugHalloweenWeek = localStorage.getItem('winProbDebugHalloweenWeek') === 'true'; // set on preferences.html
+let currentSeasonalTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' | 'halloween' -- the CURRENTLY SELECTED week's theme, set once per loadMatchups call, read by the card render/update functions
+let kcHintTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' | 'halloween' -- the theme of the week the kickoff countdown is counting down TO (see updateKickoffCountdown), independent of currentSeasonalTheme
 
 // Renders a JS Date as its US-Eastern calendar date (YYYY-MM-DD) -- NFL
 // scheduling's own home timezone. Needed because a Thursday-NIGHT game's
@@ -596,6 +597,10 @@ function thanksgivingDateKey(year) {
 
 function christmasDateKey(year) {
   return `${year}-12-25`;
+}
+
+function halloweenDateKey(year) {
+  return `${year}-10-31`;
 }
 
 // A broader version of fetchWeekStart's cache -- that one only keeps the
@@ -641,11 +646,36 @@ async function weekIsChristmas(year, week) {
   return weekContainsDateKey(year, week, christmasDateKey(year));
 }
 
+// Halloween is NOT reliably an actual NFL game day the way Thanksgiving and
+// Christmas are (both of those always have a game scheduled ON the day
+// itself) -- most seasons nothing is played on Oct 31 at all. So it can't
+// use weekContainsDateKey's "did a game happen on this exact date" check;
+// instead this asks a more general question: does Halloween's calendar
+// date fall WITHIN this week's span, from this week's first kickoff up to
+// (but not including) next week's first kickoff. Anchored at noon UTC on
+// the target date, which safely lands on the same US-Eastern calendar day
+// for every continental US timezone without needing its own DST handling.
+async function weekSpansDateKey(year, week, dateKey) {
+  const start = await fetchWeekStart(year, week);
+  if (!start) return false;
+  const nextStart = await fetchWeekStart(year, week + 1);
+  const target = new Date(`${dateKey}T12:00:00Z`);
+  if (isNaN(target)) return false;
+  if (target < start) return false;
+  if (nextStart && target >= nextStart) return false;
+  return true;
+}
+
+async function weekIsHalloween(year, week) {
+  return weekSpansDateKey(year, week, halloweenDateKey(year));
+}
+
 // The real (non-debug) answer -- used for the kickoff countdown's hint,
 // which should always reflect the actual schedule regardless of whether
 // a debug toggle is forcing the full look on for a different week.
 async function realSeasonalTheme(year, week) {
   try {
+    if (await weekIsHalloween(year, week)) return 'halloween';
     if (await weekIsThanksgiving(year, week)) return 'thanksgiving';
     if (await weekIsChristmas(year, week)) return 'christmas';
   } catch {
@@ -655,13 +685,21 @@ async function realSeasonalTheme(year, week) {
 }
 
 // The debug-overridable answer -- used for the currently selected week's
-// full decor treatment. Thanksgiving wins if both debug toggles are
-// somehow on at once (see the preferences.html copy).
+// full decor treatment. Thanksgiving wins over Christmas, which wins over
+// Halloween, if more than one debug toggle is somehow on at once (see the
+// preferences.html copy).
 async function determineSeasonalTheme(year, week) {
   if (debugThanksgivingWeek) return 'thanksgiving';
   if (debugChristmasWeek) return 'christmas';
+  if (debugHalloweenWeek) return 'halloween';
   return realSeasonalTheme(year, week);
 }
+
+const SEASONAL_HINT_COPY = {
+  thanksgiving: '🦃 Thanksgiving week is almost here',
+  christmas: '🎄 Christmas week is almost here',
+  halloween: '🦇 Halloween week is closing in',
+};
 
 function prefersReducedMotion() {
   return document.documentElement.getAttribute('data-reduce-motion') === 'true'
@@ -670,6 +708,29 @@ function prefersReducedMotion() {
 
 const SEASONAL_LEAF_COLORS = ['#c65d1e', '#d98324', '#8a3b12', '#e0a940', '#9c4a1a', '#b8461f'];
 function seasonalRand(min, max) { return min + Math.random() * (max - min); }
+function seasonalPick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// Bats fly on a completely different model than leaves/snow -- rather than
+// falling, each one patrols left<->right across a fixed altitude band
+// (roughly the top half of the field), reversing direction once it's fully
+// offscreen on either side, with a slow vertical bob layered on top so it
+// reads as flight rather than a straight horizontal slide.
+function makeSeasonalBat(width, height, initial, sizeScale) {
+  const scale = sizeScale == null ? 1 : sizeScale;
+  const dirX = seasonalPick([-1, 1]);
+  return {
+    isBat: true,
+    x: initial ? seasonalRand(0, width) : (dirX === 1 ? -30 * scale : width + 30 * scale),
+    y: seasonalRand(height * 0.06, height * 0.55),
+    dirX,
+    speed: seasonalRand(1.1, 2.3) * scale,
+    size: seasonalRand(24, 34) * scale,
+    bobSpeed: seasonalRand(0.6, 1.3),
+    bobPhase: seasonalRand(0, Math.PI * 2),
+    flapPhase: seasonalRand(0, Math.PI * 2),
+    opacity: seasonalRand(0.82, 1),
+  };
+}
 
 // width/height/sizeScale let one generator serve both the full-page field
 // (large canvas, full-size particles) and the field confined to the
@@ -677,6 +738,7 @@ function seasonalRand(min, max) { return min + Math.random() * (max - min); }
 function makeSeasonalParticle(theme, width, height, initial, sizeScale) {
   const scale = sizeScale == null ? 1 : sizeScale;
   const isLeaf = theme === 'thanksgiving';
+  if (theme === 'halloween') return makeSeasonalBat(width, height, initial, sizeScale);
   return {
     x: seasonalRand(0, width),
     y: initial ? seasonalRand(0, height) : seasonalRand(-40, -10),
@@ -693,7 +755,22 @@ function makeSeasonalParticle(theme, width, height, initial, sizeScale) {
   };
 }
 
+function stepSeasonalBat(p, t, width, height) {
+  p.x += p.dirX * p.speed;
+  p.y += Math.sin(t * 0.001 * p.bobSpeed + p.bobPhase) * 0.4;
+  // Reverses once fully offscreen on either side (rather than teleporting
+  // back to respawn), with a wide margin so the turn happens out of view --
+  // reads as flying back the other way, never a visible snap.
+  const margin = p.size * 2;
+  if (p.x < -margin) { p.dirX = 1; p.x = -margin; }
+  else if (p.x > width + margin) { p.dirX = -1; p.x = width + margin; }
+}
+
 function stepSeasonalParticle(p, theme, t, width, height, sizeScale) {
+  if (p.isBat) {
+    stepSeasonalBat(p, t, width, height);
+    return;
+  }
   p.y += p.speedY;
   p.x += p.speedX + Math.sin(t * 0.001 * p.swaySpeed + p.swayPhase) * (p.swayAmp * 0.01);
   p.rotation += p.rotSpeed;
@@ -743,6 +820,49 @@ function drawSeasonalSnow(targetCtx, p) {
   targetCtx.restore();
 }
 
+// Bat silhouette: two wing lobes around a small body, wing-span breathing
+// with flapPhase so it reads as flapping in flight. Faces the direction
+// it's actually flying (mirrored via dirX) rather than a fixed orientation,
+// with a soft violet glow + a light rim stroke so it stays legible against
+// the page instead of reading as a flat black blob (same reasoning as the
+// light-mode snow color swap above -- readability first).
+function drawSeasonalBat(targetCtx, p, t) {
+  const isLight = theme === 'light';
+  targetCtx.save();
+  targetCtx.translate(p.x, p.y);
+  targetCtx.scale(p.dirX, 1);
+  targetCtx.globalAlpha = p.opacity;
+  // Same reasoning as the light-mode snow color swap: a dark bat silhouette
+  // disappears against a light page, so light mode goes darker/more
+  // saturated on the fill and glow rather than the lighter lavender that
+  // reads fine on the dark theme.
+  targetCtx.shadowColor = isLight ? 'rgba(91, 42, 134, 0.4)' : 'rgba(190, 150, 255, 0.55)';
+  targetCtx.shadowBlur = 10;
+  targetCtx.fillStyle = isLight ? '#241f33' : '#4a3d66';
+  targetCtx.strokeStyle = isLight ? 'rgba(91, 42, 134, 0.55)' : 'rgba(214, 190, 255, 0.6)';
+  targetCtx.lineWidth = 1;
+  const s = p.size;
+  const flap = 0.5 + 0.5 * Math.sin(t * 0.008 + p.flapPhase); // 0..1
+  const wingW = s * (0.85 + flap * 0.55);
+  targetCtx.beginPath();
+  targetCtx.moveTo(0, 0);
+  targetCtx.quadraticCurveTo(-wingW * 0.5, -s * 0.65, -wingW, 0);
+  targetCtx.quadraticCurveTo(-wingW * 0.55, s * 0.18, -wingW * 0.3, -s * 0.05);
+  targetCtx.quadraticCurveTo(-s * 0.15, s * 0.12, 0, 0);
+  targetCtx.quadraticCurveTo(s * 0.15, s * 0.12, wingW * 0.3, -s * 0.05);
+  targetCtx.quadraticCurveTo(wingW * 0.55, s * 0.18, wingW, 0);
+  targetCtx.quadraticCurveTo(wingW * 0.5, -s * 0.65, 0, 0);
+  targetCtx.fill();
+  targetCtx.stroke();
+  targetCtx.restore();
+}
+
+function drawSeasonalParticle(targetCtx, theme, p, t) {
+  if (theme === 'thanksgiving') drawSeasonalLeaf(targetCtx, p);
+  else if (theme === 'halloween') drawSeasonalBat(targetCtx, p, t);
+  else drawSeasonalSnow(targetCtx, p);
+}
+
 // ---- Full-page particle field ----
 const seasonalCanvas = document.getElementById('seasonalParticleCanvas');
 const seasonalCtx = seasonalCanvas ? seasonalCanvas.getContext('2d') : null;
@@ -756,9 +876,12 @@ function resizeSeasonalCanvas() {
 window.addEventListener('resize', resizeSeasonalCanvas);
 resizeSeasonalCanvas();
 
+const SEASONAL_PARTICLE_COUNTS = { thanksgiving: 45, christmas: 90, halloween: 22, none: 0 };
+const SEASONAL_KC_PARTICLE_COUNTS = { thanksgiving: 10, christmas: 16, halloween: 6, none: 0 };
+
 function seedSeasonalParticles() {
   if (!seasonalCanvas) return;
-  const count = currentSeasonalTheme === 'thanksgiving' ? 45 : (currentSeasonalTheme === 'christmas' ? 90 : 0);
+  const count = SEASONAL_PARTICLE_COUNTS[currentSeasonalTheme] || 0;
   seasonalParticles = [];
   for (let i = 0; i < count; i++) {
     seasonalParticles.push(makeSeasonalParticle(currentSeasonalTheme, seasonalCanvas.width, seasonalCanvas.height, true, 1));
@@ -771,7 +894,7 @@ function seasonalTick(t) {
     if (currentSeasonalTheme !== 'none' && !prefersReducedMotion()) {
       for (const p of seasonalParticles) {
         stepSeasonalParticle(p, currentSeasonalTheme, t, seasonalCanvas.width, seasonalCanvas.height, 1);
-        if (currentSeasonalTheme === 'thanksgiving') drawSeasonalLeaf(seasonalCtx, p); else drawSeasonalSnow(seasonalCtx, p);
+        drawSeasonalParticle(seasonalCtx, currentSeasonalTheme, p, t);
       }
     }
   }
@@ -797,7 +920,7 @@ window.addEventListener('resize', resizeKcCanvas);
 function seedKcParticles() {
   resizeKcCanvas();
   if (!kcCanvas) return;
-  const count = kcHintTheme === 'thanksgiving' ? 10 : (kcHintTheme === 'christmas' ? 16 : 0);
+  const count = SEASONAL_KC_PARTICLE_COUNTS[kcHintTheme] || 0;
   kcParticles = [];
   for (let i = 0; i < count; i++) {
     kcParticles.push(makeSeasonalParticle(kcHintTheme, kcCanvas.width, kcCanvas.height, true, 0.5));
@@ -810,7 +933,7 @@ function kcTick(t) {
     if (kcHintTheme !== 'none' && !prefersReducedMotion()) {
       for (const p of kcParticles) {
         stepSeasonalParticle(p, kcHintTheme, t, kcCanvas.width, kcCanvas.height, 0.5);
-        if (kcHintTheme === 'thanksgiving') drawSeasonalLeaf(kcCtx, p); else drawSeasonalSnow(kcCtx, p);
+        drawSeasonalParticle(kcCtx, kcHintTheme, p, t);
       }
     }
   }
@@ -878,6 +1001,21 @@ function buildSeasonalLeafGarland(container) {
   });
 }
 
+// Halloween's version of the same strand -- a pale cobweb wire (tinted via
+// .seasonal-halloween .seasonal-garland-wire path in index.html) with a
+// single spider hanging from each droop instead of a bulb or a leaf.
+function buildSeasonalCobweb(container) {
+  buildSeasonalGarland(container, 6, (el, p, i) => {
+    const spider = document.createElement('div');
+    spider.className = 'seasonal-spider';
+    spider.textContent = '🕷️';
+    spider.style.left = (p.x / 400 * 100) + '%';
+    spider.style.top = (p.y / 30 * 100) + '%';
+    spider.style.animationDelay = (i * 0.35) + 's';
+    el.appendChild(spider);
+  });
+}
+
 // Builds/rebuilds a card's seasonal decor from scratch -- called only when
 // a card is first rendered or the theme/week changes (see loadMatchups).
 // Upset Watch must NEVER call this: an upset firing doesn't redraw the
@@ -888,9 +1026,9 @@ function buildSeasonalLeafGarland(container) {
 // bulb stagger timing and reset the leaf-sway animation, which reads as a
 // flicker/restart for a completely unrelated reason.
 function decorateSeasonalCard(card, theme, home, away) {
-  card.classList.remove('seasonal-thanksgiving', 'seasonal-christmas', 'upset-active');
+  card.classList.remove('seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween', 'upset-active');
   const garland = card.querySelector('.seasonal-garland');
-  if (garland) { garland.innerHTML = ''; garland.classList.remove('upset-lights'); }
+  if (garland) { garland.innerHTML = ''; garland.classList.remove('upset-lights', 'upset-leaves', 'upset-spiders'); }
   if (theme === 'none' || !garland) return;
 
   if (theme === 'thanksgiving') {
@@ -899,19 +1037,28 @@ function decorateSeasonalCard(card, theme, home, away) {
   } else if (theme === 'christmas') {
     card.classList.add('seasonal-christmas');
     buildSeasonalLights(garland, home.color, away.color);
+  } else if (theme === 'halloween') {
+    card.classList.add('seasonal-halloween');
+    buildSeasonalCobweb(garland);
   }
 }
 
 // Toggles the upset-alert look on EXISTING markup only -- the SAME live
 // upset state already computed for the card's own badge/border
-// (getLiveUpsetInfo), not a separate detector. No-ops on Thanksgiving
-// cards (or when there's no seasonal theme at all): there's no
-// Thanksgiving equivalent of Upset Watch lighting.
+// (getLiveUpsetInfo), not a separate detector. Every themed week now has
+// an Upset Watch tie-in (Christmas bulbs, Thanksgiving leaves, Halloween
+// spiders), all sharing the same alert color/cadence so it reads as one
+// alert system rather than a different meaning per holiday. No-ops when
+// there's no seasonal theme at all.
 function applySeasonalUpsetState(card, theme, upsetActive) {
-  if (theme !== 'christmas') return;
   const garland = card.querySelector('.seasonal-garland');
   if (!garland) return;
-  garland.classList.toggle('upset-lights', upsetActive);
+  // The real card's own .upset-watch class + border already handles the
+  // whole-card alert look (see applyUpsetColor) -- this only needs to
+  // touch the garland itself, whichever decoration it's currently showing.
+  if (theme === 'christmas') garland.classList.toggle('upset-lights', upsetActive);
+  else if (theme === 'thanksgiving') garland.classList.toggle('upset-leaves', upsetActive);
+  else if (theme === 'halloween') garland.classList.toggle('upset-spiders', upsetActive);
 }
 
 // Checks whether week 17 of the LATEST year (yearSelect.value, already
@@ -1913,7 +2060,7 @@ function tickKickoffCountdown() {
   if (!el) return;
   if (!kickoffCountdownTarget) {
     el.hidden = true;
-    el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas');
+    el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween');
     return;
   }
   const remaining = kickoffCountdownTarget.getTime() - Date.now();
@@ -1924,7 +2071,7 @@ function tickKickoffCountdown() {
     kickoffCountdownTarget = null;
     kcHintTheme = 'none'; // stops the mini particle field too, not just the label
     el.hidden = true;
-    el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas');
+    el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween');
     return;
   }
   // Sets the label/time child elements' text directly rather than
@@ -1962,17 +2109,15 @@ function tickKickoffCountdown() {
   // (tint + one-line hint text); the actual particle preview inside this
   // box is driven by its own independent kcTick loop reading the same
   // kcHintTheme variable, not by this function.
-  el.classList.remove('seasonal-thanksgiving', 'seasonal-christmas');
+  el.classList.remove('seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween');
   const seasonalHintEl = document.getElementById('kickoffSeasonalHint');
   if (kcHintTheme === 'none') {
     if (seasonalHintEl) seasonalHintEl.hidden = true;
   } else {
-    el.classList.add(kcHintTheme === 'thanksgiving' ? 'seasonal-thanksgiving' : 'seasonal-christmas');
+    el.classList.add(`seasonal-${kcHintTheme}`);
     if (seasonalHintEl) {
       seasonalHintEl.hidden = false;
-      seasonalHintEl.textContent = kcHintTheme === 'thanksgiving'
-        ? '🦃 Thanksgiving week is almost here'
-        : '🎄 Christmas week is almost here';
+      seasonalHintEl.textContent = SEASONAL_HINT_COPY[kcHintTheme] || '';
     }
   }
 }
@@ -2697,6 +2842,8 @@ function renderNeedleCard(rows, home, away, allDone) {
   card.innerHTML = `
     <div class="pumpkin-corner left">\ud83c\udf83</div>
     <div class="pumpkin-corner right">\ud83c\udf83</div>
+    <div class="ghost-corner left">\ud83d\udc7b</div>
+    <div class="ghost-corner right">\ud83d\udc7b</div>
     <div class="seasonal-garland"></div>
     <div class="tier-ribbon" hidden></div>
     <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
@@ -2956,6 +3103,8 @@ function renderEspnCard(rows, home, away, allDone) {
   card.innerHTML = `
     <div class="pumpkin-corner left">\ud83c\udf83</div>
     <div class="pumpkin-corner right">\ud83c\udf83</div>
+    <div class="ghost-corner left">\ud83d\udc7b</div>
+    <div class="ghost-corner right">\ud83d\udc7b</div>
     <div class="seasonal-garland"></div>
     <div class="tier-ribbon" hidden></div>
     <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
