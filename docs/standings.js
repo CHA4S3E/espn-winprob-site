@@ -11,6 +11,27 @@ if (!window.SUPABASE_CONFIG) {
 const { url, anonKey } = window.SUPABASE_CONFIG;
 const sb = window.supabase.createClient(url, anonKey);
 
+// Supabase's default 1000-row cap on unpaginated queries -- ported from
+// year-in-review.js, which solved this same problem first. Needed here now
+// that Power Rankings' luck-adjustment term requires each matchup's EARLY
+// (pregame) win_prob polls, not just the final all_starters_done=true row
+// the win-loss table alone would need -- so the query below can no longer
+// filter down to just-the-finals server-side.
+const PAGE_SIZE = 1000;
+async function fetchAllRows(buildQuery) {
+  let all = [];
+  let from = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data, error } = await buildQuery(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return all;
+}
+
 function showError(headline, detail) {
   console.error(headline, detail);
   const loadingEl = document.getElementById('loadingState');
@@ -102,6 +123,210 @@ function computeStandings(rows, teamInfoMap, throughWeek) {
 }
 
 // ============================================================
+// Power Rankings
+//
+// A "Power Score" (0-100) per team, built in layers rather than as one
+// flat formula:
+//   1. Opponent-adjusted scoring power via a weighted Simple Rating
+//      System (SRS) -- each team's rating is solved so that, across every
+//      game played, ratingA - ratingB approximates the actual margin.
+//      Solved iteratively (Gauss-Seidel-style) rather than via a matrix
+//      library: each team's rating converges to the weighted average,
+//      across its own games, of (its margin + its opponent's current
+//      rating), which converges to the same answer a full least-squares
+//      solve would for this problem structure.
+//   2. Recency weighting baked directly into that same regression --
+//      each game's weight decays the older it gets (relative to whatever
+//      week is being viewed), so early-season blowouts don't carry the
+//      same weight forever.
+//   3. Bayesian shrinkage toward the league-average rating, weighted by
+//      each team's EFFECTIVE sample size (the sum of its games' recency
+//      weights, not a raw count) -- keeps a 2-0 start from reading as an
+//      all-time juggernaut before it's earned a real sample.
+//   4. A luck adjustment using the win-prob model this site already runs:
+//      actual wins minus each matchup's PREGAME win_prob (its earliest
+//      recorded poll) -- a team running well ahead of what the model gave
+//      them gets nudged down slightly, and vice versa. This term is
+//      skipped entirely (contributes 0) wherever pregame win_prob isn't
+//      available, same graceful-degrade convention every other win_prob-
+//      dependent stat on this site already follows.
+//   5. Uncertainty that shrinks with effective sample size, and a final
+//      normalization to 0-100 via the exact same normal CDF the win-
+//      probability engine itself uses (see normalCdf in winProb.js) --
+//      so a "Power Score" reads on the same statistical footing as every
+//      percentage already shown elsewhere on this site.
+// ============================================================
+
+// Same corrected Abramowitz & Stegun erf approximation as winProb.js --
+// duplicated rather than shared, same as every other cross-file utility on
+// this standalone page (see themedColor above).
+function normalCdf(z) {
+  const sign = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * x);
+  const y =
+    1 -
+    (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) *
+      t *
+      Math.exp(-x * x);
+  const erf = sign * y;
+  return 0.5 * (1 + erf);
+}
+
+// Earliest recorded win_prob per (week, matchup_id, team_id) -- the
+// closest thing to "what the model thought before this game" available
+// from the data actually being polled, since nothing marks a specific poll
+// as pregame. Returns a Map keyed `${year}|${week}|${matchup_id}|${team_id}`
+// -- year matters here the same way it does in computeStandings' own keys
+// above: matchup_id is only unique WITHIN a season, so a league with
+// multiple years of history would otherwise silently merge, say, 2024's
+// week 3 matchup 2 with 2025's week 3 matchup 2 as if they were one game.
+function extractPregameWinProb(rows) {
+  const earliest = new Map();
+  for (const r of rows) {
+    if (r.win_prob == null) continue;
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const existing = earliest.get(key);
+    if (!existing || new Date(r.ts) < new Date(existing.ts)) earliest.set(key, r);
+  }
+  const result = new Map();
+  for (const [key, r] of earliest) result.set(key, r.win_prob);
+  return result;
+}
+
+// rows: raw (unfiltered) snapshot rows -- same shape computeStandings
+//   takes; this does its own latest-per-key + all_starters_done filtering.
+// teamIds: every team that should appear in the output, even ones with
+//   zero games so far this season (they'll just sit at the shrunk prior).
+// pregameWinProbByKey: result of extractPregameWinProb, or null/undefined
+//   to skip the luck term entirely (e.g. no win_prob tracked at all).
+// throughWeek: only consider games at or before this week; null = whole
+//   season so far.
+function computePowerRatings(rows, teamIds, pregameWinProbByKey, throughWeek, opts) {
+  const decay = (opts && opts.decay) ?? 0.85;
+  const priorK = (opts && opts.priorK) ?? 3;
+  const luckLambda = (opts && opts.luckLambda) ?? 0.15;
+  const DEFAULT_STDDEV = 21; // same per-team score stddev winProb.js's model uses
+
+  const latestByKey = new Map();
+  for (const r of rows) {
+    if (throughWeek != null && r.week > throughWeek) continue;
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const existing = latestByKey.get(key);
+    if (!existing || new Date(r.ts) > new Date(existing.ts)) latestByKey.set(key, r);
+  }
+  const matchupGroups = new Map();
+  for (const r of latestByKey.values()) {
+    const mKey = `${r.year}|${r.week}|${r.matchup_id}`;
+    if (!matchupGroups.has(mKey)) matchupGroups.set(mKey, []);
+    matchupGroups.get(mKey).push(r);
+  }
+
+  const maxSeenWeek = throughWeek != null ? throughWeek : rows.reduce((m, r) => Math.max(m, r.week), 0);
+  const games = []; // { teamA, teamB, margin (A - B), weight }
+  const finishedPairs = []; // matchup groups that actually went final, for the luck term below
+  for (const sides of matchupGroups.values()) {
+    if (sides.length !== 2) continue;
+    const [a, b] = sides;
+    if (!a.all_starters_done || !b.all_starters_done) continue;
+    const age = maxSeenWeek - a.week;
+    const weight = Math.pow(decay, Math.max(0, age));
+    games.push({ teamA: a.team_id, teamB: b.team_id, margin: a.actual_score - b.actual_score, weight });
+    finishedPairs.push([a, b]);
+  }
+
+  const result = new Map();
+  if (!games.length) {
+    for (const id of teamIds) result.set(id, { score: 50, rating: 0, stdErr: DEFAULT_STDDEV * Math.SQRT2, gamesPlayed: 0 });
+    return result;
+  }
+
+  // Iterative weighted SRS solve.
+  const ratings = new Map(teamIds.map((id) => [id, 0]));
+  const gamesByTeam = new Map(teamIds.map((id) => [id, []]));
+  for (const g of games) {
+    if (gamesByTeam.has(g.teamA)) gamesByTeam.get(g.teamA).push({ opp: g.teamB, margin: g.margin, weight: g.weight });
+    if (gamesByTeam.has(g.teamB)) gamesByTeam.get(g.teamB).push({ opp: g.teamA, margin: -g.margin, weight: g.weight });
+  }
+  for (let iter = 0; iter < 100; iter++) {
+    let maxDelta = 0;
+    for (const id of teamIds) {
+      const gs = gamesByTeam.get(id);
+      if (!gs || !gs.length) continue;
+      let num = 0, den = 0;
+      for (const g of gs) { num += g.weight * (g.margin + ratings.get(g.opp)); den += g.weight; }
+      const next = den ? num / den : 0;
+      maxDelta = Math.max(maxDelta, Math.abs(next - ratings.get(id)));
+      ratings.set(id, next);
+    }
+    if (maxDelta < 0.0005) break;
+  }
+  // Ratings are only meaningful as differences -- center to mean 0 so the
+  // otherwise-arbitrary additive constant lands somewhere legible.
+  const ratingVals = [...ratings.values()];
+  const meanRating = ratingVals.reduce((s, v) => s + v, 0) / (ratingVals.length || 1);
+  for (const id of teamIds) ratings.set(id, ratings.get(id) - meanRating);
+
+  // Bayesian shrinkage, weighted by effective (recency-decayed) sample size.
+  const effN = new Map(teamIds.map((id) => [id, 0]));
+  for (const g of games) {
+    if (effN.has(g.teamA)) effN.set(g.teamA, effN.get(g.teamA) + g.weight);
+    if (effN.has(g.teamB)) effN.set(g.teamB, effN.get(g.teamB) + g.weight);
+  }
+  const shrunk = new Map();
+  for (const id of teamIds) {
+    const n = effN.get(id) || 0;
+    shrunk.set(id, (n / (n + priorK)) * ratings.get(id));
+  }
+
+  // Luck adjustment (skipped entirely, contributing 0, when no pregame
+  // win_prob data is available at all).
+  const luck = new Map(teamIds.map((id) => [id, 0]));
+  if (pregameWinProbByKey) {
+    const winsExpected = new Map(teamIds.map((id) => [id, 0]));
+    const winsActual = new Map(teamIds.map((id) => [id, 0]));
+    for (const [a, b] of finishedPairs) {
+      for (const side of [a, b]) {
+        const pregame = pregameWinProbByKey.get(`${side.year}|${side.week}|${side.matchup_id}|${side.team_id}`);
+        if (pregame != null && winsExpected.has(side.team_id)) {
+          winsExpected.set(side.team_id, winsExpected.get(side.team_id) + pregame / 100);
+        }
+      }
+      if (a.actual_score > b.actual_score) { if (winsActual.has(a.team_id)) winsActual.set(a.team_id, winsActual.get(a.team_id) + 1); }
+      else if (b.actual_score > a.actual_score) { if (winsActual.has(b.team_id)) winsActual.set(b.team_id, winsActual.get(b.team_id) + 1); }
+      else {
+        if (winsActual.has(a.team_id)) winsActual.set(a.team_id, winsActual.get(a.team_id) + 0.5);
+        if (winsActual.has(b.team_id)) winsActual.set(b.team_id, winsActual.get(b.team_id) + 0.5);
+      }
+    }
+    for (const id of teamIds) luck.set(id, luckLambda * ((winsActual.get(id) || 0) - (winsExpected.get(id) || 0)));
+  }
+
+  const adjusted = new Map();
+  for (const id of teamIds) adjusted.set(id, shrunk.get(id) + luck.get(id));
+
+  // Standard error shrinks with effective sample size -- reported
+  // alongside the score rather than folded into it.
+  const stdErr = new Map();
+  for (const id of teamIds) {
+    const n = effN.get(id) || 0;
+    stdErr.set(id, n > 0 ? (DEFAULT_STDDEV * Math.SQRT2) / Math.sqrt(n) : DEFAULT_STDDEV * Math.SQRT2);
+  }
+
+  // Normalize to 0-100 via the standard normal CDF.
+  const adjVals = [...adjusted.values()];
+  const meanAdj = adjVals.reduce((s, v) => s + v, 0) / (adjVals.length || 1);
+  const variance = adjVals.reduce((s, v) => s + (v - meanAdj) ** 2, 0) / (adjVals.length || 1);
+  const stdAdj = Math.sqrt(variance) || 1;
+
+  for (const id of teamIds) {
+    const z = (adjusted.get(id) - meanAdj) / stdAdj;
+    result.set(id, { score: 100 * normalCdf(z), rating: adjusted.get(id), stdErr: stdErr.get(id), gamesPlayed: effN.get(id) || 0 });
+  }
+  return result;
+}
+
+// ============================================================
 // Data loading
 // ============================================================
 async function loadLeagues() {
@@ -117,22 +342,23 @@ async function loadLeagueData(leagueId) {
   standingsTable.style.display = 'none';
   emptyState.style.display = 'none';
 
-  // Only ever need rows where a matchup actually went final -- this is a
-  // small fraction of total polls (most polls during a live game have
-  // all_starters_done=false), and filtering here avoids Supabase's
-  // default 1000-row cap on unpaginated queries, which an unfiltered
-  // query against a full season's worth of ~1-minute polling could
-  // realistically exceed, silently truncating the result to an arbitrary
-  // subset that might not include any final rows at all.
-  const [{ data: teams, error: teamsError }, { data: snapshots, error: snapshotsError }] = await Promise.all([
-    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId),
-    sb.from('snapshots')
-      .select('year, week, matchup_id, team_id, actual_score, all_starters_done, ts')
-      .eq('league_id', leagueId)
-      .eq('all_starters_done', true),
-  ]);
-  if (teamsError || snapshotsError) { showError('Could not load standings data', teamsError || snapshotsError); return; }
-  console.log(`Loaded ${teams.length} teams and ${snapshots.length} final-matchup snapshot rows for this league.`);
+  // Needs BOTH the final (all_starters_done=true) row of every matchup,
+  // for the win-loss table, AND each matchup's earliest poll, for Power
+  // Rankings' luck-adjustment term (see computePowerRatings) -- so this can
+  // no longer filter down to just-the-finals server-side the way it used
+  // to. fetchAllRows paginates around Supabase's 1000-row cap instead.
+  let teams, snapshots;
+  try {
+    [teams, snapshots] = await Promise.all([
+      sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId).then(({ data, error }) => { if (error) throw error; return data; }),
+      fetchAllRows((from, to) =>
+        sb.from('snapshots')
+          .select('year, week, matchup_id, team_id, actual_score, win_prob, all_starters_done, ts')
+          .eq('league_id', leagueId).order('ts').range(from, to)
+      ),
+    ]);
+  } catch (err) { showError('Could not load standings data', err); return; }
+  console.log(`Loaded ${teams.length} teams and ${snapshots.length} total snapshot rows for this league.`);
 
   teamInfo = {};
   for (const t of teams) {
@@ -284,6 +510,57 @@ function render() {
   }).join('');
 
   standingsTable.innerHTML = header + rows;
+
+  renderPowerRankings(standings, throughWeek);
+}
+
+// Only computed/rendered once the win-loss table above has something to
+// show -- render() already returns early (showing emptyState) before this
+// would ever get called with zero completed matchups. Takes the SAME
+// `standings` array just rendered above (rather than every team.js knows
+// about) so a team with no completed games yet -- which the win-loss table
+// above already leaves out entirely, rather than showing an empty 0-0 row
+// -- doesn't show up here either, sitting at an uninformative default
+// "50.0, Low confidence" forever.
+function renderPowerRankings(standings, throughWeek) {
+  const powerTable = document.getElementById('powerRankingsTable');
+  if (!powerTable) return; // standings.html not yet updated with the section -- degrade quietly
+  const teamIds = standings.map((s) => s.teamId);
+  const pregameMap = extractPregameWinProb(allRows);
+  const ratings = computePowerRatings(allRows, teamIds, pregameMap, throughWeek);
+
+  const ranked = teamIds
+    .map((id) => ({ teamId: id, team: teamInfo[id], ...ratings.get(id) }))
+    .sort((a, b) => b.score - a.score);
+
+  const header = `
+    <div class="standings-header power-header">
+      <span></span>
+      <span>Team</span>
+      <span style="text-align:right">Power Score</span>
+    </div>
+  `;
+  const rows = ranked.map((r, i) => `
+    <div class="standings-row power-row" style="--team-color:${r.team.color}">
+      <div class="col-rank">${i + 1}</div>
+      <div class="col-team"><span class="team-name">${renderTeamIcon(r.team)}${r.team.name}</span></div>
+      <div class="col-power">${r.score.toFixed(1)}<span class="power-confidence">${confidenceLabel(r.gamesPlayed)}</span></div>
+    </div>
+  `).join('');
+  powerTable.innerHTML = header + rows;
+}
+
+// A team's rating uncertainty (stdErr, computed alongside the score)
+// shrinks monotonically with effective games played -- rather than
+// showing a raw "±" number in a completely different unit than the 0-100
+// score itself (confusing without real payoff), this reports the same
+// underlying signal as a plain-language confidence label instead, same
+// spirit as the "why is this the number" confidence badges elsewhere on
+// this site.
+function confidenceLabel(effectiveGamesPlayed) {
+  if (effectiveGamesPlayed < 2) return 'Low confidence (early season)';
+  if (effectiveGamesPlayed < 5) return 'Medium confidence';
+  return 'High confidence';
 }
 
 leagueSelect.addEventListener('change', () => loadLeagueData(leagueSelect.value));
