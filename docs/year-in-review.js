@@ -120,18 +120,46 @@ async function loadYear(leagueId, year) {
     }
   } else {
     // No real tracking data for this year at all -- fall back to
-    // manually-entered legacy results, if any exist.
+    // manually-entered legacy results, if any exist. Each side of a
+    // legacy matchup can be EITHER a still-active team (home_live_team_id,
+    // pointing at the same `teams` table already queried above) or a
+    // defunct one (home_legacy_team_id) -- coalesced into a single
+    // team_id per side right here, so buildLegacyFinalRows and
+    // everything downstream never needs to know or care which table a
+    // given team actually came from.
     const [{ data: legacyMatchups, error: legacyMatchupsError }, { data: legacyTeams, error: legacyTeamsError }] = await Promise.all([
-      sb.from('legacy_matchups').select('id, week, home_team_id, away_team_id, home_score, away_score').eq('league_id', leagueId).eq('year', year),
+      sb.from('legacy_matchups')
+        .select('id, week, home_legacy_team_id, away_legacy_team_id, home_live_team_id, away_live_team_id, home_score, away_score')
+        .eq('league_id', leagueId).eq('year', year),
       sb.from('legacy_teams').select('id, name, color, logo_url, emoji').eq('league_id', leagueId),
     ]);
     if (legacyMatchupsError || legacyTeamsError) { showEmpty('Could not load historical season data -- check the console.'); console.error(legacyMatchupsError, legacyTeamsError); return; }
     if (!legacyMatchups || !legacyMatchups.length) { showEmpty(`No data yet for ${year} -- check back once games have been played.`); return; }
 
     isLite = true;
-    finalRows = buildLegacyFinalRows(legacyMatchups.map((m) => ({ ...m, year })));
+    const coalescedMatchups = legacyMatchups.map((m) => ({
+      id: m.id, year, week: m.week,
+      home_team_id: m.home_legacy_team_id || m.home_live_team_id,
+      away_team_id: m.away_legacy_team_id || m.away_live_team_id,
+      home_score: m.home_score, away_score: m.away_score,
+    }));
+    finalRows = buildLegacyFinalRows(coalescedMatchups);
     matchupTimeSeries = []; // no poll history exists for legacy years -- win_prob-dependent stats correctly find nothing and skip themselves
+
+    // Merge BOTH sources into one lookup -- a legacy matchup can reference
+    // either, so team info needs to resolve regardless of which table the
+    // id actually lives in. liveTeams was already fetched above for the
+    // normal path; reused here rather than queried a second time.
     teamInfoSource = {};
+    for (const t of liveTeams) {
+      const settings = t.team_settings || {};
+      teamInfoSource[t.id] = {
+        name: settings.display_name || t.espn_team_name,
+        color: settings.color || '#888888',
+        emoji: settings.emoji || '',
+        logoUrl: settings.logo_url || '',
+      };
+    }
     for (const t of legacyTeams || []) {
       teamInfoSource[t.id] = { name: t.name, color: t.color || '#888888', emoji: t.emoji || '', logoUrl: t.logo_url || '' };
     }
