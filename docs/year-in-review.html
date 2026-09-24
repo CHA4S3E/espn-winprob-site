@@ -3,19 +3,41 @@
 <head>
 <meta charset="utf-8">
 <title>Year in Review — Fantasy Win Probability Tracker</title>
-<meta name="theme-color" content="#101216" id="themeColorMeta">
+<meta name="theme-color" content="#ffffff" id="themeColorMeta">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // Same anti-flash pattern as every other page on this site -- read the
+  // site-wide theme choice before first paint, so this page doesn't
+  // flash the wrong theme while year-in-review.js is still starting up,
+  // and actually MATCHES whatever the person has chosen elsewhere on the
+  // site rather than being permanently one theme regardless of that
+  // choice.
+  const initialTheme =
+    localStorage.getItem('winProbTheme') ||
+    (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', initialTheme);
+  document.getElementById('themeColorMeta').setAttribute('content', initialTheme === 'dark' ? '#101216' : '#ffffff');
+</script>
 <style>
   :root {
-    --bg: #101216; --fg: #eaeaea; --muted: #8a8f98; --border: #2a2d34;
-    --card-bg: #1c1f26; --input-bg: #21242c; --input-border: #3a3d44; --accent: #3a67df;
+    --bg: #ffffff; --fg: #222222; --muted: #888888; --border: #eeeeee;
+    --card-bg: #ffffff; --input-bg: #fafafa; --input-border: #cccccc; --accent: #1a3fa0;
     --gold: #e0b23d; --silver: #b8bec7; --bronze: #c17a4a;
-    --win: #4fbd82; --loss: #e0574a;
+    --win: #2e8b57; --loss: #c0392b;
+    --hero-overlay-a: rgba(16,18,22,0.5); --hero-overlay-b: rgba(16,18,22,0.96);
+    --chart-gridline: rgba(0,0,0,0.08); --chart-baseline: rgba(0,0,0,0.2); --marker-outline: #ffffff;
     --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
     --font-body: 'Inter', -apple-system, Arial, sans-serif;
+  }
+  html[data-theme="dark"] {
+    --bg: #14161a; --fg: #e8e8e8; --muted: #9aa0a6; --border: #2a2d33;
+    --card-bg: #1c1f24; --input-bg: #20232a; --input-border: #3a3d44; --accent: #3a67df;
+    --win: #4fbd82; --loss: #e0574a;
+    --hero-overlay-a: rgba(16,18,22,0.5); --hero-overlay-b: rgba(16,18,22,0.96);
+    --chart-gridline: rgba(255,255,255,0.08); --chart-baseline: rgba(255,255,255,0.2); --marker-outline: #14161a;
   }
   * { box-sizing: border-box; }
   body {
@@ -55,9 +77,12 @@
   #heroContent {
     position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column;
     align-items: center; justify-content: center; text-align: center;
-    background: linear-gradient(180deg, rgba(16,18,22,0.5), rgba(16,18,22,0.96) 65%);
+    background: linear-gradient(180deg, var(--hero-overlay-a), var(--hero-overlay-b) 65%);
+    color: #eaeaea; /* fixed, not var(--fg) -- the hero stays dark/dramatic regardless of
+                        the page's own light/dark theme, so its text can't follow --fg,
+                        which flips to dark text in light mode and would be invisible here */
   }
-  #heroContent .year { font-family: var(--font-display); font-weight: 400; font-size: 15px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  #heroContent .year { font-family: var(--font-display); font-weight: 400; font-size: 15px; color: #9aa0a6; letter-spacing: 0.08em; text-transform: uppercase; }
   #heroContent h1 { font-family: var(--font-display); font-weight: 400; font-size: 42px; margin: 4px 0 0; }
 
   #podium { display: flex; align-items: flex-end; justify-content: center; gap: 14px; margin: 10px 0 50px; }
@@ -78,6 +103,14 @@
   .section-sub { text-align: center; color: var(--muted); font-size: 12.5px; margin-bottom: 22px; }
 
   #raceChartCard { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-bottom: 10px; }
+  /* These style raw SVG generated in JS (race chart gridlines/ticks, the
+     crop chart's 50% baseline and marker outlines) -- plain presentation
+     attributes baked into the SVG string can't reference CSS variables
+     directly, so those elements carry these classes instead, which CAN. */
+  .yir-race-gridline { stroke: var(--chart-gridline); }
+  .yir-race-tick { fill: var(--muted); }
+  .yir-chart-baseline { stroke: var(--chart-baseline); }
+  .yir-marker-outline { stroke: var(--marker-outline); }
   #raceLegend { display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: center; margin-top: 12px; font-size: 11.5px; }
   .race-legend-item { display: flex; align-items: center; gap: 5px; }
   .race-legend-swatch { width: 10px; height: 10px; border-radius: 3px; }
