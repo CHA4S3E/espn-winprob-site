@@ -60,6 +60,23 @@
   <select id="leagueSelect"></select>
   <div id="teamList"></div>
   <div id="savedNote"></div>
+
+  <h2 style="margin-top:36px">Season Results</h2>
+  <div class="sub">Used by Year in Review, once the season (and any playoffs) are actually decided. Leave blank until then.</div>
+  <div id="seasonResultsPanel">
+    <label style="display:block;margin-bottom:10px">
+      Year: <select id="resultsYearSelect"></select>
+    </label>
+    <label style="display:block;margin-bottom:6px">🥇 1st place: <select class="podium-select" data-place="1"></select></label>
+    <label style="display:block;margin-bottom:6px">🥈 2nd place: <select class="podium-select" data-place="2"></select></label>
+    <label style="display:block;margin-bottom:14px">🥉 3rd place: <select class="podium-select" data-place="3"></select></label>
+    <label style="display:block;margin-bottom:14px">
+      Playoff spots (how many teams made the playoffs):
+      <input type="number" id="playoffSpotsInput" min="1" max="20" style="width:60px">
+    </label>
+    <button id="saveSeasonResultsBtn" type="button">Save Season Results</button>
+  </div>
+
   <a class="back" href="index.html">&larr; Back to charts</a>
 
 <script src="config.js"></script>
