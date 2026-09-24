@@ -146,6 +146,23 @@
   ::-moz-selection { background: var(--accent); color: #fff; }
 
   body { font-family: var(--font-body); background: var(--bg); margin: 0; padding: 30px; color: var(--fg); transition: background 0.2s, color 0.2s; }
+
+  /* Full-page seasonal particle field (falling leaves / falling snow) --
+     fixed so it covers the viewport regardless of scroll position, and
+     sits behind every other element via z-index while still painting
+     above the plain page background. pointer-events:none so it never
+     intercepts clicks/hovers on anything underneath. Only animates while
+     currentSeasonalTheme (app.js) is set -- see loadMatchups (which sets
+     it from the real NFL schedule, or a debug toggle) and seasonalTick
+     (the draw loop itself, including the reduced-motion check that stops
+     it entirely). */
+  #seasonalParticleCanvas {
+    position: fixed; inset: 0; width: 100vw; height: 100vh;
+    z-index: 0; pointer-events: none;
+  }
+  /* #wrap already sets position:relative + z-index:1 further down (see
+     its main rule) which is enough to keep it painting above this fixed
+     z-index:0 canvas -- no extra rule needed here. */
   /* Canvases default to display:inline, which reserves a few pixels of
      invisible "descender" space below them (same as an inline image) --
      any small reflow nearby (like percentage text changing width on hover)
@@ -241,15 +258,46 @@
      see updateKickoffCountdown in app.js. Hidden the rest of the time,
      including while browsing older weeks via the dropdowns. */
   #kickoffCountdown {
+    position: relative;
     text-align: center; font-family: var(--font-display); font-weight: 400;
     font-size: var(--text-xl); color: var(--accent); margin: 0 auto 20px; max-width: 400px;
     padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg);
-    font-variant-numeric: tabular-nums; transition: font-size 0.4s ease;
+    font-variant-numeric: tabular-nums; transition: font-size 0.4s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+    overflow: hidden;
+  }
+  /* Confined to the box (overflow:hidden above clips it to the rounded
+     corners) -- a small seasonal particle field, separate from the
+     full-page #seasonalParticleCanvas, so the countdown itself feels
+     themed even in the days-before hint window, before the full-page
+     effect and card decor are showing at all. See updateSeasonalHint in
+     app.js. Sits behind the text via z-index. */
+  #kickoffCountdown .cd-particle-canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0;
+  }
+  #kickoffCountdown .kickoff-label,
+  #kickoffCountdown .kickoff-time,
+  #kickoffCountdown .kickoff-seasonal-hint {
+    position: relative; z-index: 1;
   }
   #kickoffCountdown .kickoff-label {
     display: block; font-family: var(--font-body); font-size: 10px;
     text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px;
     transition: opacity 0.4s ease;
+  }
+  /* One-line hint shown only in the days leading up to a seasonal theme
+     week (see updateSeasonalHint) -- e.g. "Thanksgiving week is almost
+     here". Never shown at the same time as the full theme (that only
+     starts once the theme week itself does), so this and the tinted
+     border below are the ONLY seasonal cue during that lead-up window. */
+  #kickoffCountdown .kickoff-seasonal-hint {
+    display: block; font-family: var(--font-body); font-size: 11px;
+    color: var(--muted); margin-top: 6px; font-variant-numeric: normal;
+  }
+  #kickoffCountdown.seasonal-thanksgiving {
+    border-color: #7a4a1a; box-shadow: 0 0 0 1px rgba(214,133,43,0.15), 0 0 18px rgba(214,133,43,0.08);
+  }
+  #kickoffCountdown.seasonal-christmas {
+    border-color: #2c5f3e; box-shadow: 0 0 0 1px rgba(79,212,147,0.15), 0 0 18px rgba(200,40,40,0.10);
   }
   /* Starts pulsing once kickoff is within an hour (see tickKickoffCountdown
      in app.js, which toggles this class) -- same glow technique as Upset
@@ -588,6 +636,91 @@
   .espn-card.tier-third .tier-ribbon, .needle-card.tier-third .tier-ribbon { color: var(--tier-third); }
   .espn-card.tier-other .tier-ribbon, .needle-card.tier-other .tier-ribbon { color: var(--tier-other); }
 
+  /* ---- Seasonal card decor (Thanksgiving/Christmas) -- see
+     decorateSeasonalCard in app.js, which is the only thing that adds
+     .seasonal-thanksgiving/.seasonal-christmas to a card and builds the
+     .seasonal-garland's contents. Both ESPN and Needle cards get
+     position:relative so the pumpkin corners and garland can be
+     positioned against the card itself rather than the page. ---- */
+  .espn-card, .needle-card { position: relative; }
+
+  .pumpkin-corner {
+    position: absolute; top: -12px; font-size: 20px;
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));
+    display: none; z-index: 2;
+  }
+  .pumpkin-corner.left { left: -6px; transform: rotate(-12deg); }
+  .pumpkin-corner.right { right: -6px; transform: rotate(10deg) scaleX(-1); }
+  .seasonal-thanksgiving .pumpkin-corner { display: block; }
+
+  /* Shared wire-and-decoration strand for both the Thanksgiving leaf
+     garland and the Christmas light strand -- see buildSeasonalGarland in app.js,
+     which draws the scalloped SVG wire and positions whatever decoration
+     (a leaf emoji or a colored bulb div) at the bottom of each droop.
+     Bled slightly past the card's own top edge via negative margin so it
+     reads as draped along the card rather than floating inside it. */
+  .seasonal-garland {
+    position: relative; height: 28px; margin: -10px -6px 8px; display: none;
+  }
+  .seasonal-thanksgiving .seasonal-garland,
+  .seasonal-christmas .seasonal-garland { display: block; }
+  .seasonal-garland-wire { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .seasonal-garland-wire path { fill: none; stroke-width: 2; }
+  .seasonal-thanksgiving .seasonal-garland-wire path { stroke: #6b4a2a; }
+  .seasonal-christmas .seasonal-garland-wire path { stroke: #2a2a2a; }
+
+  .seasonal-leaf {
+    position: absolute; transform: translate(-50%, -50%);
+    font-size: 14px; animation: seasonalLeafSway 3s ease-in-out infinite;
+  }
+  @keyframes seasonalLeafSway {
+    0%, 100% { transform: translate(-50%, -50%) rotate(-6deg); }
+    50% { transform: translate(-50%, -50%) rotate(6deg); }
+  }
+
+  /* Christmas bulbs -- colored per-matchup via --bulb-color, set inline by
+     buildLights in app.js from each of the two teams' own colors,
+     alternating. Twinkle independently by default; see .upset-lights
+     below for what happens when the card's own live Upset Watch state
+     (the SAME upsetInfo already computed for the badge/border, not a
+     separate detector) is active. */
+  .seasonal-bulb {
+    position: absolute; width: 8px; height: 12px;
+    background: var(--bulb-color);
+    border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 5px 2px var(--bulb-color), 0 0 12px 3px var(--bulb-color);
+    animation: seasonalBulbTwinkle 2.6s ease-in-out infinite;
+  }
+  @keyframes seasonalBulbTwinkle {
+    0%, 100% { opacity: 0.7; filter: brightness(0.85); }
+    50% { opacity: 1; filter: brightness(1.3); }
+  }
+  /* Synced pulse when this card's own Upset Watch is active -- every bulb
+     switches to the alert color and pulses together on the SAME 2.4s
+     cadence as the rest of the site's upset pulse (upsetPulse/
+     upsetTextPulse above), so this reads as one alert system rather than
+     a separate lighting effect that happens to also change color. */
+  .seasonal-garland.upset-lights .seasonal-bulb {
+    background: var(--upset) !important;
+    box-shadow: 0 0 6px 3px var(--upset-glow-a), 0 0 16px 6px var(--upset-glow-b) !important;
+    animation: seasonalBulbUpsetPulse 2.4s ease-in-out infinite !important;
+    animation-delay: 0s !important;
+  }
+  @keyframes seasonalBulbUpsetPulse {
+    0%, 100% { opacity: 0.85; filter: brightness(1); }
+    50% { opacity: 1; filter: brightness(1.5); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .seasonal-leaf { animation: none !important; }
+    .seasonal-bulb { animation: none !important; opacity: 0.95 !important; }
+    .seasonal-garland.upset-lights .seasonal-bulb { animation: none !important; opacity: 1 !important; }
+  }
+  html[data-reduce-motion="true"] .seasonal-leaf { animation: none !important; }
+  html[data-reduce-motion="true"] .seasonal-bulb { animation: none !important; opacity: 0.95 !important; }
+  html[data-reduce-motion="true"] .seasonal-garland.upset-lights .seasonal-bulb { animation: none !important; opacity: 1 !important; }
+
   /* ---- "Why is this the number?" button + blurb, shared across all views ---- */
   .why-btn {
     background: none; border: none; cursor: pointer; padding: 0 0 0 2px;
@@ -749,6 +882,14 @@
 </style>
 </head>
 <body>
+<!-- Full-page seasonal particle field -- falling leaves during
+     Thanksgiving week, falling snow during Christmas week, nothing
+     otherwise. Fixed position so it covers the viewport regardless of
+     scroll, always present in the DOM (never added/removed) so there's
+     no start-up flicker; driven by app.js's currentSeasonalTheme (set in
+     loadMatchups) and the seasonalTick draw loop, which is the only thing
+     that starts/stops drawing and picks which particle shape to draw. -->
+<canvas id="seasonalParticleCanvas"></canvas>
 <div id="leaderGradient"><div class="leader-gradient-layer" id="leaderGradientLayerA"></div><div class="leader-gradient-layer" id="leaderGradientLayerB"></div></div>
 <div id="wrap">
   <h2>Fantasy Win Probability</h2>
@@ -776,7 +917,18 @@
 
   <a id="yearInReviewLink" href="year-in-review.html" hidden>🏆 Year in Review</a>
 
-  <div id="kickoffCountdown" hidden></div>
+  <!-- Restructured to hold a small confined particle canvas alongside the
+       label/time text (see the "Kickoff countdown" seasonal-hint block in
+       app.js) -- tickKickoffCountdown updates the label/time spans'
+       textContent directly rather than overwriting this element's whole
+       innerHTML every second, specifically so the canvas survives every
+       tick instead of being torn down and recreated 60 times a minute. -->
+  <div id="kickoffCountdown" hidden>
+    <canvas class="cd-particle-canvas" id="kickoffCountdownParticles"></canvas>
+    <span class="kickoff-label" id="kickoffCountdownLabelEl"></span>
+    <span class="kickoff-time" id="kickoffCountdownTimeEl"></span>
+    <div class="kickoff-seasonal-hint" id="kickoffSeasonalHint" hidden></div>
+  </div>
 
   <div id="recapBanner" hidden></div>
 
@@ -806,6 +958,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>
