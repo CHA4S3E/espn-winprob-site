@@ -2,16 +2,14 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Year in Review — Fantasy Win Probability Tracker</title>
-<meta name="theme-color" content="#101216" id="themeColorMeta">
+<title>Year in Review — Mockup</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
     --bg: #101216; --fg: #eaeaea; --muted: #8a8f98; --border: #2a2d34;
-    --card-bg: #1c1f26; --input-bg: #21242c; --input-border: #3a3d44; --accent: #3a67df;
+    --card-bg: #1c1f26; --input-bg: #21242c;
     --gold: #e0b23d; --silver: #b8bec7; --bronze: #c17a4a;
     --win: #4fbd82; --loss: #e0574a;
     --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
@@ -23,38 +21,36 @@
     margin: 0; padding: 0 0 80px; -webkit-font-smoothing: antialiased;
   }
   .page { max-width: 900px; margin: 0 auto; padding: 0 20px; }
-
-  #controls { display: flex; gap: 10px; justify-content: center; padding: 16px 0 0; }
-  select {
-    padding: 7px 12px; font-size: 14px; font-family: var(--font-body);
-    border-radius: 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--fg);
+  .mockup-note {
+    background: #2a2410; border-bottom: 1px solid #4a3f1a; color: #e0c060;
+    text-align: center; font-size: 12.5px; padding: 8px; font-family: var(--font-body);
   }
-  #loadingState, #emptyState { text-align: center; color: var(--muted); font-size: 14px; padding: 60px 20px; }
 
-  #hero { position: relative; height: 240px; overflow: hidden; margin-bottom: 8px; }
+  /* ==== Hero: diagonal drifting logo banner ==== */
+  #hero { position: relative; height: 340px; overflow: hidden; margin-bottom: 8px; }
   #logoBannerLayer {
     position: absolute; inset: -20% -10%; transform: rotate(-8deg);
-    display: flex; flex-direction: column; gap: 18px; opacity: 0.5;
+    display: flex; flex-direction: column; gap: 30px; opacity: 1;
   }
-  .logo-row { display: flex; gap: 18px; animation: driftRow 40s linear infinite; width: max-content; }
+  .logo-row { display: flex; gap: 30px; animation: driftRow 40s linear infinite; width: max-content; }
   .logo-row.reverse { animation-direction: reverse; }
   @keyframes driftRow { from { transform: translateX(0); } to { transform: translateX(-50%); } }
   .logo-chip {
-    width: 46px; height: 46px; border-radius: 10px; flex: none; overflow: hidden;
+    width: 130px; height: 130px; border-radius: 22px; flex: none;
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-display); font-size: 18px; color: #fff;
+    font-family: var(--font-display); font-size: 44px; color: #fff;
   }
-  .logo-chip img { width: 100%; height: 100%; object-fit: cover; }
   html[data-reduce-motion="true"] .logo-row { animation: none; }
 
   #heroContent {
     position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column;
     align-items: center; justify-content: center; text-align: center;
-    background: linear-gradient(180deg, rgba(16,18,22,0.2), rgba(16,18,22,0.92) 75%);
+    background: linear-gradient(180deg, rgba(16,18,22,0.5), rgba(16,18,22,0.96) 65%);
   }
   #heroContent .year { font-family: var(--font-display); font-weight: 400; font-size: 15px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
   #heroContent h1 { font-family: var(--font-display); font-weight: 400; font-size: 42px; margin: 4px 0 0; }
 
+  /* ==== Podium ==== */
   #podium { display: flex; align-items: flex-end; justify-content: center; gap: 14px; margin: 10px 0 50px; }
   .podium-slot { display: flex; flex-direction: column; align-items: center; width: 150px; }
   .podium-team-name { font-family: var(--font-display); font-weight: 400; font-size: 14px; text-align: center; margin-bottom: 8px; line-height: 1.2; }
@@ -67,32 +63,45 @@
   .podium-slot.silver .podium-block { height: 96px; background: linear-gradient(180deg, var(--silver), #7d838c); }
   .podium-slot.bronze .podium-block { height: 74px; background: linear-gradient(180deg, var(--bronze), #8a4f28); }
   .podium-trophy { font-size: 26px; margin-bottom: 2px; }
-  .podium-unset { color: var(--muted); font-size: 22px; }
 
-  .section-title { font-family: var(--font-display); font-weight: 400; font-size: 22px; text-align: center; margin: 50px 0 4px; }
+  /* ==== Section headers ==== */
+  .section-title {
+    font-family: var(--font-display); font-weight: 400; font-size: 22px;
+    text-align: center; margin: 50px 0 4px;
+  }
   .section-sub { text-align: center; color: var(--muted); font-size: 12.5px; margin-bottom: 22px; }
 
+  /* ==== Season race chart ==== */
   #raceChartCard { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-bottom: 10px; }
   #raceLegend { display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: center; margin-top: 12px; font-size: 11.5px; }
   .race-legend-item { display: flex; align-items: center; gap: 5px; }
   .race-legend-swatch { width: 10px; height: 10px; border-radius: 3px; }
 
+  /* ==== Award cards ==== */
   .award-grid { display: flex; flex-direction: column; gap: 14px; margin-bottom: 10px; }
   .award-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; position: relative; overflow: hidden; }
-  .award-card::before { content: ""; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: var(--accent-color, var(--border)); }
-  .award-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .award-card::before {
+    content: ""; position: absolute; top: 0; left: 0; width: 4px; height: 100%;
+    background: var(--accent-color, var(--border));
+  }
+  .award-label {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
   .award-headline { font-family: var(--font-display); font-weight: 400; font-size: 19px; margin-bottom: 4px; }
   .award-detail { font-size: 13px; color: var(--muted); line-height: 1.5; }
   .award-pair { display: flex; gap: 14px; flex-wrap: wrap; }
   .award-pair > div { flex: 1; min-width: 200px; }
+
+  /* Two-up grid for the shorter, simpler award cards */
   .award-grid-2up { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 10px; }
   @media (max-width: 560px) { .award-grid-2up { grid-template-columns: 1fr; } }
 
-  .team-icon-img { width: 18px; height: 18px; border-radius: 4px; object-fit: cover; vertical-align: middle; margin-right: 4px; }
-
+  /* ==== Upset crop chart ==== */
   .upset-chart-wrap { margin: 12px 0 6px; }
   .upset-chart-labels { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin-top: 4px; }
 
+  /* ==== All-play comparison bars ==== */
   .allplay-row { margin-bottom: 12px; }
   .allplay-team { font-family: var(--font-display); font-size: 14px; margin-bottom: 4px; }
   .allplay-bars { display: flex; flex-direction: column; gap: 4px; }
@@ -104,75 +113,382 @@
 </style>
 </head>
 <body>
+<div class="mockup-note">MOCKUP — fake teams and fabricated stats, built to show the concept before wiring up real data.</div>
 
-<div id="controls">
-  <select id="leagueSelect"></select>
-  <select id="yearSelect"></select>
+<div id="hero">
+  <div id="logoBannerLayer">
+    <div class="logo-row" id="logoRow1"></div>
+    <div class="logo-row reverse" id="logoRow2"></div>
+    <div class="logo-row" id="logoRow3"></div>
+  </div>
+  <div id="heroContent">
+    <div class="year">2026 Season</div>
+    <h1>🏆 Year in Review</h1>
+  </div>
 </div>
 
-<div id="loadingState">Loading your season…</div>
-<div id="emptyState" style="display:none"></div>
+<div class="page">
+  <div id="podium"></div>
+  <div class="award-grid" id="peoplesChampionAward"></div>
 
-<div id="content" style="display:none">
-  <div id="hero">
-    <div id="logoBannerLayer">
-      <div class="logo-row" id="logoRow1"></div>
-      <div class="logo-row reverse" id="logoRow2"></div>
-      <div class="logo-row" id="logoRow3"></div>
-    </div>
-    <div id="heroContent">
-      <div class="year" id="heroYear"></div>
-      <h1>🏆 Year in Review</h1>
-    </div>
+  <div class="section-title">The Season, Week by Week</div>
+  <div class="section-sub">Every team's spot in the standings, tracked all year</div>
+  <div id="raceChartCard">
+    <svg id="raceSvg" viewBox="0 0 800 280" preserveAspectRatio="none" style="width:100%;height:280px;overflow:visible"></svg>
+    <div id="raceLegend"></div>
   </div>
 
-  <div class="page">
-    <div id="podium"></div>
-    <div class="award-grid" id="peoplesChampionAward"></div>
+  <div class="section-title">The Drama</div>
+  <div class="section-sub">The moments that actually made this season</div>
+  <div class="award-grid" id="dramaAwards"></div>
 
-    <div id="raceSection">
-      <div class="section-title">The Season, Week by Week</div>
-      <div class="section-sub">Every team's spot in the standings, tracked all year</div>
-      <div id="raceChartCard">
-        <svg id="raceSvg" viewBox="0 0 800 280" preserveAspectRatio="none" style="width:100%;height:280px;overflow:visible"></svg>
-        <div id="raceLegend"></div>
+  <div class="section-title">The Numbers</div>
+  <div class="section-sub">Best and worst, by the raw stats</div>
+  <div class="award-grid-2up" id="numbersAwards"></div>
+
+  <div class="section-title">The Luck Factor</div>
+  <div class="section-sub">How much of this season came down to matchups, not just play</div>
+  <div class="award-grid" id="luckAwards"></div>
+
+  <div class="section-title">Upset Watch, Season Totals</div>
+  <div class="section-sub">Beyond the one biggest moment above — who lived on the edge all year</div>
+  <div class="award-grid-2up" id="upsetLeaderboard"></div>
+
+  <div class="section-title">So Close</div>
+  <div class="award-grid" id="soCloseAward"></div>
+
+  <a class="back-link" href="index.html">&larr; Back to matchups</a>
+</div>
+
+<script>
+// ============================================================
+// Fake teams
+// ============================================================
+const TEAMS = {
+  conquerors: { name: 'Gary and the Conquerors', color: '#4fbd82' },
+  bababooey:  { name: 'Bababooey', color: '#4d78d6' },
+  crabs:      { name: 'Branford Crabs', color: '#e0685a' },
+  endseason:  { name: 'Just End The Season', color: '#b378d1' },
+  algorithm:  { name: 'The Algorithm', color: '#2ec4c6' },
+  zerowins:   { name: 'Zero Wins Given', color: '#d4a72c' },
+  waivers:    { name: 'Waiver Wire Warriors', color: '#d65a9e' },
+  kickoff:    { name: 'Kickoff Return TD', color: '#e08a3d' },
+};
+
+// ============================================================
+// Logo banner -- placeholder colored chips with initials, since this
+// mockup has no real uploaded logos to draw from. Each row cycles
+// through ALL teams repeatedly (not a one-time split) so a row always
+// looks full and dense even with a short team list, with each row
+// starting at a different offset so the three rows don't show an
+// identical sequence. Duplicated once per row so the looping animation
+// has no visible seam.
+// ============================================================
+function initials(name) { return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
+const TEAM_KEYS = Object.keys(TEAMS);
+const CHIPS_PER_ROW = Math.max(10, TEAM_KEYS.length);
+function buildLogoRow(el, rowIdx) {
+  const order = [];
+  for (let i = 0; i < CHIPS_PER_ROW; i++) order.push(TEAM_KEYS[(i + rowIdx) % TEAM_KEYS.length]);
+  const chips = order.map(k => `<div class="logo-chip" style="background:${TEAMS[k].color}">${initials(TEAMS[k].name)}</div>`).join('');
+  el.innerHTML = chips + chips; // duplicate for seamless looping
+}
+buildLogoRow(document.getElementById('logoRow1'), 0);
+buildLogoRow(document.getElementById('logoRow2'), 1);
+buildLogoRow(document.getElementById('logoRow3'), 2);
+
+// ============================================================
+// Podium
+// ============================================================
+const PODIUM = [
+  { team: 'algorithm', place: 2, record: '11-3' },
+  { team: 'conquerors', place: 1, record: '12-2' },
+  { team: 'bababooey', place: 3, record: '10-4' },
+];
+const placeClass = { 1: 'gold', 2: 'silver', 3: 'bronze' };
+const placeTrophy = { 1: '🥇', 2: '🥈', 3: '🥉' };
+document.getElementById('podium').innerHTML = [2, 1, 3].map(place => {
+  const p = PODIUM.find(x => x.place === place);
+  const t = TEAMS[p.team];
+  return `
+    <div class="podium-slot ${placeClass[place]}">
+      <div class="podium-team-name" style="color:${t.color}">${t.name}</div>
+      <div class="podium-record">${p.record}</div>
+      <div class="podium-block"><span class="podium-trophy">${placeTrophy[place]}</span></div>
+    </div>
+  `;
+}).join('');
+
+// ============================================================
+// People's Champion -- highest cumulative points all season, which can
+// (and often does) disagree with who actually won, since standings are
+// win-loss based, not points based. The mismatch is the whole point.
+// ============================================================
+document.getElementById('peoplesChampionAward').innerHTML = `
+  <div class="award-card" style="--accent-color:#e0b23d">
+    <div class="award-label">👑 The People's Champion</div>
+    <div class="award-headline" style="color:${TEAMS.algorithm.color}">${TEAMS.algorithm.name}</div>
+    <div class="award-detail">Scored more total points than anyone in the league this season (1847.3) -- but finished 2nd, not 1st. Standings are win-loss, not points. This is who actually had the best team.</div>
+  </div>
+`;
+
+// ============================================================
+// Season race chart -- rank (1 = best) per team, per week. Drawn from
+// data, not hand-placed points, so the shape is at least internally
+// consistent rather than an arbitrary decorative squiggle.
+// ============================================================
+const WEEKS = 14;
+const RACE_DATA = {
+  conquerors: [4,3,3,2,2,1,1,2,1,1,1,1,1,1],
+  algorithm:  [2,2,1,1,1,2,2,1,2,2,2,2,2,2],
+  bababooey:  [6,5,4,4,3,3,3,3,3,3,3,3,3,3],
+  crabs:      [1,1,2,3,4,4,4,4,4,5,5,4,4,4],
+  endseason:  [7,6,6,5,5,5,5,6,5,4,4,5,5,5],
+  zerowins:   [3,4,5,6,6,6,6,5,6,6,6,6,6,6],
+  waivers:    [5,7,7,7,7,7,7,7,7,7,7,7,7,7],
+  kickoff:    [8,8,8,8,8,8,8,8,8,8,8,8,8,8],
+};
+(function drawRaceChart() {
+  const svg = document.getElementById('raceSvg');
+  const W = 800, H = 280, padL = 24, padR = 10, padT = 10, padB = 24;
+  const maxRank = 8;
+  const x = (week) => padL + (week / (WEEKS - 1)) * (W - padL - padR);
+  const y = (rank) => padT + ((rank - 1) / (maxRank - 1)) * (H - padT - padB);
+
+  let svgHtml = '';
+  for (let r = 1; r <= maxRank; r++) {
+    svgHtml += `<line x1="${padL}" y1="${y(r)}" x2="${W - padR}" y2="${y(r)}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
+    svgHtml += `<text x="4" y="${y(r) + 4}" font-size="10" fill="#8a8f98">${r}</text>`;
+  }
+  Object.entries(RACE_DATA).forEach(([key, ranks]) => {
+    const color = TEAMS[key].color;
+    const points = ranks.map((r, w) => `${x(w).toFixed(1)},${y(r).toFixed(1)}`).join(' ');
+    svgHtml += `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.5" opacity="0.9"/>`;
+  });
+  svg.innerHTML = svgHtml;
+
+  document.getElementById('raceLegend').innerHTML = Object.values(TEAMS).map(t =>
+    `<div class="race-legend-item"><span class="race-legend-swatch" style="background:${t.color}"></span>${t.name}</div>`
+  ).join('');
+})();
+
+// ============================================================
+// The Drama section
+// ============================================================
+const UPSET_SEQUENCE = [58, 72, 85, 96, 91, 82, 71, 63, 52, 41, 30, 22];
+const UPSET_PEAK = 96, UPSET_TRIGGER = 71;
+
+function buildUpsetCropChart(seq, peakVal, triggerVal) {
+  const W = 500, H = 120, padL = 28, padR = 10, padT = 14, padB = 20;
+  const x = (i) => padL + (i / (seq.length - 1)) * (W - padL - padR);
+  const y = (v) => padT + ((100 - v) / 100) * (H - padT - padB);
+  const peakIdx = seq.indexOf(peakVal);
+  const triggerIdx = seq.findIndex((v, i) => i > peakIdx && v < triggerVal);
+
+  let path = seq.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  let html = `
+    <line x1="${padL}" y1="${y(50)}" x2="${W-padR}" y2="${y(50)}" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="3,3"/>
+    <polyline points="${path}" fill="none" stroke="${TEAMS.crabs.color}" stroke-width="2.5"/>
+    <circle cx="${x(peakIdx)}" cy="${y(peakVal)}" r="4" fill="${TEAMS.crabs.color}"/>
+    <text x="${x(peakIdx)}" y="${y(peakVal)-10}" font-size="10" fill="${TEAMS.crabs.color}" text-anchor="middle">Peak ${peakVal}%</text>
+  `;
+  if (triggerIdx >= 0) {
+    html += `
+      <circle cx="${x(triggerIdx)}" cy="${y(seq[triggerIdx])}" r="4" fill="#ff8a3d"/>
+      <text x="${x(triggerIdx)}" y="${y(seq[triggerIdx])+16}" font-size="10" fill="#ff8a3d" text-anchor="middle">Triggered ${seq[triggerIdx]}%</text>
+    `;
+  }
+  const finalIdx = seq.length - 1;
+  html += `<circle cx="${x(finalIdx)}" cy="${y(seq[finalIdx])}" r="4" fill="${TEAMS.endseason.color}"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:120px;overflow:visible">${html}</svg>`;
+}
+
+document.getElementById('dramaAwards').innerHTML = `
+  <div class="award-card" style="--accent-color:#ff8a3d">
+    <div class="award-label">⚠️ Biggest Upset</div>
+    <div class="award-headline"><span style="color:${TEAMS.endseason.color}">${TEAMS.endseason.name}</span> over <span style="color:${TEAMS.crabs.color}">${TEAMS.crabs.name}</span></div>
+    <div class="award-detail">${TEAMS.crabs.name} peaked at 96% win probability in Week 9 -- then completely fell apart. Here's the exact window where it happened, not the whole game:</div>
+    <div class="upset-chart-wrap">${buildUpsetCropChart(UPSET_SEQUENCE, UPSET_PEAK, UPSET_TRIGGER)}</div>
+    <div class="upset-chart-labels"><span>Late 3rd quarter</span><span>Final</span></div>
+  </div>
+
+  <div class="award-card" style="--accent-color:#e0574a">
+    <div class="award-pair">
+      <div>
+        <div class="award-label">😬 Closest Game</div>
+        <div class="award-headline"><span style="color:${TEAMS.zerowins.color}">${TEAMS.zerowins.name}</span> 118.6 &ndash; 118.2 <span style="color:${TEAMS.waivers.color}">${TEAMS.waivers.name}</span></div>
+        <div class="award-detail">Week 6 &middot; decided by 0.4 points</div>
+      </div>
+      <div>
+        <div class="award-label">💥 Biggest Blowout</div>
+        <div class="award-headline"><span style="color:${TEAMS.conquerors.color}">${TEAMS.conquerors.name}</span> 156.2 &ndash; 68.9 <span style="color:${TEAMS.kickoff.color}">${TEAMS.kickoff.name}</span></div>
+        <div class="award-detail">Week 3 &middot; decided by 87.3 points</div>
       </div>
     </div>
-
-    <div class="section-title">The Drama</div>
-    <div class="section-sub">The moments that actually made this season</div>
-    <div id="dramaSection">
-      <div class="award-grid" id="dramaAwards"></div>
-    </div>
-
-    <div class="section-title">The Numbers</div>
-    <div class="section-sub">Best and worst, by the raw stats</div>
-    <div id="numbersSection">
-      <div class="award-grid-2up" id="numbersAwards"></div>
-    </div>
-
-    <div class="section-title">The Luck Factor</div>
-    <div class="section-sub">How much of this season came down to matchups, not just play</div>
-    <div id="luckSection">
-      <div class="award-grid" id="luckAwards"></div>
-    </div>
-
-    <div id="upsetLeaderboardSection">
-      <div class="section-title">Upset Watch, Season Totals</div>
-      <div class="section-sub">Beyond the one biggest moment above — who lived on the edge all year</div>
-      <div class="award-grid-2up" id="upsetLeaderboard"></div>
-    </div>
-
-    <div id="soCloseSection">
-      <div class="section-title">So Close</div>
-      <div class="award-grid" id="soCloseAward"></div>
-    </div>
-
-    <a class="back-link" href="index.html">&larr; Back to matchups</a>
   </div>
-</div>
 
-<script src="config.js"></script>
-<script src="year-in-review.js"></script>
+  <div class="award-card" style="--accent-color:#4fbd82">
+    <div class="award-pair">
+      <div>
+        <div class="award-label">🐢 The Grinder</div>
+        <div class="award-headline" style="color:${TEAMS.bababooey.color}">${TEAMS.bababooey.name}</div>
+        <div class="award-detail">Trailed for 187 of ~220 minutes before winning in Week 9 -- the longest come-from-behind win of the season, without ever facing a truly dominant opponent (never triggered Upset Watch)</div>
+      </div>
+      <div>
+        <div class="award-label">🛡️ Never Trailed</div>
+        <div class="award-headline" style="color:${TEAMS.conquerors.color}">${TEAMS.conquerors.name}</div>
+        <div class="award-detail">Led wire-to-wire in 4 different games this season -- never dropped below 50% win probability once</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="award-card" style="--accent-color:#4d78d6">
+    <div class="award-pair">
+      <div>
+        <div class="award-label">😎 Wins Big, Loses Rare</div>
+        <div class="award-headline" style="color:${TEAMS.conquerors.color}">${TEAMS.conquerors.name}</div>
+        <div class="award-detail">Averaged a +38.2 point margin of victory all season -- when they won, it usually wasn't close</div>
+      </div>
+      <div>
+        <div class="award-label">😩 Wins Small, Loses Huge</div>
+        <div class="award-headline" style="color:${TEAMS.waivers.color}">${TEAMS.waivers.name}</div>
+        <div class="award-detail">Averaged just +4.1 in wins, but -41.8 in losses -- every win was a nail-biter, every loss was a blowout</div>
+      </div>
+    </div>
+  </div>
+`;
+
+// ============================================================
+// The Numbers section
+// ============================================================
+document.getElementById('numbersAwards').innerHTML = `
+  <div class="award-card" style="--accent-color:#4fbd82">
+    <div class="award-label">🔥 Best Week</div>
+    <div class="award-headline" style="color:${TEAMS.algorithm.color}">${TEAMS.algorithm.name}</div>
+    <div class="award-detail">189.4 points, Week 11</div>
+  </div>
+  <div class="award-card" style="--accent-color:#e0574a">
+    <div class="award-label">🥶 Worst Week</div>
+    <div class="award-headline" style="color:${TEAMS.zerowins.color}">${TEAMS.zerowins.name}</div>
+    <div class="award-detail">42.1 points, Week 4</div>
+  </div>
+  <div class="award-card" style="--accent-color:#4fbd82">
+    <div class="award-label">📈 Biggest Overperformer</div>
+    <div class="award-headline" style="color:${TEAMS.bababooey.color}">${TEAMS.bababooey.name}</div>
+    <div class="award-detail">+54.5 over projection, Week 8 (98.2 projected &rarr; 152.7 actual)</div>
+  </div>
+  <div class="award-card" style="--accent-color:#e0574a">
+    <div class="award-label">📉 Biggest Underperformer</div>
+    <div class="award-headline" style="color:${TEAMS.waivers.color}">${TEAMS.waivers.name}</div>
+    <div class="award-detail">-73.5 under projection, Week 6 (145.3 projected &rarr; 71.8 actual)</div>
+  </div>
+  <div class="award-card" style="--accent-color:#2ec4c6">
+    <div class="award-label">😌 Mr. Consistent</div>
+    <div class="award-headline" style="color:${TEAMS.algorithm.color}">${TEAMS.algorithm.name}</div>
+    <div class="award-detail">Every week between 98 and 115 points -- the smallest range all season</div>
+  </div>
+  <div class="award-card" style="--accent-color:#d4a72c">
+    <div class="award-label">🎢 Boom or Bust</div>
+    <div class="award-headline" style="color:${TEAMS.zerowins.color}">${TEAMS.zerowins.name}</div>
+    <div class="award-detail">42 to 178 points -- the widest week-to-week swing all season</div>
+  </div>
+  <div class="award-card" style="--accent-color:#4fbd82">
+    <div class="award-label">🔥 Longest Win Streak</div>
+    <div class="award-headline" style="color:${TEAMS.conquerors.color}">${TEAMS.conquerors.name}</div>
+    <div class="award-detail">7 straight wins, Weeks 6 through 12</div>
+  </div>
+  <div class="award-card" style="--accent-color:#e0574a">
+    <div class="award-label">❄️ Longest Losing Streak</div>
+    <div class="award-headline" style="color:${TEAMS.kickoff.color}">${TEAMS.kickoff.name}</div>
+    <div class="award-detail">9 straight losses, Weeks 2 through 10</div>
+  </div>
+  <div class="award-card" style="--accent-color:#4fbd82">
+    <div class="award-label">📊 Best Season-Long vs. Projection</div>
+    <div class="award-headline" style="color:${TEAMS.bababooey.color}">${TEAMS.bababooey.name}</div>
+    <div class="award-detail">Averaged +12.4 points over their own projection, every week all season -- not just one good week, a whole season of it</div>
+  </div>
+  <div class="award-card" style="--accent-color:#e0574a">
+    <div class="award-label">📊 Worst Season-Long vs. Projection</div>
+    <div class="award-headline" style="color:${TEAMS.kickoff.color}">${TEAMS.kickoff.name}</div>
+    <div class="award-detail">Averaged -18.7 points under their own projection, every week all season</div>
+  </div>
+`;
+
+// ============================================================
+// The Luck Factor
+// ============================================================
+function allPlayBar(label, wins, losses, color) {
+  const total = wins + losses;
+  const pct = (wins / total) * 100;
+  return `
+    <div class="allplay-bar-track">
+      <span style="width:90px">${label}</span>
+      <div class="allplay-bar-fill-wrap"><div class="allplay-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+      <span style="width:40px;text-align:right">${wins}-${losses}</span>
+    </div>
+  `;
+}
+document.getElementById('luckAwards').innerHTML = `
+  <div class="award-card" style="--accent-color:#e0574a">
+    <div class="award-label">🍀 All-Play Record — Actual vs. If You'd Played Everyone Every Week</div>
+    <div class="allplay-row">
+      <div class="allplay-team" style="color:${TEAMS.kickoff.color}">${TEAMS.kickoff.name} <span style="color:var(--muted);font-family:var(--font-body);font-size:11px">— the unluckiest team all season</span></div>
+      <div class="allplay-bars">
+        ${allPlayBar('Actual', 5, 9, TEAMS.kickoff.color)}
+        ${allPlayBar('All-play', 9, 5, '#6a8fe0')}
+      </div>
+    </div>
+    <div class="allplay-row">
+      <div class="allplay-team" style="color:${TEAMS.waivers.color}">${TEAMS.waivers.name} <span style="color:var(--muted);font-family:var(--font-body);font-size:11px">— the luckiest</span></div>
+      <div class="allplay-bars">
+        ${allPlayBar('Actual', 9, 5, TEAMS.waivers.color)}
+        ${allPlayBar('All-play', 6, 8, '#6a8fe0')}
+      </div>
+    </div>
+  </div>
+
+  <div class="award-card" style="--accent-color:#d65a9e">
+    <div class="award-pair">
+      <div>
+        <div class="award-label">😤 Toughest Schedule</div>
+        <div class="award-headline" style="color:${TEAMS.kickoff.color}">${TEAMS.kickoff.name}</div>
+        <div class="award-detail">Opponents averaged 132.4 pts/week against them &mdash; league average was 118.2</div>
+      </div>
+      <div>
+        <div class="award-label">🎯 Luckiest Schedule</div>
+        <div class="award-headline" style="color:${TEAMS.zerowins.color}">${TEAMS.zerowins.name}</div>
+        <div class="award-detail">Opponents averaged only 102.1 pts/week &mdash; well under the league average</div>
+      </div>
+    </div>
+  </div>
+`;
+
+// ============================================================
+// Upset Watch season leaderboard
+// ============================================================
+document.getElementById('upsetLeaderboard').innerHTML = `
+  <div class="award-card" style="--accent-color:#ff8a3d">
+    <div class="award-label">🚨 Most Times Armed</div>
+    <div class="award-headline" style="color:${TEAMS.crabs.color}">${TEAMS.crabs.name}</div>
+    <div class="award-detail">Reached 85%+ win probability 5 separate times this season -- more nail-biting near-misses than anyone else</div>
+  </div>
+  <div class="award-card" style="--accent-color:#b378d1">
+    <div class="award-label">🔄 Most Comebacks Completed</div>
+    <div class="award-headline" style="color:${TEAMS.endseason.color}">${TEAMS.endseason.name}</div>
+    <div class="award-detail">Completed 3 separate Upset Watch comebacks -- nobody pulled off more genuine reversals</div>
+  </div>
+`;
+
+// ============================================================
+// So Close award
+// ============================================================
+document.getElementById('soCloseAward').innerHTML = `
+  <div class="award-card" style="--accent-color:#8a8f98">
+    <div class="award-label">😔 So Close</div>
+    <div class="award-headline" style="color:${TEAMS.zerowins.color}">${TEAMS.zerowins.name}</div>
+    <div class="award-detail">Finished 7th -- one spot outside the playoff cutoff. The nail-biter loss in Week 6 (see "Closest Game" above) was the difference.</div>
+  </div>
+`;
+</script>
 </body>
 </html>
