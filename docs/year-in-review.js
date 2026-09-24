@@ -244,6 +244,12 @@ async function loadYear(leagueId, year) {
   const standings = computeStandings(finalRows, teamInfoSource);
   if (!standings.length) { showEmpty(`No completed matchups yet for ${year}.`); return; }
 
+  // null for legacy years (no poll history was ever recorded, so there's
+  // no pregame win_prob to look up) -- computePowerRatings' luck term
+  // already handles a null map by contributing 0 for every team, same
+  // graceful-degrade convention as matchupTimeSeries above.
+  const pregameWinProbByKey = allSnapshotRows.length ? extractPregameWinProb(allSnapshotRows) : null;
+
   // Only pass through teams that actually appear in THIS year's
   // standings -- otherwise the logo banner (and anywhere else teamInfo
   // feeds) would show every team ever registered for the league,
@@ -257,7 +263,7 @@ async function loadYear(leagueId, year) {
   const maxWeek = Math.max(...finalRows.map((r) => r.week));
 
   renderEverything({
-    year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, isLite,
+    year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, isLite, pregameWinProbByKey,
     // Coalesced here so renderPodium never needs to know which table a
     // given result's team id actually came from -- same pattern as the
     // legacy_matchups fix.
@@ -371,6 +377,39 @@ function drawRaceChart(raceData, teamInfo, maxWeek) {
   svg.innerHTML = svgHtml;
 
   document.getElementById('raceLegend').innerHTML = teamIds.filter((id) => teamInfo[id]).map((id) => {
+    const t = teamInfo[id];
+    return `<div class="race-legend-item"><span class="race-legend-swatch" style="background:${t.color}"></span>${renderTeamIcon(t)}${t.name}</div>`;
+  }).join('');
+}
+
+// Same overall approach as drawRaceChart, but the y-axis is a FIXED 0-100
+// scale (every team's Power Score is already normalized to that range)
+// rather than a scale that depends on how many teams are in the league --
+// gridlines sit at fixed round numbers (0/25/50/75/100) instead of one per
+// team/rank.
+function drawPowerRatingChart(powerHistory, teamInfo, maxWeek) {
+  const svg = document.getElementById('powerSvg');
+  if (!svg) return;
+  const teamIds = Object.keys(powerHistory);
+  if (!teamIds.length) { svg.innerHTML = ''; document.getElementById('powerLegend').innerHTML = ''; return; }
+  const W = 800, H = 280, padL = 28, padR = 10, padT = 10, padB = 24;
+  const x = (week) => padL + ((week - 1) / Math.max(1, maxWeek - 1)) * (W - padL - padR);
+  const y = (score) => padT + ((100 - score) / 100) * (H - padT - padB);
+
+  let svgHtml = '';
+  for (const tick of [0, 25, 50, 75, 100]) {
+    svgHtml += `<line x1="${padL}" y1="${y(tick)}" x2="${W - padR}" y2="${y(tick)}" class="yir-race-gridline" stroke-width="1"/>`;
+    svgHtml += `<text x="2" y="${y(tick) + 4}" font-size="10" class="yir-race-tick">${tick}</text>`;
+  }
+  for (const teamId of teamIds) {
+    const team = teamInfo[teamId];
+    if (!team || !powerHistory[teamId].length) continue;
+    const points = powerHistory[teamId].map((p) => `${x(p.week).toFixed(1)},${y(p.score).toFixed(1)}`).join(' ');
+    svgHtml += `<polyline points="${points}" fill="none" stroke="${team.color}" stroke-width="2.5" opacity="0.9"/>`;
+  }
+  svg.innerHTML = svgHtml;
+
+  document.getElementById('powerLegend').innerHTML = teamIds.filter((id) => teamInfo[id]).map((id) => {
     const t = teamInfo[id];
     return `<div class="race-legend-item"><span class="race-legend-swatch" style="background:${t.color}"></span>${renderTeamIcon(t)}${t.name}</div>`;
   }).join('');
@@ -527,6 +566,181 @@ function computeStandings(rows, teamInfoMap, throughWeek) {
   return standings;
 }
 
+// ============================================================
+// Power Rankings -- see the matching, more heavily-commented copy in
+// standings.js for the full rationale of each layer (weighted SRS
+// regression, recency decay, Bayesian shrinkage, the luck-adjustment term,
+// and the final normalCdf-based 0-100 normalization). Duplicated here
+// rather than shared, same as computeStandings and every other cross-file
+// utility on this standalone page.
+//
+// The one real difference from standings.js: this file needs a WEEK-BY-
+// WEEK HISTORY of each team's score (for the race-style chart), not just
+// a single current snapshot -- see computePowerRatingHistory below, which
+// just calls this once per week with an increasing throughWeek cutoff,
+// the same technique computeSeasonRaceData already uses for team rank.
+function normalCdf(z) {
+  const sign = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * x);
+  const y =
+    1 -
+    (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) *
+      t *
+      Math.exp(-x * x);
+  const erf = sign * y;
+  return 0.5 * (1 + erf);
+}
+
+// Earliest recorded win_prob per (year, week, matchup_id, team_id) --
+// deliberately null for legacy seasons (no win_prob was ever tracked for
+// those), so computePowerRatings' luck term correctly contributes 0 for
+// every team rather than throwing or silently misbehaving.
+function extractPregameWinProb(rows) {
+  const earliest = new Map();
+  for (const r of rows) {
+    if (r.win_prob == null) continue;
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const existing = earliest.get(key);
+    if (!existing || new Date(r.ts) < new Date(existing.ts)) earliest.set(key, r);
+  }
+  const result = new Map();
+  for (const [key, r] of earliest) result.set(key, r.win_prob);
+  return result;
+}
+
+function computePowerRatings(rows, teamIds, pregameWinProbByKey, throughWeek, opts) {
+  const decay = (opts && opts.decay) ?? 0.85;
+  const priorK = (opts && opts.priorK) ?? 3;
+  const luckLambda = (opts && opts.luckLambda) ?? 0.15;
+  const DEFAULT_STDDEV = 21;
+
+  const latestByKey = new Map();
+  for (const r of rows) {
+    if (throughWeek != null && r.week > throughWeek) continue;
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const existing = latestByKey.get(key);
+    if (!existing || new Date(r.ts) > new Date(existing.ts)) latestByKey.set(key, r);
+  }
+  const matchupGroups = new Map();
+  for (const r of latestByKey.values()) {
+    const mKey = `${r.year}|${r.week}|${r.matchup_id}`;
+    if (!matchupGroups.has(mKey)) matchupGroups.set(mKey, []);
+    matchupGroups.get(mKey).push(r);
+  }
+
+  const maxSeenWeek = throughWeek != null ? throughWeek : rows.reduce((m, r) => Math.max(m, r.week), 0);
+  const games = [];
+  const finishedPairs = [];
+  for (const sides of matchupGroups.values()) {
+    if (sides.length !== 2) continue;
+    const [a, b] = sides;
+    if (!a.all_starters_done || !b.all_starters_done) continue;
+    const age = maxSeenWeek - a.week;
+    const weight = Math.pow(decay, Math.max(0, age));
+    games.push({ teamA: a.team_id, teamB: b.team_id, margin: a.actual_score - b.actual_score, weight });
+    finishedPairs.push([a, b]);
+  }
+
+  const result = new Map();
+  if (!games.length) {
+    for (const id of teamIds) result.set(id, { score: 50, rating: 0, stdErr: DEFAULT_STDDEV * Math.SQRT2, gamesPlayed: 0 });
+    return result;
+  }
+
+  const ratings = new Map(teamIds.map((id) => [id, 0]));
+  const gamesByTeam = new Map(teamIds.map((id) => [id, []]));
+  for (const g of games) {
+    if (gamesByTeam.has(g.teamA)) gamesByTeam.get(g.teamA).push({ opp: g.teamB, margin: g.margin, weight: g.weight });
+    if (gamesByTeam.has(g.teamB)) gamesByTeam.get(g.teamB).push({ opp: g.teamA, margin: -g.margin, weight: g.weight });
+  }
+  for (let iter = 0; iter < 100; iter++) {
+    let maxDelta = 0;
+    for (const id of teamIds) {
+      const gs = gamesByTeam.get(id);
+      if (!gs || !gs.length) continue;
+      let num = 0, den = 0;
+      for (const g of gs) { num += g.weight * (g.margin + ratings.get(g.opp)); den += g.weight; }
+      const next = den ? num / den : 0;
+      maxDelta = Math.max(maxDelta, Math.abs(next - ratings.get(id)));
+      ratings.set(id, next);
+    }
+    if (maxDelta < 0.0005) break;
+  }
+  const ratingVals = [...ratings.values()];
+  const meanRating = ratingVals.reduce((s, v) => s + v, 0) / (ratingVals.length || 1);
+  for (const id of teamIds) ratings.set(id, ratings.get(id) - meanRating);
+
+  const effN = new Map(teamIds.map((id) => [id, 0]));
+  for (const g of games) {
+    if (effN.has(g.teamA)) effN.set(g.teamA, effN.get(g.teamA) + g.weight);
+    if (effN.has(g.teamB)) effN.set(g.teamB, effN.get(g.teamB) + g.weight);
+  }
+  const shrunk = new Map();
+  for (const id of teamIds) {
+    const n = effN.get(id) || 0;
+    shrunk.set(id, (n / (n + priorK)) * ratings.get(id));
+  }
+
+  const luck = new Map(teamIds.map((id) => [id, 0]));
+  if (pregameWinProbByKey) {
+    const winsExpected = new Map(teamIds.map((id) => [id, 0]));
+    const winsActual = new Map(teamIds.map((id) => [id, 0]));
+    for (const [a, b] of finishedPairs) {
+      for (const side of [a, b]) {
+        const pregame = pregameWinProbByKey.get(`${side.year}|${side.week}|${side.matchup_id}|${side.team_id}`);
+        if (pregame != null && winsExpected.has(side.team_id)) {
+          winsExpected.set(side.team_id, winsExpected.get(side.team_id) + pregame / 100);
+        }
+      }
+      if (a.actual_score > b.actual_score) { if (winsActual.has(a.team_id)) winsActual.set(a.team_id, winsActual.get(a.team_id) + 1); }
+      else if (b.actual_score > a.actual_score) { if (winsActual.has(b.team_id)) winsActual.set(b.team_id, winsActual.get(b.team_id) + 1); }
+      else {
+        if (winsActual.has(a.team_id)) winsActual.set(a.team_id, winsActual.get(a.team_id) + 0.5);
+        if (winsActual.has(b.team_id)) winsActual.set(b.team_id, winsActual.get(b.team_id) + 0.5);
+      }
+    }
+    for (const id of teamIds) luck.set(id, luckLambda * ((winsActual.get(id) || 0) - (winsExpected.get(id) || 0)));
+  }
+
+  const adjusted = new Map();
+  for (const id of teamIds) adjusted.set(id, shrunk.get(id) + luck.get(id));
+
+  const stdErr = new Map();
+  for (const id of teamIds) {
+    const n = effN.get(id) || 0;
+    stdErr.set(id, n > 0 ? (DEFAULT_STDDEV * Math.SQRT2) / Math.sqrt(n) : DEFAULT_STDDEV * Math.SQRT2);
+  }
+
+  const adjVals = [...adjusted.values()];
+  const meanAdj = adjVals.reduce((s, v) => s + v, 0) / (adjVals.length || 1);
+  const variance = adjVals.reduce((s, v) => s + (v - meanAdj) ** 2, 0) / (adjVals.length || 1);
+  const stdAdj = Math.sqrt(variance) || 1;
+
+  for (const id of teamIds) {
+    const z = (adjusted.get(id) - meanAdj) / stdAdj;
+    result.set(id, { score: 100 * normalCdf(z), rating: adjusted.get(id), stdErr: stdErr.get(id), gamesPlayed: effN.get(id) || 0 });
+  }
+  return result;
+}
+
+// Week-by-week history of each team's Power Score, for the chart -- same
+// technique computeSeasonRaceData uses for rank (rerun the computation
+// with an increasing throughWeek cutoff), just producing a continuous
+// 0-100 score per week instead of a discrete rank.
+function computePowerRatingHistory(rows, teamIds, pregameWinProbByKey, maxWeek) {
+  const history = {}; // teamId -> [{week, score}]
+  for (let week = 1; week <= maxWeek; week++) {
+    const ratings = computePowerRatings(rows, teamIds, pregameWinProbByKey, week);
+    for (const id of teamIds) {
+      const r = ratings.get(id);
+      if (!r || !r.gamesPlayed) continue; // not yet played this far -- no point plotting a bare prior
+      if (!history[id]) history[id] = [];
+      history[id].push({ week, score: r.score });
+    }
+  }
+  return history;
+}
 
 // ============================================================
 // People's Champion: highest cumulative points, regardless of rank.
@@ -985,7 +1199,7 @@ function buildMatchupTimeSeries(allRows) {
   return series;
 }
 
-function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, podiumResults, playoffSpots, isLite }) {
+function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, podiumResults, playoffSpots, isLite, pregameWinProbByKey }) {
   document.getElementById('heroYear').textContent = `${year} Season`;
   renderLiteNote(isLite);
   renderLogoBanner(teamInfo);
@@ -994,6 +1208,14 @@ function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSer
 
   const raceData = computeSeasonRaceData(finalRows, teamInfo, maxWeek);
   drawRaceChart(raceData, teamInfo, maxWeek);
+
+  // Power Rankings history -- same idea as the race chart above, just a
+  // continuous 0-100 score instead of a discrete rank. Works for legacy
+  // years too (pregameWinProbByKey is just null there, so the luck term
+  // contributes 0 for everyone -- the SRS regression + shrinkage still
+  // runs fine on real final scores alone).
+  const powerHistory = computePowerRatingHistory(finalRows, Object.keys(teamInfo), pregameWinProbByKey, maxWeek);
+  drawPowerRatingChart(powerHistory, teamInfo, maxWeek);
 
   // matchupTimeSeries is deliberately [] for lite years (no poll history
   // was ever recorded) -- findBiggestUpsetOfSeason, computeGrinderAndNeverTrailed
