@@ -10,6 +10,14 @@
   .sub { color: #888; font-size: 13px; margin-bottom: 20px; }
   select { padding: 6px 10px; font-size: 14px; margin-bottom: 20px; border-radius: 6px; border: 1px solid #ccc; }
   .team-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
+  .legacy-team-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
+  .legacy-team-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; }
+  .legacy-team-row input[type="color"] { width: 40px; height: 32px; border: 1px solid #ccc; border-radius: 4px; padding: 2px; }
+  .legacy-remove-btn { background: #fff; border: 1px solid #a04000; color: #a04000; border-radius: 5px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+  #legacyMatchupForm { background: #f7f7f7; border: 1px solid #eee; border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  #legacyMatchupForm select, #legacyMatchupForm input { padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; }
+  .legacy-matchup-week-group { font-weight: 600; font-size: 13px; color: #555; margin: 14px 0 6px; }
+  .legacy-matchup-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
   .team-row .espn-name { flex: 1; color: #777; font-size: 13px; }
   .team-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; }
   .team-row input[type="color"] { width: 40px; height: 32px; border: 1px solid #ccc; border-radius: 4px; padding: 2px; }
@@ -78,6 +86,31 @@
   </div>
 
   <a class="back" href="index.html">&larr; Back to charts</a>
+
+  <h2 style="margin-top:36px">Historical / Defunct Teams</h2>
+  <div class="sub">
+    For 2024/2025 seasons (before the win-probability tracker existed), which have no connection to ESPN's current
+    team list at all. Add an entry here for EVERY team that played in one of those years -- including teams still
+    active today under the name above -- since these years use entirely separate, manually-entered records.
+  </div>
+  <div id="legacyTeamList"></div>
+  <button id="addLegacyTeamBtn" type="button">+ Add historical team</button>
+
+  <h2 style="margin-top:36px">Historical Matchup Results</h2>
+  <div class="sub">Enter results one matchup at a time for 2024/2025 -- week, both teams, both scores.</div>
+  <div id="legacyMatchupForm">
+    <label>Year: <input type="number" id="legacyYearInput" min="2000" max="2099" style="width:80px" placeholder="2024"></label>
+    <label>Week: <input type="number" id="legacyWeekInput" min="1" max="25" style="width:60px"></label>
+    <br><br>
+    <select id="legacyHomeTeamSelect"></select>
+    <input type="number" id="legacyHomeScoreInput" step="0.1" style="width:80px" placeholder="Score">
+    <span style="margin:0 8px">vs</span>
+    <select id="legacyAwayTeamSelect"></select>
+    <input type="number" id="legacyAwayScoreInput" step="0.1" style="width:80px" placeholder="Score">
+    <br><br>
+    <button id="addLegacyMatchupBtn" type="button">+ Add result</button>
+  </div>
+  <div id="legacyMatchupList"></div>
 
 <script src="config.js"></script>
 <script src="settings.js?v=4"></script>
