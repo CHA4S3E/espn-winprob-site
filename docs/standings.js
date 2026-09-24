@@ -139,7 +139,7 @@ async function loadLeagueData(leagueId) {
     const settings = t.team_settings || {};
     teamInfo[t.id] = {
       name: settings.display_name || t.espn_team_name,
-      color: settings.color || '#888888',
+      color: themedColor(settings.color || '#888888'),
       emoji: settings.emoji || '',
       logoUrl: settings.logo_url || '',
     };
@@ -157,6 +157,82 @@ async function loadLeagueData(leagueId) {
 // Logo if uploaded, else the older emoji field, else nothing -- same
 // fallback order as the main matchup page, so a team shows consistently
 // across both places regardless of whether they've uploaded a logo yet.
+// Same color-adjustment logic app.js already applies to the ESPN view --
+// ported here rather than shared, since this is a separate, standalone
+// script file. Without this, a team color dark enough to work fine on a
+// light background (which is genuinely most colors -- this only
+// intervenes on ones close to true black) would stay exactly that dark,
+// unreadable value even when this page is in dark mode, since nothing
+// here was otherwise theme-aware about team colors at all.
+const standingsTheme = document.documentElement.getAttribute('data-theme') || 'light';
+function stHexToRgb(hex) {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const num = parseInt(full, 16);
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+function stRgbToHex(r, g, b) {
+  return '#' + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
+}
+function stRgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) { h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return { h, s, l };
+}
+function stHslToRgb(h, s, l) {
+  let r, g, b;
+  if (s === 0) { r = g = b = l; }
+  else {
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  return { r: r * 255, g: g * 255, b: b * 255 };
+}
+const ST_MIN_LIGHTNESS = 0.20;
+const ST_TARGET_LIGHTNESS = 0.50;
+function stIsTooCloseToBlack(hex) {
+  try {
+    const { r, g, b } = stHexToRgb(hex);
+    return stRgbToHsl(r, g, b).l < ST_MIN_LIGHTNESS;
+  } catch {
+    return false;
+  }
+}
+function themedColor(hex) {
+  if (standingsTheme !== 'dark' || !stIsTooCloseToBlack(hex)) return hex;
+  try {
+    const { r, g, b } = stHexToRgb(hex);
+    const { h, s } = stRgbToHsl(r, g, b);
+    const { r: nr, g: ng, b: nb } = stHslToRgb(h, s, ST_TARGET_LIGHTNESS);
+    return stRgbToHex(nr, ng, nb);
+  } catch {
+    return hex; // malformed color -- don't crash the page over it
+  }
+}
+
 function renderTeamIcon(team) {
   if (team.logoUrl) return `<img class="team-icon-img" src="${team.logoUrl}" alt="">`;
   if (team.emoji) return `<span>${team.emoji}</span>`;
