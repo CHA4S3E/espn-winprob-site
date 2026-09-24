@@ -553,6 +553,357 @@ function applyTierRibbon(card, tierData) {
   else card.classList.add('tier-other');
 }
 
+// ============================== SEASONAL THEMES ==============================
+// Thanksgiving and Christmas week get a decorative treatment: falling
+// leaves/snow across the whole page (#seasonalParticleCanvas), pumpkins +
+// a leaf garland or a team-colored string-light garland on ESPN/Needle
+// cards, and a one-line hint inside the kickoff countdown in the days
+// leading up to the week.
+//
+// "Which week is it" is answered from the REAL NFL schedule (the same
+// ESPN scoreboard endpoint fetchWeekStart already uses), never a
+// hardcoded week number -- Thanksgiving is always the 4th Thursday of
+// November and Christmas is always Dec 25, but which fantasy WEEK NUMBER
+// contains that date shifts from season to season depending on how the
+// Thursday-start weeks fall that year. A fixed "week === 12" would be
+// wrong some seasons.
+let debugThanksgivingWeek = localStorage.getItem('winProbDebugThanksgivingWeek') === 'true'; // set on preferences.html
+let debugChristmasWeek = localStorage.getItem('winProbDebugChristmasWeek') === 'true'; // set on preferences.html
+let currentSeasonalTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' -- the CURRENTLY SELECTED week's theme, set once per loadMatchups call, read by the card render/update functions
+let kcHintTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' -- the theme of the week the kickoff countdown is counting down TO (see updateKickoffCountdown), independent of currentSeasonalTheme
+
+// Renders a JS Date as its US-Eastern calendar date (YYYY-MM-DD) -- NFL
+// scheduling's own home timezone. Needed because a Thursday-NIGHT game's
+// UTC timestamp can already read as the following day in UTC (an 8:20pm
+// ET kickoff is 00:20-01:20 UTC), which would otherwise misclassify a
+// Thanksgiving Thursday-night game as landing on Friday.
+function usEasternDateKey(date) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+// 4th Thursday of November, as a YYYY-MM-DD key -- the actual US
+// Thanksgiving date for a given year, computed directly rather than
+// looked up in a maintained table, so this stays correct for any season.
+function thanksgivingDateKey(year) {
+  const d = new Date(Date.UTC(year, 10, 1)); // November 1st
+  let thursdays = 0;
+  while (thursdays < 4) {
+    if (d.getUTCDay() === 4) thursdays++;
+    if (thursdays < 4) d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return `${year}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+function christmasDateKey(year) {
+  return `${year}-12-25`;
+}
+
+// A broader version of fetchWeekStart's cache -- that one only keeps the
+// EARLIEST event date for a (year, week); this keeps every event's date,
+// since Thanksgiving/Christmas detection needs to check whether ANY game
+// that week lands on the target date, not just the first one.
+let weekEventDatesCache = {};
+
+async function fetchWeekEventDates(year, week) {
+  const cacheKey = `${year}-${week}`;
+  if (cacheKey in weekEventDatesCache) return weekEventDatesCache[cacheKey];
+  try {
+    const res = await fetch(`${NFL_SCOREBOARD_URL}?year=${year}&week=${week}&seasontype=2`);
+    if (!res.ok) throw new Error(`ESPN scoreboard ${res.status}`);
+    const data = await res.json();
+    const dates = (data.events || [])
+      .map((e) => (e.date ? new Date(e.date) : null))
+      .filter((d) => d && !isNaN(d));
+    weekEventDatesCache[cacheKey] = dates;
+    return dates;
+  } catch (err) {
+    console.warn('Could not fetch NFL schedule for seasonal theme check:', err.message);
+    weekEventDatesCache[cacheKey] = null;
+    return null;
+  }
+}
+
+// True if ANY game in this (year, week) actually falls on the given
+// US-Eastern calendar date -- the real ground truth for "is this the
+// Thanksgiving/Christmas week," independent of week numbering. Works for
+// past seasons too (the same ESPN endpoint, just with an older year/week),
+// which is what makes browsing an archived Week 12 still show the theme.
+async function weekContainsDateKey(year, week, dateKey) {
+  const dates = await fetchWeekEventDates(year, week);
+  if (!dates || !dates.length) return false;
+  return dates.some((d) => usEasternDateKey(d) === dateKey);
+}
+
+async function weekIsThanksgiving(year, week) {
+  return weekContainsDateKey(year, week, thanksgivingDateKey(year));
+}
+async function weekIsChristmas(year, week) {
+  return weekContainsDateKey(year, week, christmasDateKey(year));
+}
+
+// The real (non-debug) answer -- used for the kickoff countdown's hint,
+// which should always reflect the actual schedule regardless of whether
+// a debug toggle is forcing the full look on for a different week.
+async function realSeasonalTheme(year, week) {
+  try {
+    if (await weekIsThanksgiving(year, week)) return 'thanksgiving';
+    if (await weekIsChristmas(year, week)) return 'christmas';
+  } catch {
+    // best-effort -- fall through to 'none' rather than throwing
+  }
+  return 'none';
+}
+
+// The debug-overridable answer -- used for the currently selected week's
+// full decor treatment. Thanksgiving wins if both debug toggles are
+// somehow on at once (see the preferences.html copy).
+async function determineSeasonalTheme(year, week) {
+  if (debugThanksgivingWeek) return 'thanksgiving';
+  if (debugChristmasWeek) return 'christmas';
+  return realSeasonalTheme(year, week);
+}
+
+function prefersReducedMotion() {
+  return document.documentElement.getAttribute('data-reduce-motion') === 'true'
+    || (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+
+const SEASONAL_LEAF_COLORS = ['#c65d1e', '#d98324', '#8a3b12', '#e0a940', '#9c4a1a', '#b8461f'];
+function seasonalRand(min, max) { return min + Math.random() * (max - min); }
+
+// width/height/sizeScale let one generator serve both the full-page field
+// (large canvas, full-size particles) and the field confined to the
+// kickoff countdown box (tiny canvas, particles scaled down to fit).
+function makeSeasonalParticle(theme, width, height, initial, sizeScale) {
+  const scale = sizeScale == null ? 1 : sizeScale;
+  const isLeaf = theme === 'thanksgiving';
+  return {
+    x: seasonalRand(0, width),
+    y: initial ? seasonalRand(0, height) : seasonalRand(-40, -10),
+    size: (isLeaf ? seasonalRand(9, 16) : seasonalRand(2.5, 5.5)) * scale,
+    speedY: (isLeaf ? seasonalRand(0.5, 1.1) : seasonalRand(0.7, 1.7)) * scale,
+    speedX: seasonalRand(-0.2, 0.2) * scale,
+    swayAmp: seasonalRand(15, 40) * scale,
+    swaySpeed: seasonalRand(0.4, 1.0),
+    swayPhase: seasonalRand(0, Math.PI * 2),
+    rotation: seasonalRand(0, 360),
+    rotSpeed: seasonalRand(-1.2, 1.2),
+    color: isLeaf ? SEASONAL_LEAF_COLORS[Math.floor(Math.random() * SEASONAL_LEAF_COLORS.length)] : '#ffffff',
+    opacity: isLeaf ? seasonalRand(0.75, 1) : seasonalRand(0.45, 0.95),
+  };
+}
+
+function stepSeasonalParticle(p, theme, t, width, height, sizeScale) {
+  p.y += p.speedY;
+  p.x += p.speedX + Math.sin(t * 0.001 * p.swaySpeed + p.swayPhase) * (p.swayAmp * 0.01);
+  p.rotation += p.rotSpeed;
+  if (p.y > height + 30) Object.assign(p, makeSeasonalParticle(theme, width, height, false, sizeScale));
+}
+
+function drawSeasonalLeaf(targetCtx, p) {
+  targetCtx.save();
+  targetCtx.translate(p.x, p.y);
+  targetCtx.rotate((p.rotation * Math.PI) / 180);
+  targetCtx.globalAlpha = p.opacity;
+  targetCtx.fillStyle = p.color;
+  targetCtx.beginPath();
+  const s = p.size;
+  targetCtx.moveTo(0, -s);
+  targetCtx.bezierCurveTo(s * 0.8, -s * 0.4, s * 0.6, s * 0.6, 0, s);
+  targetCtx.bezierCurveTo(-s * 0.6, s * 0.6, -s * 0.8, -s * 0.4, 0, -s);
+  targetCtx.fill();
+  targetCtx.strokeStyle = 'rgba(0,0,0,0.25)';
+  targetCtx.lineWidth = 0.6;
+  targetCtx.beginPath();
+  targetCtx.moveTo(0, -s * 0.85);
+  targetCtx.lineTo(0, s * 0.85);
+  targetCtx.stroke();
+  targetCtx.restore();
+}
+
+function drawSeasonalSnow(targetCtx, p) {
+  targetCtx.save();
+  targetCtx.globalAlpha = p.opacity;
+  targetCtx.fillStyle = p.color;
+  targetCtx.shadowColor = 'rgba(255,255,255,0.8)';
+  targetCtx.shadowBlur = 4;
+  targetCtx.beginPath();
+  targetCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+  targetCtx.fill();
+  targetCtx.restore();
+}
+
+// ---- Full-page particle field ----
+const seasonalCanvas = document.getElementById('seasonalParticleCanvas');
+const seasonalCtx = seasonalCanvas ? seasonalCanvas.getContext('2d') : null;
+let seasonalParticles = [];
+
+function resizeSeasonalCanvas() {
+  if (!seasonalCanvas) return;
+  seasonalCanvas.width = window.innerWidth;
+  seasonalCanvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeSeasonalCanvas);
+resizeSeasonalCanvas();
+
+function seedSeasonalParticles() {
+  if (!seasonalCanvas) return;
+  const count = currentSeasonalTheme === 'thanksgiving' ? 45 : (currentSeasonalTheme === 'christmas' ? 90 : 0);
+  seasonalParticles = [];
+  for (let i = 0; i < count; i++) {
+    seasonalParticles.push(makeSeasonalParticle(currentSeasonalTheme, seasonalCanvas.width, seasonalCanvas.height, true, 1));
+  }
+}
+
+function seasonalTick(t) {
+  if (seasonalCtx) {
+    seasonalCtx.clearRect(0, 0, seasonalCanvas.width, seasonalCanvas.height);
+    if (currentSeasonalTheme !== 'none' && !prefersReducedMotion()) {
+      for (const p of seasonalParticles) {
+        stepSeasonalParticle(p, currentSeasonalTheme, t, seasonalCanvas.width, seasonalCanvas.height, 1);
+        if (currentSeasonalTheme === 'thanksgiving') drawSeasonalLeaf(seasonalCtx, p); else drawSeasonalSnow(seasonalCtx, p);
+      }
+    }
+  }
+  requestAnimationFrame(seasonalTick);
+}
+requestAnimationFrame(seasonalTick);
+
+// ---- Kickoff-countdown-box particle field (the pregame "hint") ----
+const kcCanvas = document.getElementById('kickoffCountdownParticles');
+const kcCtx = kcCanvas ? kcCanvas.getContext('2d') : null;
+let kcParticles = [];
+
+function resizeKcCanvas() {
+  if (!kcCanvas) return;
+  const box = document.getElementById('kickoffCountdown');
+  if (!box) return;
+  const rect = box.getBoundingClientRect();
+  kcCanvas.width = rect.width;
+  kcCanvas.height = rect.height;
+}
+window.addEventListener('resize', resizeKcCanvas);
+
+function seedKcParticles() {
+  resizeKcCanvas();
+  if (!kcCanvas) return;
+  const count = kcHintTheme === 'thanksgiving' ? 10 : (kcHintTheme === 'christmas' ? 16 : 0);
+  kcParticles = [];
+  for (let i = 0; i < count; i++) {
+    kcParticles.push(makeSeasonalParticle(kcHintTheme, kcCanvas.width, kcCanvas.height, true, 0.5));
+  }
+}
+
+function kcTick(t) {
+  if (kcCtx) {
+    kcCtx.clearRect(0, 0, kcCanvas.width, kcCanvas.height);
+    if (kcHintTheme !== 'none' && !prefersReducedMotion()) {
+      for (const p of kcParticles) {
+        stepSeasonalParticle(p, kcHintTheme, t, kcCanvas.width, kcCanvas.height, 0.5);
+        if (kcHintTheme === 'thanksgiving') drawSeasonalLeaf(kcCtx, p); else drawSeasonalSnow(kcCtx, p);
+      }
+    }
+  }
+  requestAnimationFrame(kcTick);
+}
+requestAnimationFrame(kcTick);
+
+// ---- Card decor: pumpkins/leaf garland (Thanksgiving) or string lights
+// (Christmas), on ESPN and Needle cards only (same scope as the delta
+// popup and tier ribbon). Shared wire-drawing logic for both the
+// Christmas light strand and the Thanksgiving leaf garland -- an SVG path
+// scalloped into N droops via quadratic beziers between evenly spaced
+// anchor points, with a decoration (a bulb div or a leaf emoji) placed at
+// the bottom of each droop.
+function buildSeasonalGarland(container, count, decorate) {
+  container.innerHTML = '';
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('viewBox', '0 0 400 30');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.classList.add('seasonal-garland-wire');
+  const path = document.createElementNS(svgNS, 'path');
+  const anchorY = 4, dipY = 22;
+  const segW = 400 / count;
+  let d = `M0,${anchorY}`;
+  const positions = [];
+  for (let i = 0; i < count; i++) {
+    const x0 = i * segW, xMid = x0 + segW / 2, x1 = x0 + segW;
+    d += ` Q${xMid},${dipY} ${x1},${anchorY}`;
+    positions.push({ x: xMid, y: dipY - 2 });
+  }
+  path.setAttribute('d', d);
+  svg.appendChild(path);
+  container.appendChild(svg);
+  positions.forEach((p, i) => decorate(container, p, i));
+}
+
+function buildSeasonalLights(container, colorA, colorB) {
+  buildSeasonalGarland(container, 8, (el, p, i) => {
+    const bulb = document.createElement('div');
+    bulb.className = 'seasonal-bulb';
+    bulb.style.left = (p.x / 400 * 100) + '%';
+    bulb.style.top = (p.y / 30 * 100) + '%';
+    bulb.style.setProperty('--bulb-color', i % 2 === 0 ? colorA : colorB);
+    bulb.style.animationDelay = (i * 0.18) + 's';
+    el.appendChild(bulb);
+  });
+}
+
+// Fixed repeating cycle (i % length) rather than a random pick per leaf --
+// same convention as the bulbs alternating colorA/colorB by i % 2. A
+// random pick would reshuffle which leaf sits where every time the
+// garland gets rebuilt (theme switch, week change), which reads as
+// glitchy rather than like a real, consistently-hung decoration.
+const SEASONAL_LEAF_EMOJIS = ['🍁', '🍂', '🍃'];
+function buildSeasonalLeafGarland(container) {
+  buildSeasonalGarland(container, 7, (el, p, i) => {
+    const leaf = document.createElement('div');
+    leaf.className = 'seasonal-leaf';
+    leaf.textContent = SEASONAL_LEAF_EMOJIS[i % SEASONAL_LEAF_EMOJIS.length];
+    leaf.style.left = (p.x / 400 * 100) + '%';
+    leaf.style.top = (p.y / 30 * 100) + '%';
+    leaf.style.animationDelay = (i * 0.3) + 's';
+    el.appendChild(leaf);
+  });
+}
+
+// Builds/rebuilds a card's seasonal decor from scratch -- called only when
+// a card is first rendered or the theme/week changes (see loadMatchups).
+// Upset Watch must NEVER call this: an upset firing doesn't redraw the
+// whole card, it only flips a color/animation state on markup that
+// already exists (see applySeasonalUpsetState below) -- exactly how the
+// real .upset-watch class and pulsing badge already work elsewhere in
+// this file. Rebuilding the garland on every upset check would re-roll
+// bulb stagger timing and reset the leaf-sway animation, which reads as a
+// flicker/restart for a completely unrelated reason.
+function decorateSeasonalCard(card, theme, home, away) {
+  card.classList.remove('seasonal-thanksgiving', 'seasonal-christmas', 'upset-active');
+  const garland = card.querySelector('.seasonal-garland');
+  if (garland) { garland.innerHTML = ''; garland.classList.remove('upset-lights'); }
+  if (theme === 'none' || !garland) return;
+
+  if (theme === 'thanksgiving') {
+    card.classList.add('seasonal-thanksgiving');
+    buildSeasonalLeafGarland(garland);
+  } else if (theme === 'christmas') {
+    card.classList.add('seasonal-christmas');
+    buildSeasonalLights(garland, home.color, away.color);
+  }
+}
+
+// Toggles the upset-alert look on EXISTING markup only -- the SAME live
+// upset state already computed for the card's own badge/border
+// (getLiveUpsetInfo), not a separate detector. No-ops on Thanksgiving
+// cards (or when there's no seasonal theme at all): there's no
+// Thanksgiving equivalent of Upset Watch lighting.
+function applySeasonalUpsetState(card, theme, upsetActive) {
+  if (theme !== 'christmas') return;
+  const garland = card.querySelector('.seasonal-garland');
+  if (!garland) return;
+  garland.classList.toggle('upset-lights', upsetActive);
+}
+
 // Checks whether week 17 of the LATEST year (yearSelect.value, already
 // sorted descending by loadYearsWeeks) has gone fully final for the
 // currently-selected league, and shows/hides the top-of-page button
@@ -1552,7 +1903,7 @@ function tickKickoffCountdown() {
   if (!el) return;
   if (!kickoffCountdownTarget) {
     el.hidden = true;
-    el.classList.remove('imminent', 'final-minute');
+    el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas');
     return;
   }
   const remaining = kickoffCountdownTarget.getTime() - Date.now();
@@ -1561,11 +1912,21 @@ function tickKickoffCountdown() {
     // Kickoff has arrived (or passed) since this was last checked -- hide
     // immediately rather than show a stale "0m 0s" or a negative countdown.
     kickoffCountdownTarget = null;
+    kcHintTheme = 'none'; // stops the mini particle field too, not just the label
     el.hidden = true;
-    el.classList.remove('imminent', 'final-minute');
+    el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas');
     return;
   }
-  el.innerHTML = `<span class="kickoff-label">${kickoffCountdownLabel}</span>${formatted}`;
+  // Sets the label/time child elements' text directly rather than
+  // overwriting this element's whole innerHTML (the old approach) --
+  // that used to tear down and recreate everything inside #kickoffCountdown
+  // every single second, which would have destroyed the seasonal particle
+  // canvas 60 times a minute along with it. See the restructured markup
+  // in index.html.
+  const labelEl = document.getElementById('kickoffCountdownLabelEl');
+  const timeEl = document.getElementById('kickoffCountdownTimeEl');
+  if (labelEl) labelEl.textContent = kickoffCountdownLabel;
+  if (timeEl) timeEl.textContent = formatted;
   // Starts pulsing in the final hour, then gets a bigger, faster pulse in
   // the final minute specifically (see .imminent / .final-minute in
   // index.html) -- CSS handles the actual visuals, including the
@@ -1584,6 +1945,26 @@ function tickKickoffCountdown() {
   if (hypeCountdownEl && !hypeCountdownEl.hidden) {
     hypeCountdownEl.innerHTML = `Kickoff in <span>${formatted}</span>`;
   }
+
+  // Seasonal hint -- kcHintTheme is set by updateKickoffCountdown based on
+  // whether the week THIS countdown counts down to is itself a
+  // Thanksgiving/Christmas week (see realSeasonalTheme). Purely cosmetic
+  // (tint + one-line hint text); the actual particle preview inside this
+  // box is driven by its own independent kcTick loop reading the same
+  // kcHintTheme variable, not by this function.
+  el.classList.remove('seasonal-thanksgiving', 'seasonal-christmas');
+  const seasonalHintEl = document.getElementById('kickoffSeasonalHint');
+  if (kcHintTheme === 'none') {
+    if (seasonalHintEl) seasonalHintEl.hidden = true;
+  } else {
+    el.classList.add(kcHintTheme === 'thanksgiving' ? 'seasonal-thanksgiving' : 'seasonal-christmas');
+    if (seasonalHintEl) {
+      seasonalHintEl.hidden = false;
+      seasonalHintEl.textContent = kcHintTheme === 'thanksgiving'
+        ? '🦃 Thanksgiving week is almost here'
+        : '🎄 Christmas week is almost here';
+    }
+  }
 }
 
 // Only meaningful when looking at the CURRENT/latest year+week -- browsing
@@ -1594,6 +1975,7 @@ function tickKickoffCountdown() {
 async function updateKickoffCountdown(byMatchup, year, week) {
   if (yearSelect.selectedIndex !== 0 || weekSelect.selectedIndex !== 0) {
     kickoffCountdownTarget = null;
+    kcHintTheme = 'none';
     tickKickoffCountdown();
     return;
   }
@@ -1604,12 +1986,25 @@ async function updateKickoffCountdown(byMatchup, year, week) {
 
   if (!weekStart || Date.now() >= weekStart.getTime()) {
     kickoffCountdownTarget = null;
+    kcHintTheme = 'none';
     tickKickoffCountdown();
     return;
   }
 
   kickoffCountdownTarget = weekStart;
   kickoffCountdownLabel = `Week ${targetWeek} kicks off in`;
+
+  // Is the week THIS countdown is counting down to itself a Thanksgiving/
+  // Christmas week? Deliberately uses realSeasonalTheme (no debug
+  // override) -- forcing a theme on via the debug toggles already shows
+  // the FULL effect on whatever week is currently selected, so a "hint"
+  // about it here would be redundant at best, confusing at worst.
+  try {
+    kcHintTheme = await realSeasonalTheme(year, targetWeek);
+  } catch {
+    kcHintTheme = 'none';
+  }
+  seedKcParticles();
   tickKickoffCountdown();
 }
 
@@ -2290,6 +2685,9 @@ function renderNeedleCard(rows, home, away, allDone) {
   card.className = 'needle-card' + (upsetInfo ? ' upset-watch' : '');
   if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
   card.innerHTML = `
+    <div class="pumpkin-corner left">\ud83c\udf83</div>
+    <div class="pumpkin-corner right">\ud83c\udf83</div>
+    <div class="seasonal-garland"></div>
     <div class="tier-ribbon" hidden></div>
     <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</div>
@@ -2324,6 +2722,9 @@ function renderNeedleCard(rows, home, away, allDone) {
 
   const needle = card.querySelector('.needle-pointer');
   if (needle) needle.style.transform = `rotate(${needleRotationDeg(homePct)}deg)`;
+
+  decorateSeasonalCard(card, currentSeasonalTheme, home, away);
+  applySeasonalUpsetState(card, currentSeasonalTheme, !!upsetInfo);
 
   // prevHomePct seeds the delta-popup comparison on the FIRST background
   // update after this card is created -- see updateNeedleCard, which reads
@@ -2380,6 +2781,7 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
     upsetBadge.classList.toggle('visible', !!upsetInfo);
     upsetBadge.classList.toggle('pulsing', !!upsetInfo);
   }
+  applySeasonalUpsetState(card, currentSeasonalTheme, !!upsetInfo);
 
   const blurb = card.querySelector('.why-blurb');
   if (blurb) blurb.textContent = explainMatchup(rows, home, away, allDone);
@@ -2542,6 +2944,9 @@ function renderEspnCard(rows, home, away, allDone) {
   card.className = 'espn-card' + (upsetInfo ? ' upset-watch' : '');
   if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
   card.innerHTML = `
+    <div class="pumpkin-corner left">\ud83c\udf83</div>
+    <div class="pumpkin-corner right">\ud83c\udf83</div>
+    <div class="seasonal-garland"></div>
     <div class="tier-ribbon" hidden></div>
     <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="espn-header">
@@ -2841,6 +3246,9 @@ function renderEspnCard(rows, home, away, allDone) {
     }
   });
 
+  decorateSeasonalCard(card, currentSeasonalTheme, home, away);
+  applySeasonalUpsetState(card, currentSeasonalTheme, !!upsetInfo);
+
   return { card, entry: { mode: 'espn', chart } };
 }
 
@@ -2903,6 +3311,7 @@ function updateEspnCard(entry, rows, home, away, allDone) {
     if (!isHovering) {
       setUpsetBadgeState(chart.canvas, { text: '\ud83d\udea8 UPSET WATCH', visible: !!upsetInfo, pulsing: !!upsetInfo });
     }
+    applySeasonalUpsetState(card, currentSeasonalTheme, !!upsetInfo);
   }
 }
 
@@ -2941,6 +3350,17 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   updateLeaderBar(byMatchup, teamInfo);
   renderByeWeekNote(byMatchup, teamInfo);
   updateKickoffCountdown(byMatchup, year, week); // fire-and-forget -- doesn't block matchup rendering
+
+  // Only reseeds the full-page particle field when the theme actually
+  // CHANGES (a league/week/league switch, or a debug toggle flipping) --
+  // never on every routine 30s poll, which would otherwise teleport every
+  // leaf/snowflake to a new random position and read as a stutter rather
+  // than smooth continuous fall.
+  const seasonalTheme = await determineSeasonalTheme(year, week);
+  if (seasonalTheme !== currentSeasonalTheme) {
+    currentSeasonalTheme = seasonalTheme;
+    seedSeasonalParticles();
+  }
 
   const { render, update } = VIEW_RENDERERS[viewMode];
 
