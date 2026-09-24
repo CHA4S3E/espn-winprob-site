@@ -333,6 +333,57 @@ async function loadLeagues() {
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
 }
 
+// Given snapshot rows for a SPECIFIC week, determines whether every
+// matchup that week has gone fully final -- both sides' latest snapshot
+// showing all_starters_done=true. False on empty input (the season
+// hasn't reached that week yet), not vacuously true.
+function isWeekFullyComplete(rows) {
+  if (!rows.length) return false;
+  const latestByKey = new Map();
+  for (const r of rows) {
+    const key = `${r.matchup_id}|${r.team_id}`;
+    const existing = latestByKey.get(key);
+    if (!existing || new Date(r.ts) > new Date(existing.ts)) latestByKey.set(key, r);
+  }
+  const matchupGroups = new Map();
+  for (const r of latestByKey.values()) {
+    if (!matchupGroups.has(r.matchup_id)) matchupGroups.set(r.matchup_id, []);
+    matchupGroups.get(r.matchup_id).push(r);
+  }
+  if (!matchupGroups.size) return false;
+  for (const sides of matchupGroups.values()) {
+    if (sides.length !== 2) return false;
+    if (!sides.every((s) => s.all_starters_done)) return false;
+  }
+  return true;
+}
+
+const YEAR_IN_REVIEW_WEEK = 17; // the last week of an NFL fantasy season
+const yearInReviewLink = document.getElementById('yearInReviewLink');
+
+// Checks whether week 17 of the LATEST year (yearSelect.value, already
+// sorted descending by loadYearsWeeks) has gone fully final for the
+// currently-selected league, and shows/hides the top-of-page button
+// accordingly. The early-access preference bypasses this check entirely
+// when enabled, regardless of what week the season is actually on.
+async function checkYearInReviewAvailability(leagueId) {
+  if (!yearInReviewLink) return;
+  if (localStorage.getItem('winProbYearInReviewEarly') === 'true') {
+    yearInReviewLink.hidden = false;
+    return;
+  }
+  const latestYear = Number(yearSelect.value);
+  if (!leagueId || !latestYear) { yearInReviewLink.hidden = true; return; }
+  const { data, error } = await sb
+    .from('snapshots')
+    .select('matchup_id, team_id, all_starters_done, ts')
+    .eq('league_id', leagueId)
+    .eq('year', latestYear)
+    .eq('week', YEAR_IN_REVIEW_WEEK);
+  if (error) { yearInReviewLink.hidden = true; return; }
+  yearInReviewLink.hidden = !isWeekFullyComplete(data || []);
+}
+
 async function loadYearsWeeks(leagueId) {
   let data;
   try {
@@ -2795,11 +2846,16 @@ async function init() {
   });
 
   await loadLeagues();
-  leagueSelect.onchange = async () => { await loadYearsWeeks(leagueSelect.value); await loadMatchups(); };
+  leagueSelect.onchange = async () => {
+    await loadYearsWeeks(leagueSelect.value);
+    await loadMatchups();
+    checkYearInReviewAvailability(leagueSelect.value);
+  };
   weekSelect.onchange = loadMatchups;
   if (leagueSelect.value) {
     await loadYearsWeeks(leagueSelect.value);
     await loadMatchups();
+    checkYearInReviewAvailability(leagueSelect.value);
   }
 
   // Auto-refresh every 30s -- cheap read-only query, fine even if the
