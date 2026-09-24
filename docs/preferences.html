@@ -183,6 +183,19 @@
     </label>
   </div>
 
+  <div class="setting-group setting-group-debug">
+    <div class="setting-title">Halloween Week</div>
+    <div class="setting-desc">Whichever week actually contains Halloween gets bats patrolling the background, ghosts and a cobweb garland (with spiders) on ESPN/Forecasting cards, and a hint in the kickoff countdown in the days before -- if Upset Watch fires on a card, its spiders glow the alert color and pulse, same as the Christmas lights. Unlike Thanksgiving/Christmas (both always an actual NFL game day), Halloween is detected by whether Oct 31 falls within the week's date span, since there's usually no game played on the day itself. This forces that look on for whichever week is currently selected, regardless of the real schedule.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="debugHalloweenWeek">
+      <span>
+        <div class="option-label">Force Halloween Week look (default: off)</div>
+        <div class="option-example">Overridden by Thanksgiving/Christmas above if more than one is somehow on -- trigger a real Upset Watch (or use the Championship Week debug view alongside it) to see the spiders glow and pulse</div>
+      </span>
+    </label>
+  </div>
+
   <a class="back-link" href="index.html">&larr; Back to matchups</a>
 </div>
 
@@ -275,6 +288,13 @@
   christmasDebugCheckbox.checked = localStorage.getItem(CHRISTMAS_DEBUG_KEY) === 'true';
   christmasDebugCheckbox.addEventListener('change', () => {
     localStorage.setItem(CHRISTMAS_DEBUG_KEY, christmasDebugCheckbox.checked ? 'true' : 'false');
+  });
+
+  const HALLOWEEN_DEBUG_KEY = 'winProbDebugHalloweenWeek';
+  const halloweenDebugCheckbox = document.getElementById('debugHalloweenWeek');
+  halloweenDebugCheckbox.checked = localStorage.getItem(HALLOWEEN_DEBUG_KEY) === 'true';
+  halloweenDebugCheckbox.addEventListener('change', () => {
+    localStorage.setItem(HALLOWEEN_DEBUG_KEY, halloweenDebugCheckbox.checked ? 'true' : 'false');
   });
 </script>
 </body>
