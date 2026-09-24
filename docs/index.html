@@ -185,6 +185,11 @@
     background: linear-gradient(135deg, var(--accent), #8a4fd6);
     box-shadow: 0 2px 12px var(--accent-glow-a, rgba(0,0,0,0.15));
   }
+  /* The hidden attribute needs to win over the rule above -- an ID
+     selector alone (specificity 1,0,0) beats the browser's own default
+     [hidden] { display: none } (specificity 0,1,0), so without this,
+     setting element.hidden = true in JS has no visible effect at all. */
+  #yearInReviewLink[hidden] { display: none; }
   #yearInReviewLink:hover { filter: brightness(1.08); }
 
   #controls {
