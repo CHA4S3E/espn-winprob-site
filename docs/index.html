@@ -355,6 +355,55 @@
   .upset-watch-badge.pulsing {
     animation: upsetTextPulse 2.4s ease-in-out infinite;
   }
+
+  /* ---- Delta popup -- a small "+X.X%"/"-X.X%" callout that appears next
+     to a team's percentage ~500ms after a poll actually moves it, colored
+     for whichever side gained ground, then fades after a few seconds.
+     Modeled on election-night vote-margin-change callouts. Sits above the
+     row via absolute positioning (see .espn-row/.fc-team-row position:
+     relative) so it never affects layout, and toggling the .show class
+     restarts the animation -- see scheduleDeltaBadge in app.js, which also
+     forces a reflow before re-adding .show so back-to-back polls each get
+     their own full run rather than the animation appearing to do nothing
+     because the class was already present. Gated entirely on the
+     "Win-probability change popups" preference (see preferences.html);
+     when off, app.js never calls scheduleDeltaBadge at all. ---- */
+  .delta-badge {
+    position: absolute;
+    right: 0;
+    top: -4px;
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 8px;
+    border-radius: 999px;
+    color: #0b0d11;
+    opacity: 0;
+    pointer-events: none;
+    white-space: nowrap;
+    transform: translateY(-6px) scale(0.85);
+    z-index: 2;
+  }
+  .delta-badge.show { animation: deltaPop 5s ease forwards; }
+  @keyframes deltaPop {
+    0% { opacity: 0; transform: translateY(-6px) scale(0.85); }
+    8% { opacity: 1; transform: translateY(-16px) scale(1.08); }
+    14% { transform: translateY(-16px) scale(1); }
+    80% { opacity: 1; transform: translateY(-16px) scale(1); }
+    100% { opacity: 0; transform: translateY(-22px) scale(0.92); }
+  }
+  /* Reduced motion keeps the badge (it's real information, same as the
+     Upset Watch badge staying visible with just the pulse removed) but
+     drops the pop-in bounce and drift, leaving a plain fade. */
+  html[data-reduce-motion="true"] .delta-badge.show { animation: deltaPopReduced 5s ease forwards; }
+  @keyframes deltaPopReduced {
+    0% { opacity: 0; }
+    8% { opacity: 1; }
+    80% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
   @keyframes cardEnter {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
@@ -459,7 +508,7 @@
   .espn-header { display: flex; align-items: center; margin-bottom: 6px; }
   .espn-header .postcard-status { margin-bottom: 0; margin-left: auto; }
   .espn-header .why-blurb { margin: 0 0 0 10px; flex: 1; }
-  .espn-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+  .espn-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; position: relative; }
   .espn-emoji { font-size: 20px; line-height: 1; min-width: 1.2em; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
   /* Sized to roughly match the emoji it replaces, so swapping between a
      team that has a logo and one that still just has an emoji doesn't
@@ -508,7 +557,7 @@
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid currentColor;
   }
   .fc-info-col { flex: 0 1 380px; display: flex; flex-direction: column; justify-content: center; gap: 12px; min-width: 0; }
-  .fc-team-row { display: flex; align-items: center; gap: 10px; }
+  .fc-team-row { display: flex; align-items: center; gap: 10px; position: relative; }
   .fc-team-name { font-family: var(--font-display); font-weight: 400; font-size: var(--text-base); }
   /* Capped rather than flex:1 -- a short connecting dash, not a stretch
      to fill however much column width happens to be available. */
