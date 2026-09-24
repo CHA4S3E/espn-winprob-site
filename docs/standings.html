@@ -56,7 +56,7 @@
     border-radius: 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--fg);
   }
 
-  #standingsTable { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+  #standingsTable, #powerRankingsTable { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
   .standings-header, .standings-row {
     display: grid;
     grid-template-columns: 40px 1fr 74px 56px 64px 64px 52px;
@@ -107,6 +107,27 @@
     text-align: center; color: var(--muted); font-size: var(--text-base); padding: 40px 20px;
   }
 
+  .section-title {
+    font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl);
+    text-align: center; margin: 36px 0 2px;
+  }
+  .section-sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 16px; }
+
+  /* Power Rankings reuses the exact same .standings-row/.standings-header
+     grid as the win-loss table above, just with its own column set --
+     see the power-header/power-row overrides narrowing the grid down to
+     rank + team + one right-aligned score column instead of the win-loss
+     table's seven. */
+  .power-header, .power-row { grid-template-columns: 40px 1fr 150px; }
+  .col-power {
+    font-variant-numeric: tabular-nums; text-align: right; font-size: var(--text-lg);
+    font-family: var(--font-display); font-weight: 400;
+  }
+  .power-confidence {
+    display: block; font-family: var(--font-body); font-size: 10px;
+    color: var(--muted); font-weight: 400; text-transform: none; margin-top: 1px;
+  }
+
   a.back-link { display: block; text-align: center; margin-top: 24px; font-size: var(--text-sm); color: var(--accent); }
 </style>
 </head>
@@ -123,6 +144,10 @@
   <div id="loadingState">Loading standings…</div>
   <div id="standingsTable" style="display:none"></div>
   <div id="emptyState" style="display:none">No completed weeks yet this season — check back once week 1 wraps up.</div>
+
+  <div class="section-title">Power Rankings</div>
+  <div class="section-sub">Opponent-adjusted, recency-weighted, luck-corrected -- not just win-loss record</div>
+  <div id="powerRankingsTable"></div>
 
   <a class="back-link" href="index.html">&larr; Back to matchups</a>
 </div>
