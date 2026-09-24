@@ -365,6 +365,194 @@ function isWeekFullyComplete(rows) {
 const YEAR_IN_REVIEW_WEEK = 17; // the last week of an NFL fantasy season
 const yearInReviewLink = document.getElementById('yearInReviewLink');
 
+// ============================== CHAMPIONSHIP WEEK ==============================
+// Week 17 gets a dedicated hype treatment: a spotlight-sweep hero banner
+// before kickoff (see .championship-stage in index.html), and matchups
+// reordered by playoff stakes -- championship game first, then each
+// placement game down the bracket -- instead of whatever order snapshots
+// happened to arrive in.
+//
+// ESPN's API doesn't label a matchup as "the championship" or "the 3rd
+// place game" -- there's a real bracket behind it, but nothing this app
+// has access to records which teams are actually paired for which
+// placement. Instead this infers tier from regular-season strength: teams
+// are ranked by win/loss record (points-for as tiebreaker) using every
+// FINAL matchup strictly before championship week, then week 17's
+// matchups are sorted by their two teams' combined rank -- the pairing of
+// the two best-ranked teams is treated as the championship, the
+// next-best pairing as the 3rd place game, and so on. This is a
+// heuristic, not a real bracket lookup: if a lower seed upsets its way
+// into the final over a higher seed who got knocked into a placement
+// game instead, this can mislabel which game is actually which. Good
+// enough for a hype banner; not a substitute for real seeding data if
+// that's ever recorded.
+const CHAMPIONSHIP_WEEK = YEAR_IN_REVIEW_WEEK;
+// Defaults OFF -- forces the championship-week treatment (hero banner +
+// tier-ordered/ribboned cards) on regardless of which week is actually
+// selected, purely so the look can be previewed on demand rather than
+// waiting for an actual Week 17 Sunday morning. Real pregame/live
+// detection still applies underneath -- this only removes the "is it
+// really week 17" gate, the same way winProbYearInReviewEarly only
+// removes the "has week 17 actually finished" gate.
+let debugChampionshipWeek = localStorage.getItem('winProbDebugChampionshipWeek') === 'true'; // set on preferences.html
+const championshipStageEl = document.getElementById('championshipStage');
+
+function ordinalLabel(n) {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+// Ranks every team by regular-season record using every FINAL matchup
+// strictly before championship week. Returns a Map of team_id -> 0-based
+// rank (0 = best record). A team with zero completed games before
+// championship week (shouldn't normally happen, but a sparse/incomplete
+// import could produce one) falls back to a rank far outside the real
+// range in computePlayoffTiers below, rather than colliding with rank 0.
+function rankTeamsBeforeChampionshipWeek(seasonRows) {
+  const latestByKey = new Map();
+  for (const r of seasonRows) {
+    if (r.week >= CHAMPIONSHIP_WEEK) continue;
+    const key = `${r.week}|${r.matchup_id}|${r.team_id}`;
+    const existing = latestByKey.get(key);
+    if (!existing || new Date(r.ts) > new Date(existing.ts)) latestByKey.set(key, r);
+  }
+  const matchupGroups = new Map();
+  for (const r of latestByKey.values()) {
+    const mKey = `${r.week}|${r.matchup_id}`;
+    if (!matchupGroups.has(mKey)) matchupGroups.set(mKey, []);
+    matchupGroups.get(mKey).push(r);
+  }
+  const records = new Map();
+  const getRecord = (teamId) => {
+    if (!records.has(teamId)) records.set(teamId, { wins: 0, losses: 0, ties: 0, pointsFor: 0 });
+    return records.get(teamId);
+  };
+  for (const sides of matchupGroups.values()) {
+    if (sides.length !== 2) continue;
+    const [a, b] = sides;
+    if (!a.all_starters_done || !b.all_starters_done) continue;
+    const recA = getRecord(a.team_id), recB = getRecord(b.team_id);
+    recA.pointsFor += a.actual_score; recB.pointsFor += b.actual_score;
+    if (a.actual_score > b.actual_score) { recA.wins++; recB.losses++; }
+    else if (b.actual_score > a.actual_score) { recB.wins++; recA.losses++; }
+    else { recA.ties++; recB.ties++; }
+  }
+  const standings = [...records.entries()].map(([teamId, rec]) => {
+    const played = rec.wins + rec.losses + rec.ties;
+    return { teamId, winPct: played ? (rec.wins + rec.ties * 0.5) / played : 0, pointsFor: rec.pointsFor };
+  });
+  standings.sort((x, y) => y.winPct - x.winPct || y.pointsFor - x.pointsFor);
+  const rankByTeam = new Map();
+  standings.forEach((s, i) => rankByTeam.set(s.teamId, i));
+  return rankByTeam;
+}
+
+// Given this week's byMatchup and the full season's rows (for ranking),
+// returns { order, tierByMatchup }. `order` is this week's matchup_id
+// keys sorted by playoff stakes (strongest combined rank first).
+// `tierByMatchup` maps each matchup_id to { label, tier } (tier 0 =
+// championship, 1 = 3rd place, 2+ = generic placement games) for the
+// ribbon badge on each card.
+function computePlayoffTiers(byMatchup, seasonRows) {
+  const rankByTeam = rankTeamsBeforeChampionshipWeek(seasonRows);
+  const matchupIds = Object.keys(byMatchup);
+  const scored = matchupIds.map((mId) => {
+    const rows = byMatchup[mId];
+    const homeRow = rows.find((r) => r.is_home);
+    const awayRow = rows.find((r) => !r.is_home);
+    // 999 is an out-of-range fallback for a team with no rankable
+    // regular-season record -- see rankTeamsBeforeChampionshipWeek.
+    const rankA = homeRow ? (rankByTeam.has(homeRow.team_id) ? rankByTeam.get(homeRow.team_id) : 999) : 999;
+    const rankB = awayRow ? (rankByTeam.has(awayRow.team_id) ? rankByTeam.get(awayRow.team_id) : 999) : 999;
+    return { mId, combinedRank: rankA + rankB };
+  });
+  scored.sort((x, y) => x.combinedRank - y.combinedRank);
+
+  const tierByMatchup = {};
+  scored.forEach((s, i) => {
+    let label;
+    if (i === 0) label = '🏆 Championship';
+    else if (i === 1) label = '🥉 3rd Place Game';
+    else label = `${ordinalLabel(i * 2 + 1)} Place Game`;
+    tierByMatchup[s.mId] = { label, tier: i };
+  });
+  return { order: scored.map((s) => s.mId), tierByMatchup };
+}
+
+// Caches the ranking source data per league+year -- it only depends on
+// regular-season results, which are locked in by the time championship
+// week starts, so there's no reason to re-fetch every 30s refresh. Only
+// invalidated by actually switching league or year.
+let championshipTierCache = { key: null, rows: null };
+
+async function getPlayoffTiers(leagueId, year, byMatchup) {
+  const cacheKey = `${leagueId}|${year}`;
+  if (championshipTierCache.key !== cacheKey) {
+    let rows;
+    try {
+      rows = await fetchAllRows((from, to) =>
+        sb.from('snapshots')
+          .select('week, matchup_id, team_id, actual_score, all_starters_done, ts')
+          .eq('league_id', leagueId).eq('year', year).lt('week', CHAMPIONSHIP_WEEK).eq('all_starters_done', true)
+          .range(from, to)
+      );
+    } catch {
+      rows = [];
+    }
+    championshipTierCache = { key: cacheKey, rows };
+  }
+  return computePlayoffTiers(byMatchup, championshipTierCache.rows || []);
+}
+
+// Shows/hides the Week 17 hero banner and switches it between pregame
+// (spotlight sweep + countdown) and live (spotlights faded out, see CSS)
+// based on whether any score has actually come in yet for this week --
+// not on wall-clock time, so it stays correct even if an NFL game gets
+// delayed or moved.
+function updateChampionshipStage(active, byMatchup) {
+  if (!championshipStageEl) return;
+  championshipStageEl.hidden = !active;
+  if (!active) return;
+
+  const hasStarted = Object.values(byMatchup).some((rows) => rows.some((r) => Number(r.actual_score) > 0));
+  championshipStageEl.setAttribute('data-mode', hasStarted ? 'live' : 'pregame');
+
+  const hypeCountdownEl = document.getElementById('hypeCountdown');
+  if (!hypeCountdownEl) return;
+  if (hasStarted) {
+    hypeCountdownEl.hidden = true;
+    return;
+  }
+  if (kickoffCountdownTarget) {
+    const formatted = formatCountdown(kickoffCountdownTarget.getTime() - Date.now());
+    hypeCountdownEl.hidden = !formatted;
+    if (formatted) hypeCountdownEl.innerHTML = `Kickoff in <span>${formatted}</span>`;
+  } else {
+    // No resolved kickoff time (e.g. browsing an older week, or the debug
+    // toggle forcing this on outside a real week 17) -- generic copy
+    // instead of a wrong or stale number.
+    hypeCountdownEl.hidden = false;
+    hypeCountdownEl.textContent = 'Before kickoff';
+  }
+}
+
+// Sets/clears the tier ribbon on a rendered card (ESPN and Needle views
+// only -- see VIEW_RENDERERS wiring in loadMatchups). Both card templates
+// include a `.tier-ribbon` element up front, hidden by default, exactly
+// like `.delta-badge` is always present but only populated when relevant.
+function applyTierRibbon(card, tierData) {
+  const ribbon = card.querySelector('.tier-ribbon');
+  card.classList.remove('tier-champ', 'tier-third', 'tier-other');
+  if (!ribbon) return;
+  if (!tierData) { ribbon.hidden = true; return; }
+  ribbon.hidden = false;
+  ribbon.textContent = tierData.label;
+  if (tierData.tier === 0) card.classList.add('tier-champ');
+  else if (tierData.tier === 1) card.classList.add('tier-third');
+  else card.classList.add('tier-other');
+}
+
 // Checks whether week 17 of the LATEST year (yearSelect.value, already
 // sorted descending by loadYearsWeeks) has gone fully final for the
 // currently-selected league, and shows/hides the top-of-page button
@@ -1386,6 +1574,16 @@ function tickKickoffCountdown() {
   el.classList.toggle('imminent', remaining <= KICKOFF_IMMINENT_MS);
   el.classList.toggle('final-minute', remaining <= KICKOFF_FINAL_MINUTE_MS);
   el.hidden = false;
+
+  // Piggybacks on this same 1s tick to refresh the championship hero
+  // banner's own countdown text, rather than running a second timer for
+  // what's fundamentally the same clock. Only touches it while the stage
+  // is actually in pregame mode -- once live, updateChampionshipStage
+  // hides this line itself and there's nothing to tick.
+  const hypeCountdownEl = document.getElementById('hypeCountdown');
+  if (hypeCountdownEl && !hypeCountdownEl.hidden) {
+    hypeCountdownEl.innerHTML = `Kickoff in <span>${formatted}</span>`;
+  }
 }
 
 // Only meaningful when looking at the CURRENT/latest year+week -- browsing
@@ -2092,6 +2290,7 @@ function renderNeedleCard(rows, home, away, allDone) {
   card.className = 'needle-card' + (upsetInfo ? ' upset-watch' : '');
   if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
   card.innerHTML = `
+    <div class="tier-ribbon" hidden></div>
     <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="postcard-status ${isLive ? 'live' : ''}">${allDone ? 'Final' : '\u25CF Live'}</div>
     <div class="fc-top-row">
@@ -2343,6 +2542,7 @@ function renderEspnCard(rows, home, away, allDone) {
   card.className = 'espn-card' + (upsetInfo ? ' upset-watch' : '');
   if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
   card.innerHTML = `
+    <div class="tier-ribbon" hidden></div>
     <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">\ud83d\udea8 UPSET WATCH</div>
     <div class="espn-header">
       <button class="why-btn" type="button" title="Why is this the number?">\u24d8</button>
@@ -2744,7 +2944,10 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
   const { render, update } = VIEW_RENDERERS[viewMode];
 
+  const championshipWeekActive = debugChampionshipWeek || week === CHAMPIONSHIP_WEEK;
+
   if (Object.keys(byMatchup).length === 0) {
+    updateChampionshipStage(false, {});
     if (!preserveCharts) {
       matchupsEl.innerHTML = '';
       Object.values(charts).forEach(destroyEntry);
@@ -2752,6 +2955,21 @@ async function loadMatchups({ preserveCharts = false } = {}) {
       statusEl.textContent = 'No data yet for this week -- the poller may not have run yet.';
     }
     return;
+  }
+
+  updateChampionshipStage(championshipWeekActive, byMatchup);
+
+  // Only worth the extra season-wide query when the hero banner/ribbons
+  // are actually showing, and only on a full rebuild -- tiers depend on
+  // LOCKED regular-season results, so there's nothing to recompute on a
+  // routine 30s poll of week 17 itself.
+  let tierInfo = null;
+  if (championshipWeekActive && (!preserveCharts || Object.keys(charts).length === 0)) {
+    try {
+      tierInfo = await getPlayoffTiers(leagueId, year, byMatchup);
+    } catch {
+      tierInfo = null; // best-effort -- falls back to natural matchup order below
+    }
   }
 
   if (!preserveCharts || Object.keys(charts).length === 0) {
@@ -2767,7 +2985,17 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
     statusEl.textContent = '';
 
-    for (const [matchupId, rows] of Object.entries(byMatchup)) {
+    // Championship-tier order when available (falls back to whatever
+    // order byMatchup's keys already came in for every other week, or if
+    // the tier query failed) -- filtered against byMatchup's own keys so
+    // a stale cached order can never reference a matchup that isn't
+    // actually part of this week.
+    const matchupOrder = tierInfo
+      ? tierInfo.order.filter((id) => byMatchup[id])
+      : Object.keys(byMatchup);
+
+    for (const matchupId of matchupOrder) {
+      const rows = byMatchup[matchupId];
       const homeRow = rows.find((r) => r.is_home);
       const awayRow = rows.find((r) => !r.is_home);
       if (!homeRow || !awayRow) continue;
@@ -2777,6 +3005,9 @@ async function loadMatchups({ preserveCharts = false } = {}) {
       const allDone = !!(latestRow(rows, true)?.all_starters_done && latestRow(rows, false)?.all_starters_done);
 
       const { card, entry } = render(rows, home, away, allDone);
+      // Ribbon markup only exists on the ESPN and Needle templates
+      // (applyTierRibbon no-ops safely if .tier-ribbon isn't present).
+      if (tierInfo) applyTierRibbon(card, tierInfo.tierByMatchup[matchupId]);
       matchupsEl.appendChild(card);
       if (entry) charts[matchupId] = entry;
     }
