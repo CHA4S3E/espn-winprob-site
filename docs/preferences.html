@@ -96,6 +96,19 @@
   </div>
 
   <div class="setting-group">
+    <div class="setting-title">Win-probability change popups</div>
+    <div class="setting-desc">When a poll moves a team's win probability, a small colored "+X.X%" badge pops up next to the number about half a second later, then fades out after a few seconds -- similar to how election-night vote-margin changes are called out. Shows up on ESPN and Forecasting views.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="showDeltaPopups">
+      <span>
+        <div class="option-label">Show change popups (default: on)</div>
+        <div class="option-example">Turn off for a quieter card -- the percentage itself still updates either way, this only controls the little badge</div>
+      </span>
+    </label>
+  </div>
+
+  <div class="setting-group">
     <div class="setting-title">Reduce animations</div>
     <div class="setting-desc">Turns off the pulsing glow on the Live badge, Upset Watch, and the kickoff countdown once it's within an hour of starting. Each alert stays visible as a plain static border/color -- only the pulsing itself is removed. Separate from your OS's own reduced-motion setting, which is always respected regardless of this toggle.</div>
 
@@ -142,6 +155,17 @@
   bandCheckbox.checked = localStorage.getItem(BAND_KEY) === 'true';
   bandCheckbox.addEventListener('change', () => {
     localStorage.setItem(BAND_KEY, bandCheckbox.checked ? 'true' : 'false');
+  });
+
+  // Defaults on -- only 'false' turns it off, same convention as the
+  // Upset Watch history toggle above (this is extra live-update feedback
+  // layered on top of behavior that already exists, not a new persistent
+  // visual element).
+  const DELTA_KEY = 'winProbShowDeltaPopups';
+  const deltaCheckbox = document.getElementById('showDeltaPopups');
+  deltaCheckbox.checked = localStorage.getItem(DELTA_KEY) !== 'false';
+  deltaCheckbox.addEventListener('change', () => {
+    localStorage.setItem(DELTA_KEY, deltaCheckbox.checked ? 'true' : 'false');
   });
 
   // Defaults OFF -- only 'true' brings the deprecated views back.
