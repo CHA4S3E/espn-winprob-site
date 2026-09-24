@@ -721,11 +721,21 @@ function drawSeasonalLeaf(targetCtx, p) {
   targetCtx.restore();
 }
 
+// Snowflakes read the CURRENT theme at draw time (not baked into the
+// particle at creation) so toggling light/dark mid-flurry repaints every
+// flake immediately, rather than waiting for it to fall offscreen and
+// respawn. White reads as "falling snow" on the dark background, but
+// disappears into a white/light page, so light mode swaps in the site's
+// own --accent blue (#1a3fa0) instead -- same color family as the rest of
+// the light-mode UI, just visible against a light background.
+const SEASONAL_SNOW_COLOR_DARK = '#ffffff';
+const SEASONAL_SNOW_COLOR_LIGHT = '#1a3fa0';
 function drawSeasonalSnow(targetCtx, p) {
+  const isLight = theme === 'light';
   targetCtx.save();
   targetCtx.globalAlpha = p.opacity;
-  targetCtx.fillStyle = p.color;
-  targetCtx.shadowColor = 'rgba(255,255,255,0.8)';
+  targetCtx.fillStyle = isLight ? SEASONAL_SNOW_COLOR_LIGHT : SEASONAL_SNOW_COLOR_DARK;
+  targetCtx.shadowColor = isLight ? 'rgba(26, 63, 160, 0.45)' : 'rgba(255,255,255,0.8)';
   targetCtx.shadowBlur = 4;
   targetCtx.beginPath();
   targetCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
