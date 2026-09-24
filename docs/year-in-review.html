@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Year in Review — Fantasy Win Probability Tracker</title>
+<meta name="theme-color" content="#ffffff" id="themeColorMeta">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+  const initialTheme =
+    localStorage.getItem('winProbTheme') ||
+    (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', initialTheme);
+  document.getElementById('themeColorMeta')?.setAttribute('content', initialTheme === 'dark' ? '#14161a' : '#ffffff');
+</script>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #222222; --muted: #888888; --accent: #1a3fa0;
+    --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
+    --font-body: 'Inter', -apple-system, Arial, sans-serif;
+  }
+  html[data-theme="dark"] { --bg: #14161a; --fg: #e8e8e8; --muted: #9aa0a6; --accent: #3a67df; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: var(--font-body); background: var(--bg); color: var(--fg);
+    margin: 0; padding: 60px 20px; text-align: center; -webkit-font-smoothing: antialiased;
+  }
+  h1 { font-family: var(--font-display); font-weight: 400; font-size: 32px; margin-bottom: 8px; }
+  p { color: var(--muted); font-size: 15px; max-width: 420px; margin: 0 auto 24px; line-height: 1.6; }
+  a { color: var(--accent); font-size: 14px; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+  <h1>🏆 Year in Review</h1>
+  <p>This is still being built — check back once the full season wraps up.</p>
+  <a href="index.html">&larr; Back to matchups</a>
+</body>
+</html>
