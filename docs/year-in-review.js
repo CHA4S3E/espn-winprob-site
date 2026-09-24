@@ -45,9 +45,16 @@ async function loadLeagues() {
 }
 
 async function loadYearsForLeague(leagueId) {
-  const { data, error } = await sb.from('snapshots').select('year').eq('league_id', leagueId);
-  if (error) { showEmpty('Could not load season data -- check the console.'); console.error(error); return; }
-  const years = [...new Set((data || []).map((r) => r.year))].sort((a, b) => b - a);
+  // Merge years from BOTH the real tracker (snapshots) and manually-
+  // entered legacy seasons (legacy_matchups) -- a year with only legacy
+  // data (2024, 2025) still needs to show up as a selectable option even
+  // though it has zero snapshot rows.
+  const [{ data: snapYears, error: snapError }, { data: legacyYears, error: legacyError }] = await Promise.all([
+    sb.from('snapshots').select('year').eq('league_id', leagueId),
+    sb.from('legacy_matchups').select('year').eq('league_id', leagueId),
+  ]);
+  if (snapError && legacyError) { showEmpty('Could not load season data -- check the console.'); console.error(snapError, legacyError); return; }
+  const years = [...new Set([...(snapYears || []), ...(legacyYears || [])].map((r) => r.year))].sort((a, b) => b - a);
   if (!years.length) { showEmpty('No completed seasons yet for this league.'); return; }
   yearSelect.innerHTML = years.map((y) => `<option value="${y}">${y}</option>`).join('');
   yearSelect.onchange = () => loadYear(leagueId, Number(yearSelect.value));
@@ -61,12 +68,28 @@ function showEmpty(message) {
   emptyState.textContent = message;
 }
 
+// Converts legacy_matchups rows (one row per matchup, both scores
+// together) into the same finalRows shape buildFinalRows produces from
+// real snapshot data (one row PER TEAM per matchup) -- so every existing
+// stat function can consume either source identically without knowing
+// which one it's looking at. No win_prob or expected_score fields exist
+// here, since that data was never tracked for these seasons -- callers
+// must not run the projection- or win_prob-dependent stats against this.
+function buildLegacyFinalRows(legacyMatchups) {
+  const rows = [];
+  for (const m of legacyMatchups) {
+    rows.push({ year: m.year, week: m.week, matchup_id: m.id, team_id: m.home_team_id, actual_score: m.home_score, all_starters_done: true, ts: `${m.year}-${String(m.week).padStart(2, '0')}-1` });
+    rows.push({ year: m.year, week: m.week, matchup_id: m.id, team_id: m.away_team_id, actual_score: m.away_score, all_starters_done: true, ts: `${m.year}-${String(m.week).padStart(2, '0')}-2` });
+  }
+  return rows;
+}
+
 async function loadYear(leagueId, year) {
   loadingState.style.display = 'block';
   content.style.display = 'none';
   emptyState.style.display = 'none';
 
-  const [{ data: teams, error: teamsError }, allSnapshotRows, { data: seasonResults }, { data: league }] = await Promise.all([
+  const [{ data: liveTeams, error: teamsError }, allSnapshotRows, { data: seasonResults }, { data: league }] = await Promise.all([
     sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId),
     fetchAllRows((from, to) =>
       sb.from('snapshots')
@@ -78,29 +101,59 @@ async function loadYear(leagueId, year) {
   ]);
   if (teamsError) { showEmpty('Could not load team info -- check the console.'); console.error(teamsError); return; }
 
-  const teamInfo = {};
-  for (const t of teams) {
-    const settings = t.team_settings || {};
-    teamInfo[t.id] = {
-      name: settings.display_name || t.espn_team_name,
-      color: settings.color || '#888888',
-      emoji: settings.emoji || '',
-      logoUrl: settings.logo_url || '',
-    };
+  let finalRows, matchupTimeSeries, teamInfoSource, isLite;
+
+  if (allSnapshotRows.length) {
+    // The normal, fully-tracked path.
+    isLite = false;
+    finalRows = buildFinalRows(allSnapshotRows);
+    matchupTimeSeries = buildMatchupTimeSeries(allSnapshotRows);
+    teamInfoSource = {};
+    for (const t of liveTeams) {
+      const settings = t.team_settings || {};
+      teamInfoSource[t.id] = {
+        name: settings.display_name || t.espn_team_name,
+        color: settings.color || '#888888',
+        emoji: settings.emoji || '',
+        logoUrl: settings.logo_url || '',
+      };
+    }
+  } else {
+    // No real tracking data for this year at all -- fall back to
+    // manually-entered legacy results, if any exist.
+    const [{ data: legacyMatchups, error: legacyMatchupsError }, { data: legacyTeams, error: legacyTeamsError }] = await Promise.all([
+      sb.from('legacy_matchups').select('id, week, home_team_id, away_team_id, home_score, away_score').eq('league_id', leagueId).eq('year', year),
+      sb.from('legacy_teams').select('id, name, color, logo_url, emoji').eq('league_id', leagueId),
+    ]);
+    if (legacyMatchupsError || legacyTeamsError) { showEmpty('Could not load historical season data -- check the console.'); console.error(legacyMatchupsError, legacyTeamsError); return; }
+    if (!legacyMatchups || !legacyMatchups.length) { showEmpty(`No data yet for ${year} -- check back once games have been played.`); return; }
+
+    isLite = true;
+    finalRows = buildLegacyFinalRows(legacyMatchups.map((m) => ({ ...m, year })));
+    matchupTimeSeries = []; // no poll history exists for legacy years -- win_prob-dependent stats correctly find nothing and skip themselves
+    teamInfoSource = {};
+    for (const t of legacyTeams || []) {
+      teamInfoSource[t.id] = { name: t.name, color: t.color || '#888888', emoji: t.emoji || '', logoUrl: t.logo_url || '' };
+    }
   }
 
-  if (!allSnapshotRows.length) { showEmpty(`No data yet for ${year} -- check back once games have been played.`); return; }
-
-  const finalRows = buildFinalRows(allSnapshotRows);
-  const matchupTimeSeries = buildMatchupTimeSeries(allSnapshotRows);
-  const standings = computeStandings(finalRows, teamInfo);
-
+  const standings = computeStandings(finalRows, teamInfoSource);
   if (!standings.length) { showEmpty(`No completed matchups yet for ${year}.`); return; }
 
-  const maxWeek = Math.max(...allSnapshotRows.map((r) => r.week));
+  // Only pass through teams that actually appear in THIS year's
+  // standings -- otherwise the logo banner (and anywhere else teamInfo
+  // feeds) would show every team ever registered for the league,
+  // including ones that didn't exist yet or had already left by this
+  // particular year. Applies to both the live and legacy paths, since
+  // it's the same correctness issue either way, just far more visible
+  // for legacy years where team rosters commonly differ year to year.
+  const teamInfo = {};
+  for (const s of standings) teamInfo[s.teamId] = teamInfoSource[s.teamId];
+
+  const maxWeek = Math.max(...finalRows.map((r) => r.week));
 
   renderEverything({
-    year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek,
+    year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, isLite,
     podiumResults: seasonResults || [], playoffSpots: league ? league.playoff_spots : null,
   });
 
@@ -802,8 +855,9 @@ function buildMatchupTimeSeries(allRows) {
   return series;
 }
 
-function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, podiumResults, playoffSpots }) {
+function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, podiumResults, playoffSpots, isLite }) {
   document.getElementById('heroYear').textContent = `${year} Season`;
+  renderLiteNote(isLite);
   renderLogoBanner(teamInfo);
   renderPodium(standings, teamInfo, podiumResults);
   renderPeoplesChampion(computePeoplesChampion(standings), teamInfo, standings);
@@ -811,11 +865,23 @@ function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSer
   const raceData = computeSeasonRaceData(finalRows, teamInfo, maxWeek);
   drawRaceChart(raceData, teamInfo, maxWeek);
 
+  // matchupTimeSeries is deliberately [] for lite years (no poll history
+  // was ever recorded) -- findBiggestUpsetOfSeason, computeGrinderAndNeverTrailed
+  // and computeUpsetWatchLeaderboard all correctly return null/empty on an
+  // empty series already, so the cards that depend on them just don't
+  // render, with no isLite-specific branching needed here.
   renderDramaAwards(standings, matchupTimeSeries, teamInfo);
-  renderNumbersAwards(standings, finalRows, teamInfo);
+  renderNumbersAwards(standings, finalRows, teamInfo, isLite);
   renderLuckAwards(standings, teamInfo);
   renderUpsetLeaderboard(matchupTimeSeries, teamInfo);
   renderSoClose(standings, teamInfo, playoffSpots);
+}
+
+function renderLiteNote(isLite) {
+  const el = document.getElementById('liteNote');
+  if (!isLite) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.textContent = 'This season predates the win-probability tracker, so it only has basic matchup results -- upsets, comebacks, and projection-based awards aren\'t available for it.';
 }
 
 function renderDramaAwards(standings, matchupTimeSeries, teamInfo) {
@@ -905,15 +971,18 @@ function renderDramaAwards(standings, matchupTimeSeries, teamInfo) {
   document.getElementById('dramaSection').style.display = cards.length ? '' : 'none';
 }
 
-function renderNumbersAwards(standings, finalRows, teamInfo) {
+function renderNumbersAwards(standings, finalRows, teamInfo, isLite) {
   const cards = [];
   const bw = findBestWorstWeek(standings);
   if (bw.best) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">🔥 Best Week</div><div class="award-headline">${teamNameHtml(teamInfo[bw.best.teamId])}</div><div class="award-detail">${bw.best.score.toFixed(1)} points, Week ${bw.best.week}</div></div>`);
   if (bw.worst) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">🥶 Worst Week</div><div class="award-headline">${teamNameHtml(teamInfo[bw.worst.teamId])}</div><div class="award-detail">${bw.worst.score.toFixed(1)} points, Week ${bw.worst.week}</div></div>`);
 
-  const proj = computeProjectionStats(finalRows);
-  if (proj.bestWeek) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">📈 Biggest Overperformer</div><div class="award-headline">${teamNameHtml(teamInfo[proj.bestWeek.teamId])}</div><div class="award-detail">+${proj.bestWeek.diff.toFixed(1)} over projection, Week ${proj.bestWeek.week} (${proj.bestWeek.expected.toFixed(1)} projected &rarr; ${proj.bestWeek.actual.toFixed(1)} actual)</div></div>`);
-  if (proj.worstWeek) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">📉 Biggest Underperformer</div><div class="award-headline">${teamNameHtml(teamInfo[proj.worstWeek.teamId])}</div><div class="award-detail">${proj.worstWeek.diff.toFixed(1)} under projection, Week ${proj.worstWeek.week} (${proj.worstWeek.expected.toFixed(1)} projected &rarr; ${proj.worstWeek.actual.toFixed(1)} actual)</div></div>`);
+  // Projection stats need expected_score, which legacy (lite) years never
+  // recorded -- skipped entirely rather than computed against missing
+  // data, which would otherwise silently produce NaN.
+  const proj = isLite ? null : computeProjectionStats(finalRows);
+  if (proj && proj.bestWeek) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">📈 Biggest Overperformer</div><div class="award-headline">${teamNameHtml(teamInfo[proj.bestWeek.teamId])}</div><div class="award-detail">+${proj.bestWeek.diff.toFixed(1)} over projection, Week ${proj.bestWeek.week} (${proj.bestWeek.expected.toFixed(1)} projected &rarr; ${proj.bestWeek.actual.toFixed(1)} actual)</div></div>`);
+  if (proj && proj.worstWeek) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">📉 Biggest Underperformer</div><div class="award-headline">${teamNameHtml(teamInfo[proj.worstWeek.teamId])}</div><div class="award-detail">${proj.worstWeek.diff.toFixed(1)} under projection, Week ${proj.worstWeek.week} (${proj.worstWeek.expected.toFixed(1)} projected &rarr; ${proj.worstWeek.actual.toFixed(1)} actual)</div></div>`);
 
   const cons = computeConsistency(standings);
   if (cons.mostConsistent) cards.push(`<div class="award-card" style="--accent-color:#2ec4c6"><div class="award-label">😌 Mr. Consistent</div><div class="award-headline">${teamNameHtml(teamInfo[cons.mostConsistent.teamId])}</div><div class="award-detail">Every week between ${cons.mostConsistent.min.toFixed(0)} and ${cons.mostConsistent.max.toFixed(0)} points -- the smallest range all season</div></div>`);
@@ -923,8 +992,8 @@ function renderNumbersAwards(standings, finalRows, teamInfo) {
   if (streaks.longestWin) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">🔥 Longest Win Streak</div><div class="award-headline">${teamNameHtml(teamInfo[streaks.longestWin.teamId])}</div><div class="award-detail">${streaks.longestWin.len} straight wins, Weeks ${streaks.longestWin.startWeek} through ${streaks.longestWin.endWeek}</div></div>`);
   if (streaks.longestLoss) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">❄️ Longest Losing Streak</div><div class="award-headline">${teamNameHtml(teamInfo[streaks.longestLoss.teamId])}</div><div class="award-detail">${streaks.longestLoss.len} straight losses, Weeks ${streaks.longestLoss.startWeek} through ${streaks.longestLoss.endWeek}</div></div>`);
 
-  if (proj.bestAvg) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">📊 Best Season-Long vs. Projection</div><div class="award-headline">${teamNameHtml(teamInfo[proj.bestAvg.teamId])}</div><div class="award-detail">Averaged ${proj.bestAvg.avgDiff >= 0 ? '+' : ''}${proj.bestAvg.avgDiff.toFixed(1)} points vs. their own projection across ${proj.bestAvg.weeksCounted} weeks</div></div>`);
-  if (proj.worstAvg) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">📊 Worst Season-Long vs. Projection</div><div class="award-headline">${teamNameHtml(teamInfo[proj.worstAvg.teamId])}</div><div class="award-detail">Averaged ${proj.worstAvg.avgDiff.toFixed(1)} points vs. their own projection across ${proj.worstAvg.weeksCounted} weeks</div></div>`);
+  if (proj && proj.bestAvg) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">📊 Best Season-Long vs. Projection</div><div class="award-headline">${teamNameHtml(teamInfo[proj.bestAvg.teamId])}</div><div class="award-detail">Averaged ${proj.bestAvg.avgDiff >= 0 ? '+' : ''}${proj.bestAvg.avgDiff.toFixed(1)} points vs. their own projection across ${proj.bestAvg.weeksCounted} weeks</div></div>`);
+  if (proj && proj.worstAvg) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">📊 Worst Season-Long vs. Projection</div><div class="award-headline">${teamNameHtml(teamInfo[proj.worstAvg.teamId])}</div><div class="award-detail">Averaged ${proj.worstAvg.avgDiff.toFixed(1)} points vs. their own projection across ${proj.worstAvg.weeksCounted} weeks</div></div>`);
 
   document.getElementById('numbersAwards').innerHTML = cards.join('');
   document.getElementById('numbersSection').style.display = cards.length ? '' : 'none';
