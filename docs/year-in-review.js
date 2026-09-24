@@ -113,8 +113,13 @@ function initials(name) { return name.split(' ').map((w) => w[0]).join('').slice
 function renderLogoBanner(teamInfo) {
   const teams = Object.values(teamInfo);
   if (!teams.length) return;
+  // No background on a real logo -- lets an uploaded PNG's own
+  // transparency actually show through to the page behind it, rather
+  // than covering it with a flat team-color square regardless. The
+  // fallback (a team with no logo yet) still needs a colored background,
+  // since plain initials with no fill would be unreadable.
   const chipHtml = (t) => t.logoUrl
-    ? `<div class="logo-chip" style="background:${t.color}"><img src="${t.logoUrl}" alt=""></div>`
+    ? `<div class="logo-chip"><img src="${t.logoUrl}" alt=""></div>`
     : `<div class="logo-chip" style="background:${t.color}">${initials(t.name)}</div>`;
   // Split teams across 3 rows round-robin, duplicated within each row so
   // the CSS loop (translateX 0 to -50%) has no visible seam.
