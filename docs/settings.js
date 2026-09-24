@@ -217,7 +217,7 @@ async function loadSeasonResultsPanel() {
   const leagueId = leagueSelect.value;
 
   // Merge years from both snapshots AND legacy_matchups -- a legacy-only
-  // year like 2024 has zero snapshot rows but still needs a podium.
+  // year like 2024 has zero snapshot rows but still needs standings set.
   const [{ data: snapYears }, { data: legacyYears }] = await Promise.all([
     sb.from('snapshots').select('year').eq('league_id', leagueId),
     sb.from('legacy_matchups').select('year').eq('league_id', leagueId),
@@ -226,27 +226,43 @@ async function loadSeasonResultsPanel() {
   const yearSelect = document.getElementById('resultsYearSelect');
   yearSelect.innerHTML = distinctYears.map((y) => `<option value="${y}">${y}</option>`).join('');
 
-  // Podium options cover BOTH still-active teams and historical/defunct
-  // ones -- a legacy season's champion isn't necessarily a team that's
-  // still around today. Each option's value is prefixed with its source
-  // ("live:" or "legacy:") so the save handler knows which column to
-  // write the selected id into, same convention as the matchup form.
-  const [{ data: liveTeams }, { data: legacyTeams }] = await Promise.all([
-    sb.from('teams').select('id, espn_team_name, team_settings(display_name)').eq('league_id', leagueId).order('espn_team_name'),
-    sb.from('legacy_teams').select('id, name').eq('league_id', leagueId).order('name'),
-  ]);
-  const liveOptions = (liveTeams || [])
-    .map((t) => `<option value="live:${t.id}">${(t.team_settings && t.team_settings.display_name) || t.espn_team_name}</option>`)
-    .join('');
-  const legacyOptions = (legacyTeams || [])
-    .map((t) => `<option value="legacy:${t.id}">${t.name}</option>`)
-    .join('');
-  const combined = `<option value="">-- not set --</option><optgroup label="Active teams">${liveOptions}</optgroup><optgroup label="Historical / defunct teams">${legacyOptions}</optgroup>`;
-  document.querySelectorAll('.podium-select').forEach((sel) => { sel.innerHTML = combined; });
-
   yearSelect.onchange = loadSeasonResultsForYear;
   if (distinctYears.length) await loadSeasonResultsForYear();
   updateLockUI();
+}
+
+// Only the teams that ACTUALLY PLAYED in the given year -- not every team
+// ever entered for the league -- since a league's roster changes year to
+// year and showing teams that didn't exist yet (or had already left)
+// would just invite mistakes. Checks real snapshots first (a normal,
+// tracked year); if there are none, falls back to legacy_matchups, whose
+// two sides can each be either a live or a defunct team.
+async function getParticipantsForYear(leagueId, year) {
+  const { data: snapRows } = await sb.from('snapshots').select('team_id').eq('league_id', leagueId).eq('year', year).limit(1);
+  if (snapRows && snapRows.length) {
+    const { data: allSnapRows } = await sb.from('snapshots').select('team_id').eq('league_id', leagueId).eq('year', year);
+    const teamIds = [...new Set((allSnapRows || []).map((r) => r.team_id))];
+    const { data: teams } = await sb.from('teams').select('id, espn_team_name, team_settings(display_name)').in('id', teamIds);
+    return (teams || []).map((t) => ({ id: t.id, name: (t.team_settings && t.team_settings.display_name) || t.espn_team_name, source: 'live' }));
+  }
+
+  const { data: legacyRows } = await sb.from('legacy_matchups')
+    .select('home_legacy_team_id, away_legacy_team_id, home_live_team_id, away_live_team_id')
+    .eq('league_id', leagueId).eq('year', year);
+  const legacyIds = new Set(), liveIds = new Set();
+  (legacyRows || []).forEach((r) => {
+    if (r.home_legacy_team_id) legacyIds.add(r.home_legacy_team_id);
+    if (r.away_legacy_team_id) legacyIds.add(r.away_legacy_team_id);
+    if (r.home_live_team_id) liveIds.add(r.home_live_team_id);
+    if (r.away_live_team_id) liveIds.add(r.away_live_team_id);
+  });
+  const [{ data: legacyTeams }, { data: liveTeams }] = await Promise.all([
+    legacyIds.size ? sb.from('legacy_teams').select('id, name').in('id', [...legacyIds]) : Promise.resolve({ data: [] }),
+    liveIds.size ? sb.from('teams').select('id, espn_team_name, team_settings(display_name)').in('id', [...liveIds]) : Promise.resolve({ data: [] }),
+  ]);
+  const fromLegacy = (legacyTeams || []).map((t) => ({ id: t.id, name: t.name, source: 'legacy' }));
+  const fromLive = (liveTeams || []).map((t) => ({ id: t.id, name: (t.team_settings && t.team_settings.display_name) || t.espn_team_name, source: 'live' }));
+  return [...fromLegacy, ...fromLive];
 }
 
 async function loadSeasonResultsForYear() {
@@ -256,13 +272,25 @@ async function loadSeasonResultsForYear() {
   const { data: league } = await sb.from('leagues').select('playoff_spots').eq('id', leagueId).single();
   document.getElementById('playoffSpotsInput').value = league && league.playoff_spots != null ? league.playoff_spots : '';
 
-  const { data: results } = await sb.from('season_results').select('place, legacy_team_id, live_team_id').eq('league_id', leagueId).eq('year', year);
-  document.querySelectorAll('.podium-select').forEach((sel) => {
-    const place = Number(sel.dataset.place);
-    const match = (results || []).find((r) => r.place === place);
-    if (!match) { sel.value = ''; return; }
-    sel.value = match.legacy_team_id ? `legacy:${match.legacy_team_id}` : `live:${match.live_team_id}`;
-  });
+  const [participants, { data: results }] = await Promise.all([
+    getParticipantsForYear(leagueId, year),
+    sb.from('season_results').select('place, legacy_team_id, live_team_id').eq('league_id', leagueId).eq('year', year),
+  ]);
+  participants.sort((a, b) => a.name.localeCompare(b.name));
+
+  const placeByTeamId = {};
+  (results || []).forEach((r) => { placeByTeamId[r.legacy_team_id || r.live_team_id] = r.place; });
+
+  const listEl = document.getElementById('finalStandingsList');
+  listEl.innerHTML = participants.map((t) => `
+    <div class="final-standing-row" data-team-id="${t.id}" data-source="${t.source}">
+      <input type="number" min="1" max="${participants.length}" value="${placeByTeamId[t.id] != null ? placeByTeamId[t.id] : ''}" placeholder="--">
+      <span class="team-label">${t.name}</span>
+      <span class="team-source-tag">${t.source === 'legacy' ? 'historical' : 'active'}</span>
+    </div>
+  `).join('') || '<div class="sub">No teams found for this year.</div>';
+
+  updateLockUI();
 }
 
 document.getElementById('saveSeasonResultsBtn').addEventListener('click', async () => {
@@ -272,16 +300,29 @@ document.getElementById('saveSeasonResultsBtn').addEventListener('click', async 
   const playoffSpotsRaw = document.getElementById('playoffSpotsInput').value;
   const playoffSpots = playoffSpotsRaw === '' ? null : Number(playoffSpotsRaw);
 
-  const podiumRows = [...document.querySelectorAll('.podium-select')]
-    .filter((sel) => sel.value)
-    .map((sel) => {
-      const [source, id] = sel.value.split(':');
-      return {
-        league_id: leagueId, year, place: Number(sel.dataset.place),
-        legacy_team_id: source === 'legacy' ? id : null,
-        live_team_id: source === 'live' ? id : null,
-      };
-    });
+  const rows = [...document.querySelectorAll('.final-standing-row')]
+    .map((row) => ({
+      teamId: row.dataset.teamId, source: row.dataset.source,
+      place: row.querySelector('input[type="number"]').value,
+    }))
+    .filter((r) => r.place !== '');
+
+  // Guards against the UPSERT silently overwriting one team's placement
+  // with another's if two rows accidentally share the same number --
+  // upsert has no way to detect or warn about that on its own.
+  const placeCounts = {};
+  rows.forEach((r) => { placeCounts[r.place] = (placeCounts[r.place] || 0) + 1; });
+  const duplicates = Object.entries(placeCounts).filter(([, count]) => count > 1).map(([place]) => place);
+  if (duplicates.length) {
+    alert(`More than one team is set to place ${duplicates.join(', ')} -- fix that before saving, since only one would actually be kept.`);
+    return;
+  }
+
+  const podiumRows = rows.map((r) => ({
+    league_id: leagueId, year, place: Number(r.place),
+    legacy_team_id: r.source === 'legacy' ? r.teamId : null,
+    live_team_id: r.source === 'live' ? r.teamId : null,
+  }));
 
   const results = await Promise.all([
     sb.from('leagues').update({ playoff_spots: playoffSpots }).eq('id', leagueId),
