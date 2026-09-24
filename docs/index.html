@@ -299,6 +299,11 @@
   #kickoffCountdown.seasonal-christmas {
     border-color: #2c5f3e; box-shadow: 0 0 0 1px rgba(79,212,147,0.15), 0 0 18px rgba(200,40,40,0.10);
   }
+  /* Halloween: a sickly purple/green tint, distinct from Thanksgiving's
+     warm amber and Christmas's green/red. */
+  #kickoffCountdown.seasonal-halloween {
+    border-color: #5b2a86; box-shadow: 0 0 0 1px rgba(180,120,255,0.18), 0 0 18px rgba(120,200,90,0.10);
+  }
   /* Starts pulsing once kickoff is within an hour (see tickKickoffCountdown
      in app.js, which toggles this class) -- same glow technique as Upset
      Watch and the Live badge, just using the accent color instead, so
@@ -653,21 +658,43 @@
   .pumpkin-corner.right { right: -6px; transform: rotate(10deg) scaleX(-1); }
   .seasonal-thanksgiving .pumpkin-corner { display: block; }
 
-  /* Shared wire-and-decoration strand for both the Thanksgiving leaf
-     garland and the Christmas light strand -- see buildSeasonalGarland in app.js,
-     which draws the scalloped SVG wire and positions whatever decoration
-     (a leaf emoji or a colored bulb div) at the bottom of each droop.
-     Bled slightly past the card's own top edge via negative margin so it
-     reads as draped along the card rather than floating inside it. */
+  /* Halloween's corner decor: ghosts instead of pumpkins (Thanksgiving
+     already owns pumpkins in this site's visual language) -- a gentle
+     float/bob rather than the pumpkin's static rotate-and-hold. */
+  .ghost-corner {
+    position: absolute; top: -10px; font-size: 20px;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+    display: none; z-index: 2;
+    animation: ghostFloat 3.4s ease-in-out infinite;
+  }
+  .ghost-corner.left { left: -4px; }
+  .ghost-corner.right { right: -4px; transform: scaleX(-1); animation-delay: 1.1s; }
+  .seasonal-halloween .ghost-corner { display: block; }
+  @keyframes ghostFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+  }
+
+  /* Shared wire-and-decoration strand for the Thanksgiving leaf garland,
+     the Christmas light strand, and the Halloween cobweb -- see
+     buildSeasonalGarland in app.js, which draws the scalloped SVG wire and
+     positions whatever decoration (a leaf emoji, a colored bulb div, or a
+     spider emoji) at the bottom of each droop. Bled slightly past the
+     card's own top edge via negative margin so it reads as draped along
+     the card rather than floating inside it. */
   .seasonal-garland {
     position: relative; height: 28px; margin: -10px -6px 8px; display: none;
   }
   .seasonal-thanksgiving .seasonal-garland,
-  .seasonal-christmas .seasonal-garland { display: block; }
+  .seasonal-christmas .seasonal-garland,
+  .seasonal-halloween .seasonal-garland { display: block; }
   .seasonal-garland-wire { position: absolute; inset: 0; width: 100%; height: 100%; }
   .seasonal-garland-wire path { fill: none; stroke-width: 2; }
   .seasonal-thanksgiving .seasonal-garland-wire path { stroke: #6b4a2a; }
   .seasonal-christmas .seasonal-garland-wire path { stroke: #2a2a2a; }
+  /* Cobweb strand: pale gray-white and thinner, reads as spun silk rather
+     than a wire. */
+  .seasonal-halloween .seasonal-garland-wire path { stroke: rgba(220,220,230,0.55); stroke-width: 1.4; }
 
   .seasonal-leaf {
     position: absolute; transform: translate(-50%, -50%);
@@ -712,14 +739,54 @@
     50% { opacity: 1; filter: brightness(1.5); }
   }
 
+  /* Thanksgiving's Upset Watch tie-in: leaves glow the alert orange and
+     pulse on the SAME 2.4s cadence as the Christmas bulbs above, overriding
+     the idle seasonalLeafSway animation. Every themed week now reacts to
+     Upset Watch the same way -- this was previously the one theme with no
+     tie-in at all. */
+  .seasonal-garland.upset-leaves .seasonal-leaf {
+    filter: drop-shadow(0 0 4px var(--upset-glow-a)) drop-shadow(0 0 8px var(--upset-glow-b));
+    animation: seasonalLeafUpsetPulse 2.4s ease-in-out infinite !important;
+  }
+  @keyframes seasonalLeafUpsetPulse {
+    0%, 100% { transform: translate(-50%, -50%) rotate(-6deg) scale(1); }
+    50% { transform: translate(-50%, -50%) rotate(6deg) scale(1.22); }
+  }
+
+  /* Halloween's spider, dangling from the cobweb strand -- idle sway
+     normally, alert-orange glow + scale pulse (same color/cadence as the
+     other two) when this card's own Upset Watch fires. */
+  .seasonal-spider {
+    position: absolute; transform: translate(-50%, -50%);
+    font-size: 13px; animation: seasonalSpiderSway 2.8s ease-in-out infinite;
+  }
+  @keyframes seasonalSpiderSway {
+    0%, 100% { transform: translate(-50%, -50%) rotate(-8deg); }
+    50% { transform: translate(-50%, -50%) rotate(8deg); }
+  }
+  .seasonal-garland.upset-spiders .seasonal-spider {
+    animation: seasonalSpiderUpsetPulse 2.4s ease-in-out infinite !important;
+    filter: drop-shadow(0 0 4px var(--upset-glow-a)) drop-shadow(0 0 8px var(--upset-glow-b));
+  }
+  @keyframes seasonalSpiderUpsetPulse {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); }
+    50% { transform: translate(-50%, -50%) scale(1.25); }
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .seasonal-leaf { animation: none !important; }
+    .seasonal-leaf, .seasonal-spider, .ghost-corner { animation: none !important; }
     .seasonal-bulb { animation: none !important; opacity: 0.95 !important; }
     .seasonal-garland.upset-lights .seasonal-bulb { animation: none !important; opacity: 1 !important; }
+    .seasonal-garland.upset-leaves .seasonal-leaf,
+    .seasonal-garland.upset-spiders .seasonal-spider { animation: none !important; }
   }
-  html[data-reduce-motion="true"] .seasonal-leaf { animation: none !important; }
+  html[data-reduce-motion="true"] .seasonal-leaf,
+  html[data-reduce-motion="true"] .seasonal-spider,
+  html[data-reduce-motion="true"] .ghost-corner { animation: none !important; }
   html[data-reduce-motion="true"] .seasonal-bulb { animation: none !important; opacity: 0.95 !important; }
   html[data-reduce-motion="true"] .seasonal-garland.upset-lights .seasonal-bulb { animation: none !important; opacity: 1 !important; }
+  html[data-reduce-motion="true"] .seasonal-garland.upset-leaves .seasonal-leaf,
+  html[data-reduce-motion="true"] .seasonal-garland.upset-spiders .seasonal-spider { animation: none !important; }
 
   /* ---- "Why is this the number?" button + blurb, shared across all views ---- */
   .why-btn {
@@ -958,6 +1025,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=21"></script>
+<script src="app.js?v=22"></script>
 </body>
 </html>
