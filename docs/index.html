@@ -87,6 +87,16 @@
        rather than borrowing the active-alert one, or the two states
        would be visually indistinguishable. */
     --warn: #b8860b;
+    /* Championship-week tier accents -- gold/silver-ish/bronze-ish reads
+       for the ribbon badges, darkened here in light mode for contrast on
+       a white card (see the dark-mode block below for the brighter
+       versions used against dark cards). Independent of --accent/--upset
+       since a tier ribbon needs to coexist with an active Upset Watch
+       border on the same card without the two colors being confused for
+       each other. */
+    --tier-champ: #a67c00;
+    --tier-third: #1f8a53;
+    --tier-other: #5b6472;
     /* Doppio One for team names/percentages/headings -- a display face
        that's already bold-by-design (it only ships in a single weight, no
        separate Bold variant, so display-font elements below deliberately
@@ -123,6 +133,9 @@
     --accent-glow-a: rgba(58, 103, 223, 0.35);
     --accent-glow-b: rgba(58, 103, 223, 0.9);
     --warn: #e0a33e;
+    --tier-champ: #f4c430;
+    --tier-third: #4fd493;
+    --tier-other: #9aa3af;
   }
 
   /* Highlighted/selected text uses the theme's own accent color rather
@@ -462,6 +475,110 @@
      transition is suppressed, snapping directly to size instead. */
   html[data-reduce-motion="true"] #kickoffCountdown { transition: none; }
 
+  /* ---- Championship Week hero banner -- a fixed-dark hero regardless of
+     site theme (deliberately doesn't read --bg/--fg: stadium-lights-at-
+     night reads as itself in both light and dark mode, the same way a
+     photo hero on a light-mode page doesn't get color-inverted). Shown
+     only during week 17 (or the debug preference -- see
+     updateChampionshipStage in app.js), which toggles this element's
+     `hidden` attribute and its own data-mode between "pregame" (spotlight
+     sweep + countdown) and "live" (beams faded to 0 opacity, not removed,
+     so there's no layout jump switching between the two). ---- */
+  .championship-stage {
+    position: relative;
+    height: 200px;
+    margin: 4px 0 18px;
+    border-radius: 14px;
+    overflow: hidden;
+    background: radial-gradient(ellipse at center 120%, #10131c 0%, #05070c 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .championship-stage::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 90% 60% at 50% 100%, rgba(244,196,48,0.10), transparent 70%);
+    pointer-events: none;
+  }
+  .championship-stage .beam-field {
+    position: absolute;
+    inset: 0;
+    opacity: 1;
+    transition: opacity 0.8s ease;
+    pointer-events: none;
+  }
+  .championship-stage[data-mode="live"] .beam-field { opacity: 0; }
+  .championship-stage .beam {
+    position: absolute;
+    bottom: -40%;
+    left: 50%;
+    width: 120px;
+    height: 220%;
+    background: linear-gradient(to top, rgba(244,196,48,0.32) 0%, rgba(244,196,48,0.10) 35%, rgba(244,196,48,0) 75%);
+    clip-path: polygon(46% 100%, 54% 100%, 100% 0%, 0% 0%);
+    mix-blend-mode: screen;
+    transform-origin: 50% 100%;
+    animation: championshipSweep 7s ease-in-out infinite;
+  }
+  .championship-stage .beam.b2 {
+    background: linear-gradient(to top, rgba(224,87,74,0.26) 0%, rgba(224,87,74,0.08) 35%, rgba(224,87,74,0) 75%);
+    animation-duration: 9s; animation-delay: -2.3s;
+  }
+  .championship-stage .beam.b3 {
+    background: linear-gradient(to top, rgba(58,103,223,0.26) 0%, rgba(58,103,223,0.08) 35%, rgba(58,103,223,0) 75%);
+    animation-duration: 11s; animation-delay: -5.1s;
+  }
+  .championship-stage .beam.b4 {
+    background: linear-gradient(to top, rgba(244,196,48,0.20) 0%, rgba(244,196,48,0.06) 35%, rgba(244,196,48,0) 75%);
+    animation-duration: 8s; animation-delay: -1s;
+  }
+  @keyframes championshipSweep {
+    0%   { transform: translateX(-50%) rotate(-38deg); }
+    50%  { transform: translateX(-50%) rotate(38deg); }
+    100% { transform: translateX(-50%) rotate(-38deg); }
+  }
+  .championship-stage .hype-copy { position: relative; z-index: 2; }
+  .championship-stage .hype-eyebrow {
+    font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: #f4c430; font-weight: 700; margin-bottom: 8px; opacity: 0.9;
+  }
+  .championship-stage[data-mode="live"] .hype-eyebrow::after { content: ' \2014 LIVE'; color: #ff6a5a; }
+  .championship-stage .hype-title {
+    font-family: var(--font-display); font-weight: 400; font-size: 34px;
+    letter-spacing: 0.01em; margin: 0 0 8px; color: #fff;
+    text-shadow: 0 0 30px rgba(244,196,48,0.3);
+  }
+  .championship-stage .hype-countdown { font-size: 13px; color: #9aa3af; font-weight: 600; }
+  .championship-stage .hype-countdown span { color: #f4c430; font-variant-numeric: tabular-nums; font-weight: 800; }
+
+  /* Reduced motion (OS-level or the site preference) -- keeps the hero and
+     its text, drops the sweeping beams entirely rather than just slowing
+     them, matching how the delta popup and upset pulse degrade above. */
+  @media (prefers-reduced-motion: reduce) {
+    .championship-stage .beam { animation: none !important; opacity: 0 !important; }
+  }
+  html[data-reduce-motion="true"] .championship-stage .beam { animation: none !important; opacity: 0 !important; }
+
+  /* ---- Playoff tier ribbon -- shown on ESPN/Needle cards during
+     championship week (see applyTierRibbon in app.js), and paired with a
+     subtle border tint per tier so the championship game reads as the
+     header act even in a quick scroll past. Independent of .upset-watch's
+     own border treatment -- a championship-tier card that's ALSO upset-
+     watching keeps the pulsing upset border (the more urgent, live signal)
+     while still showing its gold ribbon text up top. */
+  .tier-ribbon {
+    text-align: center; font-family: var(--font-display); font-weight: 400;
+    font-size: var(--text-sm); letter-spacing: 0.04em; text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .espn-card.tier-champ, .needle-card.tier-champ { box-shadow: inset 0 0 0 1px var(--tier-champ); }
+  .espn-card.tier-champ .tier-ribbon, .needle-card.tier-champ .tier-ribbon { color: var(--tier-champ); }
+  .espn-card.tier-third .tier-ribbon, .needle-card.tier-third .tier-ribbon { color: var(--tier-third); }
+  .espn-card.tier-other .tier-ribbon, .needle-card.tier-other .tier-ribbon { color: var(--tier-other); }
+
   /* ---- "Why is this the number?" button + blurb, shared across all views ---- */
   .why-btn {
     background: none; border: none; cursor: pointer; padding: 0 0 0 2px;
@@ -627,6 +744,26 @@
 <div id="wrap">
   <h2>Fantasy Win Probability</h2>
   <div class="sub">Updates automatically every ~1 minute while games are live.</div>
+
+  <!-- Week 17 hero banner -- hidden entirely outside championship week
+       (real or debug-forced, see updateChampionshipStage in app.js).
+       data-mode="pregame"/"live" (set by the same function) switches the
+       spotlight sweep on/off via CSS -- the beam markup itself always
+       stays in the DOM so there's no animation restart flicker when a
+       poll flips the mode. -->
+  <div id="championshipStage" class="championship-stage" hidden>
+    <div class="beam-field">
+      <div class="beam b1"></div>
+      <div class="beam b2"></div>
+      <div class="beam b3"></div>
+      <div class="beam b4"></div>
+    </div>
+    <div class="hype-copy">
+      <div class="hype-eyebrow">Week 17</div>
+      <h1 class="hype-title">Championship Week</h1>
+      <div class="hype-countdown" id="hypeCountdown" hidden></div>
+    </div>
+  </div>
 
   <a id="yearInReviewLink" href="year-in-review.html" hidden>🏆 Year in Review</a>
 
