@@ -34,6 +34,8 @@ function updateLockUI() {
   teamList.querySelectorAll('input').forEach((el) => (el.disabled = !unlocked));
   teamList.querySelectorAll('.logo-upload-btn, .logo-remove-btn').forEach((el) => (el.disabled = !unlocked));
   document.querySelectorAll('#seasonResultsPanel select, #seasonResultsPanel input, #seasonResultsPanel button').forEach((el) => (el.disabled = !unlocked));
+  document.querySelectorAll('#legacyTeamList input, #legacyTeamList button, #addLegacyTeamBtn').forEach((el) => (el.disabled = !unlocked));
+  document.querySelectorAll('#legacyMatchupForm select, #legacyMatchupForm input, #addLegacyMatchupBtn, #legacyMatchupList button').forEach((el) => (el.disabled = !unlocked));
 }
 
 unlockBtn.addEventListener('click', () => {
@@ -58,8 +60,8 @@ async function loadLeagues() {
   const { data, error } = await sb.from('leagues').select('id, name').order('name');
   if (error) return;
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
-  leagueSelect.onchange = () => { loadTeams(); loadSeasonResultsPanel(); };
-  if (data.length) { loadTeams(); loadSeasonResultsPanel(); }
+  leagueSelect.onchange = () => { loadTeams(); loadSeasonResultsPanel(); loadLegacySection(); };
+  if (data.length) { loadTeams(); loadSeasonResultsPanel(); loadLegacySection(); }
 }
 
 async function loadTeams() {
@@ -274,3 +276,186 @@ document.getElementById('saveSeasonResultsBtn').addEventListener('click', async 
 });
 
 loadLeagues();
+
+// ============================================================
+// Historical / Defunct Teams + Historical Matchup Results -- for
+// 2024/2025 seasons that predate the win-probability tracker and have no
+// relationship to ESPN's current team list at all. Both sections load
+// together whenever the league selection changes.
+// ============================================================
+async function loadLegacySection() {
+  await loadLegacyTeams();
+  await loadLegacyMatchupList();
+}
+
+async function loadLegacyTeams() {
+  const leagueId = leagueSelect.value;
+  const { data, error } = await sb.from('legacy_teams').select('id, name, color, logo_url, emoji').eq('league_id', leagueId).order('name');
+  const listEl = document.getElementById('legacyTeamList');
+  if (error) { listEl.textContent = 'Error: ' + error.message; return; }
+
+  listEl.innerHTML = (data || []).map((t) => `
+    <div class="legacy-team-row" data-legacy-team-id="${t.id}">
+      <input type="color" value="${t.color || '#888888'}" class="legacy-color-input" />
+      <div class="logo-cell">
+        <button type="button" class="logo-upload-btn" title="Upload a logo">
+          <img class="logo-preview" src="${t.logo_url || ''}" style="display:${t.logo_url ? 'block' : 'none'}" />
+          <span class="logo-fallback" style="display:${t.logo_url ? 'none' : 'flex'}">${t.emoji || '+'}</span>
+        </button>
+        <button type="button" class="logo-remove-btn" title="Remove logo" style="display:${t.logo_url ? 'inline-block' : 'none'}">&times;</button>
+        <input type="file" accept="image/*" class="legacy-logo-file-input" hidden />
+      </div>
+      <input type="text" value="${t.name}" class="legacy-name-input" />
+      <button type="button" class="legacy-remove-btn">Remove team</button>
+    </div>
+  `).join('');
+
+  listEl.querySelectorAll('.legacy-team-row').forEach((row) => {
+    const legacyTeamId = row.dataset.legacyTeamId;
+    const colorInput = row.querySelector('.legacy-color-input');
+    const nameInput = row.querySelector('.legacy-name-input');
+    const save = () => {
+      if (!unlocked) return;
+      saveLegacyTeamFields(legacyTeamId, { color: colorInput.value, name: nameInput.value });
+    };
+    colorInput.addEventListener('input', save);
+    nameInput.addEventListener('input', save);
+
+    const uploadBtn = row.querySelector('.logo-upload-btn');
+    const removeLogoBtn = row.querySelector('.logo-remove-btn');
+    const fileInput = row.querySelector('.legacy-logo-file-input');
+    const previewImg = row.querySelector('.logo-preview');
+    const fallbackSpan = row.querySelector('.logo-fallback');
+    uploadBtn.addEventListener('click', () => { if (unlocked) fileInput.click(); });
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) handleLegacyLogoUpload(fileInput.files[0], legacyTeamId, previewImg, fallbackSpan, removeLogoBtn);
+    });
+    removeLogoBtn.addEventListener('click', async () => {
+      if (!unlocked) return;
+      previewImg.style.display = 'none'; previewImg.src = '';
+      fallbackSpan.style.display = 'flex'; removeLogoBtn.style.display = 'none';
+      await saveLegacyTeamFields(legacyTeamId, { logo_url: null });
+    });
+
+    row.querySelector('.legacy-remove-btn').addEventListener('click', async () => {
+      if (!unlocked) return;
+      if (!confirm(`Remove "${nameInput.value}"? This can't be undone, and any historical matchup results using this team will break.`)) return;
+      await sb.from('legacy_teams').delete().eq('id', legacyTeamId);
+      loadLegacyTeams();
+      loadLegacyMatchupForm();
+    });
+  });
+
+  updateLockUI();
+  loadLegacyMatchupForm();
+}
+
+async function saveLegacyTeamFields(legacyTeamId, fields) {
+  const { error } = await sb.from('legacy_teams').update(fields).eq('id', legacyTeamId);
+  savedNote.textContent = error ? 'Failed to save: ' + error.message : 'Saved \u2713';
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => (savedNote.textContent = ''), 1800);
+}
+
+async function handleLegacyLogoUpload(file, legacyTeamId, previewImg, fallbackSpan, removeBtn) {
+  if (!file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
+  const objectUrl = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(objectUrl);
+    const canvas = resizeImageToSquare(img, LOGO_SIZE);
+    canvas.toBlob(async (blob) => {
+      if (!blob) { alert('Could not process that image.'); return; }
+      const path = `legacy-${legacyTeamId}.png`;
+      const { error: uploadError } = await sb.storage.from('team-logos').upload(path, blob, { upsert: true, contentType: 'image/png' });
+      if (uploadError) { alert('Upload failed: ' + uploadError.message); return; }
+      const { data: publicUrlData } = sb.storage.from('team-logos').getPublicUrl(path);
+      const bustedUrl = `${publicUrlData.publicUrl}?t=${Date.now()}`;
+      previewImg.src = bustedUrl; previewImg.style.display = 'block';
+      fallbackSpan.style.display = 'none'; removeBtn.style.display = 'inline-block';
+      await saveLegacyTeamFields(legacyTeamId, { logo_url: bustedUrl });
+    }, 'image/png');
+  };
+  img.onerror = () => { URL.revokeObjectURL(objectUrl); alert('Could not load that image -- try a different file.'); };
+  img.src = objectUrl;
+}
+
+document.getElementById('addLegacyTeamBtn').addEventListener('click', async () => {
+  if (!unlocked) return;
+  const leagueId = leagueSelect.value;
+  const { error } = await sb.from('legacy_teams').insert({ league_id: leagueId, name: 'New Team', color: '#888888' });
+  if (error) { alert('Could not add team: ' + error.message); return; }
+  loadLegacyTeams();
+});
+
+async function loadLegacyMatchupForm() {
+  const leagueId = leagueSelect.value;
+  const { data } = await sb.from('legacy_teams').select('id, name').eq('league_id', leagueId).order('name');
+  const options = (data || []).map((t) => `<option value="${t.id}">${t.name}</option>`).join('');
+  document.getElementById('legacyHomeTeamSelect').innerHTML = options;
+  document.getElementById('legacyAwayTeamSelect').innerHTML = options;
+}
+
+document.getElementById('addLegacyMatchupBtn').addEventListener('click', async () => {
+  if (!unlocked) return;
+  const leagueId = leagueSelect.value;
+  const year = Number(document.getElementById('legacyYearInput').value);
+  const week = Number(document.getElementById('legacyWeekInput').value);
+  const homeTeamId = document.getElementById('legacyHomeTeamSelect').value;
+  const awayTeamId = document.getElementById('legacyAwayTeamSelect').value;
+  const homeScore = Number(document.getElementById('legacyHomeScoreInput').value);
+  const awayScore = Number(document.getElementById('legacyAwayScoreInput').value);
+
+  if (!year || !week || !homeTeamId || !awayTeamId || Number.isNaN(homeScore) || Number.isNaN(awayScore)) {
+    alert('Fill in year, week, both teams, and both scores.'); return;
+  }
+  if (homeTeamId === awayTeamId) { alert('Home and away team must be different.'); return; }
+
+  const { error } = await sb.from('legacy_matchups').insert({
+    league_id: leagueId, year, week, home_team_id: homeTeamId, away_team_id: awayTeamId, home_score: homeScore, away_score: awayScore,
+  });
+  if (error) { alert('Could not add result: ' + error.message); return; }
+
+  document.getElementById('legacyHomeScoreInput').value = '';
+  document.getElementById('legacyAwayScoreInput').value = '';
+  loadLegacyMatchupList();
+});
+
+async function loadLegacyMatchupList() {
+  const leagueId = leagueSelect.value;
+  const [{ data: matchups, error }, { data: teams }] = await Promise.all([
+    sb.from('legacy_matchups').select('id, year, week, home_team_id, away_team_id, home_score, away_score').eq('league_id', leagueId).order('year', { ascending: false }).order('week'),
+    sb.from('legacy_teams').select('id, name').eq('league_id', leagueId),
+  ]);
+  const listEl = document.getElementById('legacyMatchupList');
+  if (error) { listEl.textContent = 'Error: ' + error.message; return; }
+
+  const nameById = {};
+  (teams || []).forEach((t) => (nameById[t.id] = t.name));
+
+  const grouped = {};
+  (matchups || []).forEach((m) => {
+    const key = `${m.year} — Week ${m.week}`;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(m);
+  });
+
+  listEl.innerHTML = Object.entries(grouped).map(([label, rows]) => `
+    <div class="legacy-matchup-week-group">${label}</div>
+    ${rows.map((m) => `
+      <div class="legacy-matchup-row" data-matchup-id="${m.id}">
+        <span>${nameById[m.home_team_id] || '?'} ${m.home_score} &ndash; ${m.away_score} ${nameById[m.away_team_id] || '?'}</span>
+        <button type="button" class="legacy-remove-btn legacy-remove-matchup-btn">Remove</button>
+      </div>
+    `).join('')}
+  `).join('') || '<div class="sub">No historical results entered yet.</div>';
+
+  listEl.querySelectorAll('.legacy-remove-matchup-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!unlocked) return;
+      const row = btn.closest('.legacy-matchup-row');
+      await sb.from('legacy_matchups').delete().eq('id', row.dataset.matchupId);
+      loadLegacyMatchupList();
+    });
+  });
+}
