@@ -37,6 +37,10 @@ let showUpsetHistory = localStorage.getItem('winProbShowUpsetHistory') !== 'fals
 // preference above, since this adds a visual layer to every chart rather
 // than just extra info on an already-opt-in hover.
 let showConfidenceBand = localStorage.getItem('winProbShowConfidenceBand') === 'true'; // set on preferences.html
+// Defaults on (only off if explicitly set to 'false') -- the NYT-style
+// "+X.X%"/"-X.X%" popup that appears next to a team's percentage ~500ms
+// after a poll actually moves it. See scheduleDeltaBadge below.
+let showDeltaPopups = localStorage.getItem('winProbShowDeltaPopups') !== 'false'; // set on preferences.html
 // Tracks which of the two leader-bar layers is currently the visible one,
 // so updateLeaderBar (see WEEKLY RECAP section) knows which layer to
 // write the NEW gradient into and crossfade up, and which one to fade
@@ -2100,11 +2104,13 @@ function renderNeedleCard(rows, home, away, allDone) {
         <div class="fc-team-row">
           <span class="fc-team-name" style="color:${home.color}">${home.name}</span>
           <span class="fc-team-dash" style="color:${home.color}"></span>
+          <span class="delta-badge"></span>
           <span class="fc-team-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
         </div>
         <div class="fc-team-row">
           <span class="fc-team-name" style="color:${away.color}">${away.name}</span>
           <span class="fc-team-dash" style="color:${away.color}"></span>
+          <span class="delta-badge"></span>
           <span class="fc-team-pct" style="color:${away.color}">${Math.round(100 - homePct)}%</span>
         </div>
       </div>
@@ -2120,11 +2126,16 @@ function renderNeedleCard(rows, home, away, allDone) {
   const needle = card.querySelector('.needle-pointer');
   if (needle) needle.style.transform = `rotate(${needleRotationDeg(homePct)}deg)`;
 
-  return { card, entry: { mode: 'needle', el: card } };
+  // prevHomePct seeds the delta-popup comparison on the FIRST background
+  // update after this card is created -- see updateNeedleCard, which reads
+  // and then overwrites this every refresh.
+  return { card, entry: { mode: 'needle', el: card, prevHomePct: homePct } };
 }
 
 function updateNeedleCard(entry, rows, home, away, allDone) {
   const homePct = latestPct(rows);
+  const prevHomePct = entry.prevHomePct;
+  entry.prevHomePct = homePct;
   const verdict = needleVerdict(homePct, home, away);
   const card = entry.el;
 
@@ -2153,6 +2164,14 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
   const teamPcts = card.querySelectorAll('.fc-team-pct');
   if (teamPcts[0]) teamPcts[0].textContent = `${Math.round(homePct)}%`;
   if (teamPcts[1]) teamPcts[1].textContent = `${Math.round(100 - homePct)}%`;
+
+  const deltaBadges = card.querySelectorAll('.delta-badge');
+  if (deltaBadges.length === 2) {
+    const homeDelta = prevHomePct == null ? 0 : homePct - prevHomePct;
+    const gainColor = homeDelta >= 0 ? home.color : away.color;
+    scheduleDeltaBadge(deltaBadges[0], prevHomePct, homePct, gainColor);
+    scheduleDeltaBadge(deltaBadges[1], prevHomePct == null ? null : (100 - prevHomePct), 100 - homePct, gainColor);
+  }
 
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
   card.classList.toggle('upset-watch', !!upsetInfo);
@@ -2228,6 +2247,42 @@ function setEspnPctInstant(el, value) {
   el._animCurrent = value;
 }
 
+// Shows a small "+X.X%"/"-X.X%" badge next to a team's percentage about
+// 500ms after a real poll moves it -- the same delayed, colored,
+// auto-fading callout pattern used for election-night vote-margin swings.
+// `prevPct`/`newPct` are on the SAME 0-100 scale the caller already uses
+// for that element (home's own pct, not always homePct), so the sign of
+// `delta` always means "this side's number went up/down," and `color` is
+// picked by the caller (always the side that GAINED, so a team's own drop
+// and the opponent's mirrored gain render as the same color, matching a
+// single vote-margin swing being one color for both candidates).
+//
+// Guarded on the showDeltaPopups preference so an off toggle means this
+// function is never even scheduling a timeout, not just hiding a badge
+// that's still popping in the background. `prevPct == null` covers a
+// card's first-ever update (nothing to compare against yet -- render
+// functions never call this). Deltas under 0.05 are treated as noise from
+// rounding, not a real change worth announcing.
+function scheduleDeltaBadge(badgeEl, prevPct, newPct, color) {
+  if (!showDeltaPopups || !badgeEl) return;
+  if (prevPct == null || newPct == null) return;
+  const delta = newPct - prevPct;
+  if (Math.abs(delta) < 0.05) return;
+
+  if (badgeEl._deltaTimeout) clearTimeout(badgeEl._deltaTimeout);
+  badgeEl.classList.remove('show');
+
+  badgeEl._deltaTimeout = setTimeout(() => {
+    const sign = delta > 0 ? '+' : '−';
+    badgeEl.textContent = `${sign}${Math.abs(delta).toFixed(1)}%`;
+    badgeEl.style.background = color;
+    badgeEl.classList.remove('show');
+    void badgeEl.offsetWidth; // restart the animation even if one's already mid-flight
+    badgeEl.classList.add('show');
+    badgeEl._deltaTimeout = null;
+  }, 500);
+}
+
 // animate=true (the default) is for real live data arriving -- the 30s
 // background refresh -- where a count-up reads as "something happened."
 // animate=false is for hover: while scrubbing across history, the number
@@ -2298,6 +2353,7 @@ function renderEspnCard(rows, home, away, allDone) {
       <span class="espn-emoji">${renderTeamIcon(home)}</span>
       <span class="espn-name" style="color:${home.color}">${home.name}</span>
       <span class="espn-dash" style="background:${home.color}"></span>
+      <span class="delta-badge"></span>
       <span class="espn-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
     </div>
     <div class="espn-chartBox"><canvas></canvas></div>
@@ -2305,6 +2361,7 @@ function renderEspnCard(rows, home, away, allDone) {
       <span class="espn-emoji">${renderTeamIcon(away)}</span>
       <span class="espn-name" style="color:${away.color}">${away.name}</span>
       <span class="espn-dash" style="background:${away.color}"></span>
+      <span class="delta-badge"></span>
       <span class="espn-pct" style="color:${away.color}">${Math.round(100 - homePct)}%</span>
     </div>
   `;
@@ -2601,16 +2658,28 @@ function updateEspnCard(entry, rows, home, away, allDone) {
     chart.data.datasets[0].data = band.upper;
     chart.data.datasets[1].data = band.lower;
   }
-  chart._state.currentHomePct = latestPct(rows);
+  const prevHomePct = chart._state.currentHomePct;
+  const newHomePct = latestPct(rows);
+  chart._state.currentHomePct = newHomePct;
   chart.options.scales.x.max = maxX;
   chart.update('none');
 
   // Only refresh the visible labels if the marker isn't currently being
   // shown via hover -- otherwise a background refresh would yank the
-  // numbers out from under someone mid-hover.
+  // numbers out from under someone mid-hover. The delta popup follows the
+  // same guard: hovering is you scrubbing history, not a new poll arriving,
+  // so it shouldn't trigger a "the number changed" callout.
   const isHovering = chart.data.datasets[mainIdx + 1].hidden === false;
   if (!isHovering) {
     setEspnPctLabels(chart.canvas, chart._state.currentHomePct);
+
+    const badges = chart.canvas.closest('.espn-card')?.querySelectorAll('.delta-badge');
+    if (badges && badges.length === 2) {
+      const homeDelta = newHomePct - prevHomePct;
+      const gainColor = homeDelta >= 0 ? home.color : away.color;
+      scheduleDeltaBadge(badges[0], prevHomePct, newHomePct, gainColor);
+      scheduleDeltaBadge(badges[1], prevHomePct == null ? null : (100 - prevHomePct), 100 - newHomePct, gainColor);
+    }
   }
 
   const badge = chart.canvas.closest('.espn-card')?.querySelector('.postcard-status');
