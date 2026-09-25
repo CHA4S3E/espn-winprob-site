@@ -3769,6 +3769,12 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   if (seasonalTheme !== currentSeasonalTheme) {
     currentSeasonalTheme = seasonalTheme;
     seedSeasonalParticles();
+    // Lets pure-CSS full-page decor (the Halloween fog layer -- see
+    // #seasonalFog in index.html) react to the theme without its own JS
+    // driver, the same way the particle canvas reacts to this same
+    // variable every frame. Harmless to set on every theme, even ones with
+    // no CSS hooked up to it yet.
+    document.documentElement.setAttribute('data-seasonal-theme', currentSeasonalTheme);
   }
 
   const { render, update } = VIEW_RENDERERS[viewMode];
