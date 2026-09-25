@@ -397,6 +397,15 @@ const CHAMPIONSHIP_WEEK = YEAR_IN_REVIEW_WEEK;
 let debugChampionshipWeek = localStorage.getItem('winProbDebugChampionshipWeek') === 'true'; // set on preferences.html
 const championshipStageEl = document.getElementById('championshipStage');
 
+// Forces the Power Picks pregame view on for whichever week is selected,
+// even if it's already live -- a pure client-side rendering override (see
+// preferences.html). The poller's own plottingOpen gate and every row it
+// writes are entirely unaffected by this: real polling keeps running in
+// the background exactly as if this were off, so toggling it never risks
+// or loses any real data, and switching it back off just re-renders
+// whatever the real pregame/live state actually is.
+let debugForcePowerPicks = localStorage.getItem('winProbDebugForcePowerPicks') === 'true'; // set on preferences.html
+
 function ordinalLabel(n) {
   const s = ['th', 'st', 'nd', 'rd'];
   const v = n % 100;
@@ -3481,6 +3490,247 @@ const VIEW_RENDERERS = {
   espn: { render: renderEspnCard, update: updateEspnCard },
 };
 
+// ============================== POWER PICKS ==============================
+// A pregame prediction view that takes over #matchups for the ~24 hours
+// between when the poller starts writing a week's real pairings (see
+// poll.js's plottingOpen gate) and that week's actual first kickoff. Real
+// matchups exist by then, but nothing has been played yet (actual_score
+// sits at 0, all_starters_done is false for every row) -- so the normal
+// live-graph views, which all assume a score is trending somewhere, have
+// nothing meaningful to plot. Predictions instead come from the same
+// layered Power Ratings model the Standings page uses (weighted SRS +
+// recency decay + Bayesian shrinkage + luck adjustment + uncertainty,
+// normalized via normalCdf) -- ported here rather than shared, same
+// cross-file-duplication convention standings.js/year-in-review.js already
+// follow; see standings.js for the fully-commented original.
+
+const powerPicksHistoryCache = {}; // `${leagueId}-${year}` -> snapshot rows, reused across polls this session
+async function fetchPowerPicksHistory(leagueId, year) {
+  const cacheKey = `${leagueId}-${year}`;
+  if (powerPicksHistoryCache[cacheKey]) return powerPicksHistoryCache[cacheKey];
+  const rows = await fetchAllRows((from, to) =>
+    sb.from('snapshots')
+      .select('year, week, matchup_id, team_id, actual_score, win_prob, all_starters_done, ts')
+      .eq('league_id', leagueId).eq('year', year).order('ts').range(from, to)
+  );
+  powerPicksHistoryCache[cacheKey] = rows;
+  return rows;
+}
+
+// Earliest recorded win_prob per (week, matchup_id, team_id) -- the
+// closest thing to "what the model thought before this game" available,
+// since nothing marks a specific poll as pregame. Ported verbatim from
+// standings.js's extractPregameWinProb.
+function extractPregameWinProb(rows) {
+  const earliest = new Map();
+  for (const r of rows) {
+    if (r.win_prob == null) continue;
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const existing = earliest.get(key);
+    if (!existing || new Date(r.ts) < new Date(existing.ts)) earliest.set(key, r);
+  }
+  const result = new Map();
+  for (const [key, r] of earliest) result.set(key, r.win_prob);
+  return result;
+}
+
+// Ported from standings.js's computePowerRatings -- same six-layer model.
+// Reuses this file's own normalCdf/erf (defined near the top) rather than
+// duplicating those too.
+function computePowerRatings(rows, teamIds, pregameWinProbByKey, throughWeek, opts) {
+  const decay = (opts && opts.decay) ?? 0.85;
+  const priorK = (opts && opts.priorK) ?? 3;
+  const luckLambda = (opts && opts.luckLambda) ?? 0.15;
+  const PP_DEFAULT_STDDEV = 21; // same per-team score stddev winProb.js's model uses
+
+  const latestByKey = new Map();
+  for (const r of rows) {
+    if (throughWeek != null && r.week > throughWeek) continue;
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const existing = latestByKey.get(key);
+    if (!existing || new Date(r.ts) > new Date(existing.ts)) latestByKey.set(key, r);
+  }
+  const matchupGroups = new Map();
+  for (const r of latestByKey.values()) {
+    const mKey = `${r.year}|${r.week}|${r.matchup_id}`;
+    if (!matchupGroups.has(mKey)) matchupGroups.set(mKey, []);
+    matchupGroups.get(mKey).push(r);
+  }
+
+  const maxSeenWeek = throughWeek != null ? throughWeek : rows.reduce((m, r) => Math.max(m, r.week), 0);
+  const games = [];
+  const finishedPairs = [];
+  for (const sides of matchupGroups.values()) {
+    if (sides.length !== 2) continue;
+    const [a, b] = sides;
+    if (!a.all_starters_done || !b.all_starters_done) continue;
+    const age = maxSeenWeek - a.week;
+    const weight = Math.pow(decay, Math.max(0, age));
+    games.push({ teamA: a.team_id, teamB: b.team_id, margin: a.actual_score - b.actual_score, weight });
+    finishedPairs.push([a, b]);
+  }
+
+  const result = new Map();
+  if (!games.length) {
+    for (const id of teamIds) result.set(id, { score: 50, rating: 0, stdErr: PP_DEFAULT_STDDEV * Math.SQRT2, gamesPlayed: 0 });
+    return result;
+  }
+
+  const ratings = new Map(teamIds.map((id) => [id, 0]));
+  const gamesByTeam = new Map(teamIds.map((id) => [id, []]));
+  for (const g of games) {
+    if (gamesByTeam.has(g.teamA)) gamesByTeam.get(g.teamA).push({ opp: g.teamB, margin: g.margin, weight: g.weight });
+    if (gamesByTeam.has(g.teamB)) gamesByTeam.get(g.teamB).push({ opp: g.teamA, margin: -g.margin, weight: g.weight });
+  }
+  for (let iter = 0; iter < 100; iter++) {
+    let maxDelta = 0;
+    for (const id of teamIds) {
+      const gs = gamesByTeam.get(id);
+      if (!gs || !gs.length) continue;
+      let num = 0, den = 0;
+      for (const g of gs) { num += g.weight * (g.margin + ratings.get(g.opp)); den += g.weight; }
+      const next = den ? num / den : 0;
+      maxDelta = Math.max(maxDelta, Math.abs(next - ratings.get(id)));
+      ratings.set(id, next);
+    }
+    if (maxDelta < 0.0005) break;
+  }
+  const ratingVals = [...ratings.values()];
+  const meanRating = ratingVals.reduce((s, v) => s + v, 0) / (ratingVals.length || 1);
+  for (const id of teamIds) ratings.set(id, ratings.get(id) - meanRating);
+
+  const effN = new Map(teamIds.map((id) => [id, 0]));
+  for (const g of games) {
+    if (effN.has(g.teamA)) effN.set(g.teamA, effN.get(g.teamA) + g.weight);
+    if (effN.has(g.teamB)) effN.set(g.teamB, effN.get(g.teamB) + g.weight);
+  }
+  const shrunk = new Map();
+  for (const id of teamIds) {
+    const n = effN.get(id) || 0;
+    shrunk.set(id, (n / (n + priorK)) * ratings.get(id));
+  }
+
+  const luck = new Map(teamIds.map((id) => [id, 0]));
+  if (pregameWinProbByKey) {
+    const winsExpected = new Map(teamIds.map((id) => [id, 0]));
+    const winsActual = new Map(teamIds.map((id) => [id, 0]));
+    for (const [a, b] of finishedPairs) {
+      for (const side of [a, b]) {
+        const pregame = pregameWinProbByKey.get(`${side.year}|${side.week}|${side.matchup_id}|${side.team_id}`);
+        if (pregame != null && winsExpected.has(side.team_id)) {
+          winsExpected.set(side.team_id, winsExpected.get(side.team_id) + pregame / 100);
+        }
+      }
+      if (a.actual_score > b.actual_score) { if (winsActual.has(a.team_id)) winsActual.set(a.team_id, winsActual.get(a.team_id) + 1); }
+      else if (b.actual_score > a.actual_score) { if (winsActual.has(b.team_id)) winsActual.set(b.team_id, winsActual.get(b.team_id) + 1); }
+      else {
+        if (winsActual.has(a.team_id)) winsActual.set(a.team_id, winsActual.get(a.team_id) + 0.5);
+        if (winsActual.has(b.team_id)) winsActual.set(b.team_id, winsActual.get(b.team_id) + 0.5);
+      }
+    }
+    for (const id of teamIds) luck.set(id, luckLambda * ((winsActual.get(id) || 0) - (winsExpected.get(id) || 0)));
+  }
+
+  const adjusted = new Map();
+  for (const id of teamIds) adjusted.set(id, shrunk.get(id) + luck.get(id));
+
+  const stdErr = new Map();
+  for (const id of teamIds) {
+    const n = effN.get(id) || 0;
+    stdErr.set(id, n > 0 ? (PP_DEFAULT_STDDEV * Math.SQRT2) / Math.sqrt(n) : PP_DEFAULT_STDDEV * Math.SQRT2);
+  }
+
+  const adjVals = [...adjusted.values()];
+  const meanAdj = adjVals.reduce((s, v) => s + v, 0) / (adjVals.length || 1);
+  const variance = adjVals.reduce((s, v) => s + (v - meanAdj) ** 2, 0) / (adjVals.length || 1);
+  const stdAdj = Math.sqrt(variance) || 1;
+
+  for (const id of teamIds) {
+    const z = (adjusted.get(id) - meanAdj) / stdAdj;
+    result.set(id, { score: 100 * normalCdf(z), rating: adjusted.get(id), stdErr: stdErr.get(id), gamesPlayed: effN.get(id) || 0 });
+  }
+  return result;
+}
+
+// Head-to-head win probability for this one matchup, from the two teams'
+// Power Ratings rather than this week's projections alone -- a team whose
+// projections happen to be high this week but has been getting outplayed
+// relative to the model all season shouldn't look like a lock. Combines
+// both teams' independent uncertainty (stdErr) the same way two
+// independent normal estimates combine: variances add.
+function powerPickWinProbability(ratingA, ratingB) {
+  const combinedVar = ratingA.stdErr ** 2 + ratingB.stdErr ** 2;
+  if (!combinedVar) return 50;
+  const z = (ratingA.rating - ratingB.rating) / Math.sqrt(combinedVar);
+  return 100 * normalCdf(z);
+}
+
+async function renderPowerPicksView(leagueId, year, week, byMatchup, teamInfo, { forcedPreview = false } = {}) {
+  matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn');
+  matchupsEl.classList.add('view-power-picks');
+  Object.values(charts).forEach(destroyEntry);
+  for (const key of Object.keys(charts)) delete charts[key];
+  statusEl.textContent = '';
+
+  let ratings = null;
+  try {
+    const history = await fetchPowerPicksHistory(leagueId, year);
+    const teamIds = Object.keys(teamInfo).map(Number);
+    const pregameMap = extractPregameWinProb(history);
+    ratings = computePowerRatings(history, teamIds, pregameMap, week - 1);
+  } catch (err) {
+    console.warn('Power Picks: could not compute Power Ratings, falling back to projections only:', err.message);
+  }
+
+  matchupsEl.innerHTML = '';
+  const banner = document.createElement('div');
+  banner.className = 'power-picks-banner';
+  banner.innerHTML = forcedPreview
+    ? `<div class="pp-title">🔮 Power Picks -- Week ${week} <span class="pp-preview-tag">preview</span></div>` +
+      `<div class="pp-sub">Forced on via Preferences -- real polling is still running behind this in the background, untouched. Turn the toggle off to see the live view again.</div>`
+    : `<div class="pp-title">🔮 Power Picks -- Week ${week}</div>` +
+      `<div class="pp-sub">Predictions before kickoff, from the site's Power Rankings model -- live graphs take over once games start.</div>`;
+  matchupsEl.appendChild(banner);
+
+  for (const [matchupId, rows] of Object.entries(byMatchup)) {
+    const homeRow = rows.find((r) => r.is_home);
+    const awayRow = rows.find((r) => !r.is_home);
+    if (!homeRow || !awayRow) continue;
+
+    const home = teamInfo[homeRow.team_id] || { name: 'Home', color: '#1a3fa0', emoji: '', logoUrl: '' };
+    const away = teamInfo[awayRow.team_id] || { name: 'Away', color: '#c0392b', emoji: '', logoUrl: '' };
+
+    const homeRating = ratings?.get(homeRow.team_id);
+    const awayRating = ratings?.get(awayRow.team_id);
+    const havePicks = !!(homeRating && awayRating);
+    const homePickPct = havePicks ? powerPickWinProbability(homeRating, awayRating) : null;
+    const favorsHome = homePickPct != null && homePickPct >= 50;
+
+    const card = document.createElement('div');
+    card.className = 'power-picks-card';
+    card.style.setProperty('--home-color', favorsHome ? home.color : away.color);
+    card.innerHTML = `
+      <div class="pp-row">
+        <span class="pp-icon">${renderTeamIcon(home)}</span>
+        <span class="pp-name" style="color:${home.color}">${home.name}</span>
+        <span class="pp-score">${homeRow.expected_score != null ? Number(homeRow.expected_score).toFixed(1) + ' proj' : ''}</span>
+        ${havePicks ? `<span class="pp-pick" style="color:${home.color}">${Math.round(homePickPct)}%</span>` : ''}
+      </div>
+      <div class="pp-vs">vs</div>
+      <div class="pp-row">
+        <span class="pp-icon">${renderTeamIcon(away)}</span>
+        <span class="pp-name" style="color:${away.color}">${away.name}</span>
+        <span class="pp-score">${awayRow.expected_score != null ? Number(awayRow.expected_score).toFixed(1) + ' proj' : ''}</span>
+        ${havePicks ? `<span class="pp-pick" style="color:${away.color}">${Math.round(100 - homePickPct)}%</span>` : ''}
+      </div>
+      ${havePicks
+        ? `<div class="pp-footer">Power Pick: <b style="color:${favorsHome ? home.color : away.color}">${favorsHome ? home.name : away.name}</b></div>`
+        : ''}
+    `;
+    matchupsEl.appendChild(card);
+  }
+}
+
 function destroyEntry(entry) {
   if (entry?.chart) entry.chart.destroy();
 }
@@ -3527,12 +3777,38 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
   if (Object.keys(byMatchup).length === 0) {
     updateChampionshipStage(false, {});
+    const viewToggleEl = document.getElementById('viewToggle');
+    if (viewToggleEl) viewToggleEl.hidden = false;
     if (!preserveCharts) {
       matchupsEl.innerHTML = '';
+      matchupsEl.classList.remove('view-power-picks');
       Object.values(charts).forEach(destroyEntry);
       for (const key of Object.keys(charts)) delete charts[key];
       statusEl.textContent = 'No data yet for this week -- the poller may not have run yet.';
     }
+    return;
+  }
+
+  // Power Picks: real pairings exist (the poller writes them starting 24h
+  // before kickoff -- see poll.js), but if that week's first game hasn't
+  // actually kicked off yet, nothing here has a real score to plot. Takes
+  // over the whole matchups area with pregame predictions instead of the
+  // normal graph views, and reverts to them automatically the moment this
+  // same check comes back false on a later poll (once games start).
+  const powerPicksWeekStart = await fetchWeekStart(year, week);
+  const reallyPregame = !!powerPicksWeekStart && Date.now() < powerPicksWeekStart.getTime();
+  const isPowerPicksWeek = debugForcePowerPicks || reallyPregame;
+  const viewToggleEl = document.getElementById('viewToggle');
+  if (viewToggleEl) viewToggleEl.hidden = isPowerPicksWeek;
+  if (isPowerPicksWeek) {
+    updateChampionshipStage(false, {});
+    // debugForcePowerPicks can force this view on over a week that's
+    // ALREADY live -- purely a display swap (see the flag's own comment
+    // above): the real poll behind the scenes, and everything it writes,
+    // keeps going exactly as normal the whole time, so this never risks
+    // losing or corrupting any live data. Only the label below changes to
+    // make that clear while it's happening.
+    await renderPowerPicksView(leagueId, year, week, byMatchup, teamInfo, { forcedPreview: debugForcePowerPicks && !reallyPregame });
     return;
   }
 
@@ -3557,7 +3833,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     // overwrite here would also wipe out the .view-fading class that
     // setViewMode adds during a transition, breaking the fade-in half of
     // the cross-fade before it ever gets a chance to play.
-    matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn');
+    matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn', 'view-power-picks');
     matchupsEl.classList.add(`view-${viewMode}`);
     Object.values(charts).forEach(destroyEntry);
     for (const key of Object.keys(charts)) delete charts[key];
