@@ -165,7 +165,16 @@ async function loadYear(leagueId, year) {
   content.style.display = 'none';
   emptyState.style.display = 'none';
 
-  const [{ data: liveTeams, error: teamsError }, allSnapshotRows, { data: seasonResults }, { data: league }] = await Promise.all([
+  // power_rating_history (see 017_performance_latest_snapshots_and_power_cache.sql)
+  // is the poller's own precomputed Power Score per week, refreshed once
+  // per poll cycle rather than re-solved by every visitor's browser on
+  // every page load -- see the cache-first check in renderEverything
+  // below. Queried best-effort alongside everything else: a missing table
+  // (not yet migrated) or an empty result (a season the poller hasn't
+  // caught up on since this cache was added) both just mean "no cache
+  // yet," not a page load failure, so errors here are swallowed rather
+  // than propagated like teamsError below.
+  const [{ data: liveTeams, error: teamsError }, allSnapshotRows, { data: seasonResults }, { data: league }, cachedPowerHistoryResult] = await Promise.all([
     sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId),
     fetchAllRows((from, to) =>
       sb.from('snapshots')
@@ -174,8 +183,13 @@ async function loadYear(leagueId, year) {
     ),
     sb.from('season_results').select('place, legacy_team_id, live_team_id').eq('league_id', leagueId).eq('year', year),
     sb.from('leagues').select('playoff_spots').eq('id', leagueId).single(),
+    sb.from('power_rating_history')
+      .select('week, team_id, score, games_played')
+      .eq('league_id', leagueId).eq('year', year).order('week')
+      .then((r) => r, () => ({ data: null, error: true })),
   ]);
   if (teamsError) { showEmpty('Could not load team info -- check the console.'); console.error(teamsError); return; }
+  const cachedPowerHistory = cachedPowerHistoryResult && !cachedPowerHistoryResult.error ? cachedPowerHistoryResult.data : null;
 
   let finalRows, matchupTimeSeries, teamInfoSource, isLite;
 
@@ -263,7 +277,7 @@ async function loadYear(leagueId, year) {
   const maxWeek = Math.max(...finalRows.map((r) => r.week));
 
   renderEverything({
-    year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, isLite, pregameWinProbByKey,
+    year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, isLite, pregameWinProbByKey, cachedPowerHistory,
     // Coalesced here so renderPodium never needs to know which table a
     // given result's team id actually came from -- same pattern as the
     // legacy_matchups fix.
@@ -742,6 +756,22 @@ function computePowerRatingHistory(rows, teamIds, pregameWinProbByKey, maxWeek) 
   return history;
 }
 
+// Same shape computePowerRatingHistory returns ({teamId: [{week, score}]},
+// skipping weeks a team hadn't played yet), just read straight off the
+// poller's own precomputed rows instead of re-running the regression --
+// see the cache-first check in renderEverything above.
+function buildPowerHistoryFromCache(rows) {
+  const history = {};
+  for (const r of rows) {
+    if (!r.games_played) continue; // not yet played this far -- same "no bare prior" rule as the live computation
+    const id = String(r.team_id);
+    if (!history[id]) history[id] = [];
+    history[id].push({ week: r.week, score: r.score });
+  }
+  for (const id of Object.keys(history)) history[id].sort((a, b) => a.week - b.week);
+  return history;
+}
+
 // ============================================================
 // People's Champion: highest cumulative points, regardless of rank.
 // Returns null if the points leader IS the actual #1 (no mismatch story
@@ -1199,7 +1229,7 @@ function buildMatchupTimeSeries(allRows) {
   return series;
 }
 
-function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, podiumResults, playoffSpots, isLite, pregameWinProbByKey }) {
+function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, podiumResults, playoffSpots, isLite, pregameWinProbByKey, cachedPowerHistory }) {
   document.getElementById('heroYear').textContent = `${year} Season`;
   renderLiteNote(isLite);
   renderLogoBanner(teamInfo);
@@ -1214,7 +1244,20 @@ function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSer
   // years too (pregameWinProbByKey is just null there, so the luck term
   // contributes 0 for everyone -- the SRS regression + shrinkage still
   // runs fine on real final scores alone).
-  const powerHistory = computePowerRatingHistory(finalRows, Object.keys(teamInfo), pregameWinProbByKey, maxWeek);
+  //
+  // Prefers the poller's own cached history (power_rating_history --
+  // see 017_performance_latest_snapshots_and_power_cache.sql) over
+  // recomputing it here: computePowerRatingHistory re-solves the full
+  // weighted-SRS regression once per week of the season, which is fine
+  // for one page load but adds up when every visitor's browser redoes it
+  // from scratch every time. Falls back to the real client-side
+  // computation whenever the cache has nothing for this league/year yet
+  // (not migrated yet, or the poller hasn't run since this table was
+  // added) -- same graceful-degrade convention as pregameWinProbByKey
+  // being null for legacy years above, not a special case to worry about.
+  const powerHistory = cachedPowerHistory && cachedPowerHistory.length
+    ? buildPowerHistoryFromCache(cachedPowerHistory)
+    : computePowerRatingHistory(finalRows, Object.keys(teamInfo), pregameWinProbByKey, maxWeek);
   drawPowerRatingChart(powerHistory, teamInfo, maxWeek);
 
   // matchupTimeSeries is deliberately [] for lite years (no poll history
