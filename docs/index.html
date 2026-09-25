@@ -811,6 +811,39 @@
   .matchup-title .live { color: var(--live); font-weight: 600; animation: liveGlow 1.8s ease-in-out infinite; }
   .chartBox { position: relative; height: 300px; width: 100%; }
 
+  /* ---- Power Picks view (pregame predictions, no live data yet) ----
+     Takes over #matchups entirely between when the poller starts writing
+     a week's pairings (24h before kickoff -- see poll.js) and that week's
+     actual first kickoff; the view-toggle buttons are hidden for the same
+     span since none of the graph views have anything real to plot yet. */
+  #matchups.view-power-picks {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;
+  }
+  .power-picks-banner { grid-column: 1 / -1; text-align: center; margin-bottom: 4px; }
+  .pp-title { font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl); }
+  .pp-preview-tag {
+    font-family: var(--font-body); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--accent); border: 1px solid var(--accent); border-radius: 20px; padding: 2px 8px; vertical-align: middle;
+  }
+  .pp-sub { color: var(--muted); font-size: var(--text-sm); margin-top: 2px; }
+  .power-picks-card {
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: var(--card-bg);
+    border-top: 3px solid var(--home-color, var(--border));
+  }
+  .pp-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .pp-icon { flex: 0 0 auto; }
+  .pp-name {
+    font-family: var(--font-display); font-weight: 400; font-size: var(--text-base);
+    flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pp-score { color: var(--muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+  .pp-pick { font-size: var(--text-lg); font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
+  .pp-vs { text-align: center; color: var(--muted); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.05em; }
+  .pp-footer {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+    font-size: var(--text-sm); text-align: center;
+  }
+
   /* ---- Postcard view (compact grid of the same line charts) ---- */
   #matchups.view-postcard {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;
@@ -1025,6 +1058,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=22"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>
