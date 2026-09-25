@@ -173,24 +173,23 @@ function normalCdf(z) {
   return 0.5 * (1 + erf);
 }
 
-// Earliest recorded win_prob per (week, matchup_id, team_id) -- the
-// closest thing to "what the model thought before this game" available
-// from the data actually being polled, since nothing marks a specific poll
-// as pregame. Returns a Map keyed `${year}|${week}|${matchup_id}|${team_id}`
-// -- year matters here the same way it does in computeStandings' own keys
-// above: matchup_id is only unique WITHIN a season, so a league with
-// multiple years of history would otherwise silently merge, say, 2024's
-// week 3 matchup 2 with 2025's week 3 matchup 2 as if they were one game.
+// The closest thing to "what the model thought before this game" --
+// pulled straight off snapshot_summary's own pregame_win_prob column
+// (the earliest recorded win_prob per matchup-team, computed server-side
+// now -- see 017_performance_latest_snapshots_and_power_cache.sql) rather
+// than scanning the full poll history for it client-side. Returns a Map
+// keyed `${year}|${week}|${matchup_id}|${team_id}` -- year matters here
+// the same way it does in computeStandings' own keys above: matchup_id is
+// only unique WITHIN a season, so a league with multiple years of history
+// would otherwise silently merge, say, 2024's week 3 matchup 2 with
+// 2025's week 3 matchup 2 as if they were one game.
 function extractPregameWinProb(rows) {
-  const earliest = new Map();
-  for (const r of rows) {
-    if (r.win_prob == null) continue;
-    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
-    const existing = earliest.get(key);
-    if (!existing || new Date(r.ts) < new Date(existing.ts)) earliest.set(key, r);
-  }
   const result = new Map();
-  for (const [key, r] of earliest) result.set(key, r.win_prob);
+  for (const r of rows) {
+    if (r.pregame_win_prob == null) continue;
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    result.set(key, r.pregame_win_prob);
+  }
   return result;
 }
 
@@ -344,16 +343,20 @@ async function loadLeagueData(leagueId) {
 
   // Needs BOTH the final (all_starters_done=true) row of every matchup,
   // for the win-loss table, AND each matchup's earliest poll, for Power
-  // Rankings' luck-adjustment term (see computePowerRatings) -- so this can
-  // no longer filter down to just-the-finals server-side the way it used
-  // to. fetchAllRows paginates around Supabase's 1000-row cap instead.
+  // Rankings' luck-adjustment term (see computePowerRatings) -- snapshot_summary
+  // (see 017_performance_latest_snapshots_and_power_cache.sql) already reduces
+  // the raw poll history down to exactly that, one row per matchup-team,
+  // server-side -- instead of this page fetching a league's ENTIRE raw
+  // snapshot history (every 5-minute poll, every season) just to do the
+  // same reduction client-side and throw the rest away. fetchAllRows still
+  // paginates around Supabase's 1000-row cap, just over a much smaller result.
   let teams, snapshots;
   try {
     [teams, snapshots] = await Promise.all([
       sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId).then(({ data, error }) => { if (error) throw error; return data; }),
       fetchAllRows((from, to) =>
-        sb.from('snapshots')
-          .select('year, week, matchup_id, team_id, actual_score, win_prob, all_starters_done, ts')
+        sb.from('snapshot_summary')
+          .select('year, week, matchup_id, team_id, actual_score, win_prob, all_starters_done, ts, pregame_win_prob')
           .eq('league_id', leagueId).order('ts').range(from, to)
       ),
     ]);
