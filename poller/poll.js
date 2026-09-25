@@ -92,12 +92,23 @@ async function pollLeague(league) {
   // Fails OPEN (keeps the previous always-on behavior) if we can't
   // determine a start date for some reason, rather than silently losing
   // data over an edge case in the schedule response.
+  //
+  // Opens 24h before the week's first kickoff rather than exactly AT it --
+  // this is what powers the site's "Power Picks" pregame view (see app.js):
+  // once these rows exist, the real matchup pairings and this week's
+  // pregame win_prob/expected_score are visible a day early, with actual
+  // scores sitting at 0 and all_starters_done=false until games actually
+  // start. currentNflWeek() (above) already flips over to the new week
+  // several days ahead of its own kickoff, so this doesn't need to look
+  // ahead to a different week -- `week` is already the right one.
+  const POWER_PICKS_LEAD_MS = 24 * 60 * 60 * 1000;
   const now = new Date();
-  const plottingOpen = !weekStart || now >= weekStart;
+  const plottingOpen = !weekStart || now >= new Date(weekStart.getTime() - POWER_PICKS_LEAD_MS);
   if (!plottingOpen) {
     console.log(
       `[${league.slug}] week ${week}'s plotting window hasn't opened yet ` +
-        `(starts ${weekStart.toISOString()}) -- computing but not writing snapshots`
+        `(opens ${new Date(weekStart.getTime() - POWER_PICKS_LEAD_MS).toISOString()}, ` +
+        `24h before kickoff at ${weekStart.toISOString()}) -- computing but not writing snapshots`
     );
   }
 
