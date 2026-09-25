@@ -1,4 +1,4 @@
-// If config.js failed to load (wrong path, 404, etc.), SUPABASE_CONFIG
+\// If config.js failed to load (wrong path, 404, etc.), SUPABASE_CONFIG
 // won't exist -- destructuring it directly would throw immediately and
 // halt this entire script before anything else runs, which is its own
 // silent-failure trap (the page would just sit on its default "Loading"
@@ -527,7 +527,24 @@ function renderPowerRankings(standings, throughWeek) {
   if (!powerTable) return; // standings.html not yet updated with the section -- degrade quietly
   const teamIds = standings.map((s) => s.teamId);
   const pregameMap = extractPregameWinProb(allRows);
+
+  // "Through week X" already means "as of week X" for the win-loss table
+  // above; Power Rankings' own week-over-week delta needs an actual
+  // number to diff against even when "Full season" is selected (throughWeek
+  // is null there), so this resolves it to the latest week with any data
+  // at all in that case -- same week-only convention (not year-aware)
+  // computeStandings/computePowerRatings already use elsewhere in this
+  // file, so "latest" here means the same thing "Full season" already
+  // means for the table above.
+  const effectiveWeek = throughWeek != null ? throughWeek : allRows.reduce((m, r) => Math.max(m, r.week), 0);
+  const previousWeek = effectiveWeek - 1;
+
   const ratings = computePowerRatings(allRows, teamIds, pregameMap, throughWeek);
+  // null (not computed at all) when there's no prior week to compare
+  // against -- e.g. viewing week 1 itself, or "through week 1" -- rather
+  // than running a needless computePowerRatings(..., 0) that would just
+  // return every team at the shrunk-to-nothing default anyway.
+  const previousRatings = previousWeek >= 1 ? computePowerRatings(allRows, teamIds, pregameMap, previousWeek) : null;
 
   const ranked = teamIds
     .map((id) => ({ teamId: id, team: teamInfo[id], ...ratings.get(id) }))
@@ -540,14 +557,38 @@ function renderPowerRankings(standings, throughWeek) {
       <span style="text-align:right">Power Score</span>
     </div>
   `;
-  const rows = ranked.map((r, i) => `
-    <div class="standings-row power-row" style="--team-color:${r.team.color}">
-      <div class="col-rank">${i + 1}</div>
-      <div class="col-team"><span class="team-name">${renderTeamIcon(r.team)}${r.team.name}</span></div>
-      <div class="col-power">${r.score.toFixed(1)}<span class="power-confidence">${confidenceLabel(r.gamesPlayed)}</span></div>
-    </div>
-  `).join('');
+  const rows = ranked.map((r, i) => {
+    const prev = previousRatings ? previousRatings.get(r.teamId) : null;
+    // No prior week counted, or the team hadn't played a single game as
+    // of it yet -- a delta against the shrunk-to-nothing default score
+    // every unplayed team starts at would read as a meaningless "+11.4"
+    // on a team's very first appearance, so this shows "New" instead.
+    const deltaHtml = (!prev || !prev.gamesPlayed)
+      ? '<span class="power-delta power-delta-new">New</span>'
+      : renderPowerDelta(r.score - prev.score);
+    return `
+      <div class="standings-row power-row" style="--team-color:${r.team.color}">
+        <div class="col-rank">${i + 1}</div>
+        <div class="col-team"><span class="team-name">${renderTeamIcon(r.team)}${r.team.name}</span></div>
+        <div class="col-power">
+          ${r.score.toFixed(1)} ${deltaHtml}
+          <span class="power-confidence">${confidenceLabel(r.gamesPlayed)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
   powerTable.innerHTML = header + rows;
+}
+
+// "+3.2" in the win color, "-1.8" in the loss color, or a neutral "±0.0"
+// for anything close enough to flat to just be rounding noise -- same
+// three-way convention (win/loss/neutral) the streak column above already
+// uses, just applied to a continuous number instead of a W/L/T letter.
+function renderPowerDelta(delta) {
+  if (Math.abs(delta) < 0.05) return '<span class="power-delta power-delta-flat">±0.0</span>';
+  const sign = delta > 0 ? '+' : '−'; // true minus sign, not a hyphen, to match the '+' glyph's weight
+  const cls = delta > 0 ? 'power-delta-up' : 'power-delta-down';
+  return `<span class="power-delta ${cls}">${sign}${Math.abs(delta).toFixed(1)}</span>`;
 }
 
 // A team's rating uncertainty (stdErr, computed alongside the score)
