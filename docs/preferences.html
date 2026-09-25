@@ -184,6 +184,19 @@
   </div>
 
   <div class="setting-group setting-group-debug">
+    <div class="setting-title">Power Picks</div>
+    <div class="setting-desc">Normally the Power Picks pregame-prediction view only appears in the ~24 hours between the poller writing a week's pairings and that week's actual first kickoff, then hands off to the normal live graphs. This forces the Power Picks view on for whichever week is currently selected, even if it's already live -- purely a display override on this page: it doesn't touch the poller or the database, so the real polling and every snapshot it writes keep running normally in the background the whole time, completely unaffected by this toggle. Turning it back off just re-renders whatever the real live/pregame state actually is, with nothing lost.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="debugForcePowerPicks">
+      <span>
+        <div class="option-label">Force Power Picks look (default: off)</div>
+        <div class="option-example">Handy for previewing the pregame prediction cards on a week that's already underway -- the predictions shown still come from real Power Ratings history, just displayed instead of the live scores for as long as this stays on</div>
+      </span>
+    </label>
+  </div>
+
+  <div class="setting-group setting-group-debug">
     <div class="setting-title">Halloween Week</div>
     <div class="setting-desc">Whichever week actually contains Halloween gets bats patrolling the background, ghosts and a cobweb garland (with spiders) on ESPN/Forecasting cards, and a hint in the kickoff countdown in the days before -- if Upset Watch fires on a card, its spiders glow the alert color and pulse, same as the Christmas lights. Unlike Thanksgiving/Christmas (both always an actual NFL game day), Halloween is detected by whether Oct 31 falls within the week's date span, since there's usually no game played on the day itself. This forces that look on for whichever week is currently selected, regardless of the real schedule.</div>
 
@@ -288,6 +301,18 @@
   christmasDebugCheckbox.checked = localStorage.getItem(CHRISTMAS_DEBUG_KEY) === 'true';
   christmasDebugCheckbox.addEventListener('change', () => {
     localStorage.setItem(CHRISTMAS_DEBUG_KEY, christmasDebugCheckbox.checked ? 'true' : 'false');
+  });
+
+  // Defaults OFF -- purely a client-side rendering override (see the
+  // description above); the poller and every write it makes to Supabase
+  // are completely unaware this preference exists, so flipping it on
+  // during a live week previews the pregame cards without risking or
+  // losing any real data, and flipping it off just re-renders real state.
+  const FORCE_POWER_PICKS_KEY = 'winProbDebugForcePowerPicks';
+  const forcePowerPicksCheckbox = document.getElementById('debugForcePowerPicks');
+  forcePowerPicksCheckbox.checked = localStorage.getItem(FORCE_POWER_PICKS_KEY) === 'true';
+  forcePowerPicksCheckbox.addEventListener('change', () => {
+    localStorage.setItem(FORCE_POWER_PICKS_KEY, forcePowerPicksCheckbox.checked ? 'true' : 'false');
   });
 
   const HALLOWEEN_DEBUG_KEY = 'winProbDebugHalloweenWeek';
