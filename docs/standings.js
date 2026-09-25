@@ -1,4 +1,4 @@
-\// If config.js failed to load (wrong path, 404, etc.), SUPABASE_CONFIG
+// If config.js failed to load (wrong path, 404, etc.), SUPABASE_CONFIG
 // won't exist -- destructuring it directly would throw immediately and
 // halt this entire script before anything else runs, which is its own
 // silent-failure trap (the page would just sit on its default "Loading"
