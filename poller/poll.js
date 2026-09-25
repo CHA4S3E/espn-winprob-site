@@ -41,6 +41,205 @@ function attachProTeamAbbrev(player) {
   return player;
 }
 
+// ============================================================
+// Power Rankings cache refresh -- see PART 2 of
+// 017_performance_latest_snapshots_and_power_cache.sql. Computes the same
+// six-layer Power Score (weighted SRS + recency decay + Bayesian
+// shrinkage + luck adjustment + uncertainty, normalized via normalCdf)
+// that standings.js and year-in-review.js already implement, ported here
+// rather than shared -- same cross-file-duplication convention every
+// other copy of this math already follows (see standings.js for the
+// fully-commented original). Running it here, once per poll cycle, means
+// year-in-review.js's visitors read a cached row instead of every single
+// page load re-solving the regression itself from scratch.
+// ============================================================
+
+const PAGE_SIZE = 1000;
+async function fetchAllRows(buildQuery) {
+  let all = [];
+  let from = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data, error } = await buildQuery(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return all;
+}
+
+function erf(x) {
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x);
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return sign * y;
+}
+function normalCdf(z) {
+  return 0.5 * (1 + erf(z / Math.SQRT2));
+}
+
+function computePowerRatings(rows, teamIds, pregameWinProbByKey, throughWeek, opts) {
+  const decay = (opts && opts.decay) ?? 0.85;
+  const priorK = (opts && opts.priorK) ?? 3;
+  const luckLambda = (opts && opts.luckLambda) ?? 0.15;
+  const PR_DEFAULT_STDDEV = 21; // same per-team score stddev winProb.js's model uses
+
+  const latestByKey = new Map();
+  for (const r of rows) {
+    if (throughWeek != null && r.week > throughWeek) continue;
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const existing = latestByKey.get(key);
+    if (!existing || new Date(r.ts) > new Date(existing.ts)) latestByKey.set(key, r);
+  }
+  const matchupGroups = new Map();
+  for (const r of latestByKey.values()) {
+    const mKey = `${r.year}|${r.week}|${r.matchup_id}`;
+    if (!matchupGroups.has(mKey)) matchupGroups.set(mKey, []);
+    matchupGroups.get(mKey).push(r);
+  }
+
+  const maxSeenWeek = throughWeek != null ? throughWeek : rows.reduce((m, r) => Math.max(m, r.week), 0);
+  const games = [];
+  const finishedPairs = [];
+  for (const sides of matchupGroups.values()) {
+    if (sides.length !== 2) continue;
+    const [a, b] = sides;
+    if (!a.all_starters_done || !b.all_starters_done) continue;
+    const age = maxSeenWeek - a.week;
+    const weight = Math.pow(decay, Math.max(0, age));
+    games.push({ teamA: a.team_id, teamB: b.team_id, margin: a.actual_score - b.actual_score, weight });
+    finishedPairs.push([a, b]);
+  }
+
+  const result = new Map();
+  if (!games.length) {
+    for (const id of teamIds) result.set(id, { score: 50, rating: 0, stdErr: PR_DEFAULT_STDDEV * Math.SQRT2, gamesPlayed: 0 });
+    return result;
+  }
+
+  const ratings = new Map(teamIds.map((id) => [id, 0]));
+  const gamesByTeam = new Map(teamIds.map((id) => [id, []]));
+  for (const g of games) {
+    if (gamesByTeam.has(g.teamA)) gamesByTeam.get(g.teamA).push({ opp: g.teamB, margin: g.margin, weight: g.weight });
+    if (gamesByTeam.has(g.teamB)) gamesByTeam.get(g.teamB).push({ opp: g.teamA, margin: -g.margin, weight: g.weight });
+  }
+  for (let iter = 0; iter < 100; iter++) {
+    let maxDelta = 0;
+    for (const id of teamIds) {
+      const gs = gamesByTeam.get(id);
+      if (!gs || !gs.length) continue;
+      let num = 0, den = 0;
+      for (const g of gs) { num += g.weight * (g.margin + ratings.get(g.opp)); den += g.weight; }
+      const next = den ? num / den : 0;
+      maxDelta = Math.max(maxDelta, Math.abs(next - ratings.get(id)));
+      ratings.set(id, next);
+    }
+    if (maxDelta < 0.0005) break;
+  }
+  const ratingVals = [...ratings.values()];
+  const meanRating = ratingVals.reduce((s, v) => s + v, 0) / (ratingVals.length || 1);
+  for (const id of teamIds) ratings.set(id, ratings.get(id) - meanRating);
+
+  const effN = new Map(teamIds.map((id) => [id, 0]));
+  for (const g of games) {
+    if (effN.has(g.teamA)) effN.set(g.teamA, effN.get(g.teamA) + g.weight);
+    if (effN.has(g.teamB)) effN.set(g.teamB, effN.get(g.teamB) + g.weight);
+  }
+  const shrunk = new Map();
+  for (const id of teamIds) {
+    const n = effN.get(id) || 0;
+    shrunk.set(id, (n / (n + priorK)) * ratings.get(id));
+  }
+
+  const luck = new Map(teamIds.map((id) => [id, 0]));
+  if (pregameWinProbByKey) {
+    const winsExpected = new Map(teamIds.map((id) => [id, 0]));
+    const winsActual = new Map(teamIds.map((id) => [id, 0]));
+    for (const [a, b] of finishedPairs) {
+      for (const side of [a, b]) {
+        const pregame = pregameWinProbByKey.get(`${side.year}|${side.week}|${side.matchup_id}|${side.team_id}`);
+        if (pregame != null && winsExpected.has(side.team_id)) {
+          winsExpected.set(side.team_id, winsExpected.get(side.team_id) + pregame / 100);
+        }
+      }
+      if (a.actual_score > b.actual_score) { if (winsActual.has(a.team_id)) winsActual.set(a.team_id, winsActual.get(a.team_id) + 1); }
+      else if (b.actual_score > a.actual_score) { if (winsActual.has(b.team_id)) winsActual.set(b.team_id, winsActual.get(b.team_id) + 1); }
+      else {
+        if (winsActual.has(a.team_id)) winsActual.set(a.team_id, winsActual.get(a.team_id) + 0.5);
+        if (winsActual.has(b.team_id)) winsActual.set(b.team_id, winsActual.get(b.team_id) + 0.5);
+      }
+    }
+    for (const id of teamIds) luck.set(id, luckLambda * ((winsActual.get(id) || 0) - (winsExpected.get(id) || 0)));
+  }
+
+  const adjusted = new Map();
+  for (const id of teamIds) adjusted.set(id, shrunk.get(id) + luck.get(id));
+
+  const stdErr = new Map();
+  for (const id of teamIds) {
+    const n = effN.get(id) || 0;
+    stdErr.set(id, n > 0 ? (PR_DEFAULT_STDDEV * Math.SQRT2) / Math.sqrt(n) : PR_DEFAULT_STDDEV * Math.SQRT2);
+  }
+
+  const adjVals = [...adjusted.values()];
+  const meanAdj = adjVals.reduce((s, v) => s + v, 0) / (adjVals.length || 1);
+  const variance = adjVals.reduce((s, v) => s + (v - meanAdj) ** 2, 0) / (adjVals.length || 1);
+  const stdAdj = Math.sqrt(variance) || 1;
+
+  for (const id of teamIds) {
+    const z = (adjusted.get(id) - meanAdj) / stdAdj;
+    result.set(id, { score: 100 * normalCdf(z), rating: adjusted.get(id), stdErr: stdErr.get(id), gamesPlayed: effN.get(id) || 0 });
+  }
+  return result;
+}
+
+// Recomputes every week's Power Score for this league/year and upserts it
+// into power_rating_history -- best-effort: a failure here (a missing
+// table on a not-yet-migrated project, a transient network error) is
+// caught and logged by the caller, never allowed to fail the actual
+// snapshot poll it runs alongside. Only called when this poll cycle
+// actually wrote something new (see pollLeague), so an idle period
+// between polls doesn't burn a Supabase round-trip recomputing the same
+// unchanged history over and over.
+async function refreshPowerRatingCache(league, year, teamIds) {
+  const rows = await fetchAllRows((from, to) =>
+    supabase
+      .from('snapshot_summary')
+      .select('year, week, matchup_id, team_id, actual_score, all_starters_done, ts, pregame_win_prob')
+      .eq('league_id', league.id).eq('year', year).range(from, to)
+  );
+  if (!rows.length) return;
+
+  const pregameWinProbByKey = new Map();
+  for (const r of rows) {
+    if (r.pregame_win_prob == null) continue;
+    pregameWinProbByKey.set(`${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`, r.pregame_win_prob);
+  }
+
+  const maxWeek = rows.reduce((m, r) => Math.max(m, r.week), 0);
+  const records = [];
+  for (let w = 1; w <= maxWeek; w++) {
+    const ratings = computePowerRatings(rows, teamIds, pregameWinProbByKey, w);
+    for (const teamId of teamIds) {
+      const r = ratings.get(teamId);
+      if (!r || !r.gamesPlayed) continue; // not yet played this far -- no bare-prior row, same rule the client-side chart uses
+      records.push({
+        league_id: league.id, year, week: w, team_id: teamId,
+        score: r.score, rating: r.rating, std_err: r.stdErr, games_played: r.gamesPlayed,
+      });
+    }
+  }
+  if (!records.length) return;
+
+  const { error } = await supabase
+    .from('power_rating_history')
+    .upsert(records, { onConflict: 'league_id,year,week,team_id' });
+  if (error) throw error;
+}
+
 async function upsertTeam(leagueId, espnTeam) {
   const espnTeamId = espnTeam.id;
   const name = `${espnTeam.location || ''} ${espnTeam.nickname || ''}`.trim() || `Team ${espnTeamId}`;
@@ -248,6 +447,23 @@ async function pollLeague(league) {
         (skippedCount ? `, skipped ${skippedCount} unchanged` : '') +
         (rejectedCount ? `, rejected ${rejectedCount} matchup(s) as implausible` : '')
     );
+  }
+
+  // Only worth refreshing the Power Rankings cache when this poll cycle
+  // actually changed something -- an idle period between real updates
+  // would otherwise burn a Supabase round-trip re-deriving the exact same
+  // history over and over. Best-effort and non-fatal: year-in-review.js
+  // already falls back to computing it client-side whenever the cache is
+  // empty for a league/year, so a failure here (project not migrated yet,
+  // a transient error) should never take down the actual snapshot poll
+  // above, which is why this is caught separately rather than left to
+  // pollLeague's own caller in main().
+  if (insertedCount > 0) {
+    try {
+      await refreshPowerRatingCache(league, year, Object.values(teamIdByEspnId));
+    } catch (err) {
+      console.warn(`[${league.slug}] could not refresh Power Rankings cache (non-fatal):`, err.message);
+    }
   }
 }
 
