@@ -97,6 +97,18 @@
     --tier-champ: #a67c00;
     --tier-third: #1f8a53;
     --tier-other: #5b6472;
+    /* Halloween ground fog -- a grayish-violet haze (same family as the
+       bat glow's purple, desaturated toward gray so it reads as fog/mist
+       rather than another glow effect) needs more opacity here than in
+       dark mode to stay visible against a white page without looking like
+       a dirt smudge; #seasonalFog's own blur softens the hard gradient
+       edges either way. */
+    --fog-color: rgba(108, 96, 132, 0.4);
+    /* Warm incandescent halo layered behind each Christmas bulb's own
+       team-colored glow (see .seasonal-bulb) -- lower alpha here since a
+       warm glow shows up more strongly against a light card background
+       than it needs to. */
+    --bulb-warm-glow: rgba(255, 179, 71, 0.35);
     /* Doppio One for team names/percentages/headings -- a display face
        that's already bold-by-design (it only ships in a single weight, no
        separate Bold variant, so display-font elements below deliberately
@@ -136,6 +148,13 @@
     --tier-champ: #f4c430;
     --tier-third: #4fd493;
     --tier-other: #9aa3af;
+    /* Lighter and slightly less opaque than the light-mode fog -- a dark
+       page needs less contrast to read the same haze, and too much here
+       would just look like a gray wash over everything. */
+    --fog-color: rgba(176, 164, 205, 0.24);
+    /* A bit brighter/warmer than light mode's -- reads well against a dark
+       card without needing as much saturation to stand out. */
+    --bulb-warm-glow: rgba(255, 200, 120, 0.45);
   }
 
   /* Highlighted/selected text uses the theme's own accent color rather
@@ -163,6 +182,49 @@
   /* #wrap already sets position:relative + z-index:1 further down (see
      its main rule) which is enough to keep it painting above this fixed
      z-index:0 canvas -- no extra rule needed here. */
+
+  /* Halloween ground fog -- a slow, low-contrast haze drifting along the
+     bottom of the viewport, layered on top of the falling-bat particle
+     field above (z-index 0) but still behind #wrap's content (z-index 1).
+     Pure CSS rather than another canvas particle system: it's one soft
+     blurred shape, not individual moving objects, so a couple of animated
+     gradient layers are simpler and cheaper than driving it frame-by-frame
+     in seasonalTick. Gated by the data-seasonal-theme attribute app.js
+     sets alongside currentSeasonalTheme (see loadMatchups) -- opacity
+     fades in/out with a transition instead of a hard display swap, so a
+     theme change (or the debug toggle) doesn't pop in/out abruptly. */
+  #seasonalFog {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    height: 22vh; min-height: 140px; max-height: 260px;
+    z-index: 0; pointer-events: none; overflow: hidden;
+    opacity: 0; transition: opacity 1.4s ease;
+  }
+  html[data-seasonal-theme="halloween"] #seasonalFog { opacity: 1; }
+  .fog-layer {
+    position: absolute; top: 0; left: 0; height: 100%; width: 200%;
+    background-repeat: repeat-x;
+    filter: blur(8px);
+  }
+  .fog-layer-1 {
+    background-image: radial-gradient(ellipse 60% 90% at 25% 100%, var(--fog-color) 0%, transparent 72%);
+    background-size: 50% 100%;
+    opacity: 0.55;
+    animation: fogDrift 46s linear infinite;
+  }
+  .fog-layer-2 {
+    background-image: radial-gradient(ellipse 50% 85% at 70% 100%, var(--fog-color) 0%, transparent 72%);
+    background-size: 50% 100%;
+    opacity: 0.4;
+    animation: fogDrift 64s linear infinite reverse;
+  }
+  @keyframes fogDrift {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fog-layer { animation: none !important; }
+  }
+  html[data-reduce-motion="true"] .fog-layer { animation: none !important; }
   /* Canvases default to display:inline, which reserves a few pixels of
      invisible "descender" space below them (same as an inline image) --
      any small reflow nearby (like percentage text changing width on hover)
@@ -710,13 +772,24 @@
      alternating. Twinkle independently by default; see .upset-lights
      below for what happens when the card's own live Upset Watch state
      (the SAME upsetInfo already computed for the badge/border, not a
-     separate detector) is active. */
+     separate detector) is active. The third, widest box-shadow layer is a
+     warm amber halo (--bulb-warm-glow, themed light/dark above) behind the
+     two team-colored ones -- an incandescent-bulb warmth that reads
+     underneath whatever color the bulb itself is, rather than another
+     colored glow competing with it. Rides the same brightness keyframe as
+     the rest of the element since filter affects the whole box-shadow
+     stack, so it pulses in sync with the twinkle for free. Dropped
+     entirely (not just recolored) by .upset-lights below, which needs the
+     alert to read as urgent rather than cozy. */
   .seasonal-bulb {
     position: absolute; width: 8px; height: 12px;
     background: var(--bulb-color);
     border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
     transform: translate(-50%, -50%);
-    box-shadow: 0 0 5px 2px var(--bulb-color), 0 0 12px 3px var(--bulb-color);
+    box-shadow:
+      0 0 5px 2px var(--bulb-color),
+      0 0 12px 3px var(--bulb-color),
+      0 0 22px 9px var(--bulb-warm-glow);
     animation: seasonalBulbTwinkle 2.6s ease-in-out infinite;
   }
   @keyframes seasonalBulbTwinkle {
@@ -990,6 +1063,13 @@
      loadMatchups) and the seasonalTick draw loop, which is the only thing
      that starts/stops drawing and picks which particle shape to draw. -->
 <canvas id="seasonalParticleCanvas"></canvas>
+<!-- Halloween ground fog -- always in the DOM, gated purely by CSS via
+     html[data-seasonal-theme="halloween"] (see the #seasonalFog rule
+     above), which app.js sets alongside currentSeasonalTheme. Two layers
+     drifting at different speeds/opacities for a little depth; both are
+     pure CSS (a repeating blurred radial gradient sliding via transform),
+     no canvas or per-frame JS needed. -->
+<div id="seasonalFog"><div class="fog-layer fog-layer-1"></div><div class="fog-layer fog-layer-2"></div></div>
 <div id="leaderGradient"><div class="leader-gradient-layer" id="leaderGradientLayerA"></div><div class="leader-gradient-layer" id="leaderGradientLayerB"></div></div>
 <div id="wrap">
   <h2>Fantasy Win Probability</h2>
@@ -1058,6 +1138,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=24"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>
