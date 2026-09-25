@@ -104,11 +104,6 @@
        a dirt smudge; #seasonalFog's own blur softens the hard gradient
        edges either way. */
     --fog-color: rgba(108, 96, 132, 0.4);
-    /* Warm incandescent halo layered behind each Christmas bulb's own
-       team-colored glow (see .seasonal-bulb) -- lower alpha here since a
-       warm glow shows up more strongly against a light card background
-       than it needs to. */
-    --bulb-warm-glow: rgba(255, 179, 71, 0.35);
     /* Doppio One for team names/percentages/headings -- a display face
        that's already bold-by-design (it only ships in a single weight, no
        separate Bold variant, so display-font elements below deliberately
@@ -152,9 +147,6 @@
        page needs less contrast to read the same haze, and too much here
        would just look like a gray wash over everything. */
     --fog-color: rgba(176, 164, 205, 0.24);
-    /* A bit brighter/warmer than light mode's -- reads well against a dark
-       card without needing as much saturation to stand out. */
-    --bulb-warm-glow: rgba(255, 200, 120, 0.45);
   }
 
   /* Highlighted/selected text uses the theme's own accent color rather
@@ -772,24 +764,13 @@
      alternating. Twinkle independently by default; see .upset-lights
      below for what happens when the card's own live Upset Watch state
      (the SAME upsetInfo already computed for the badge/border, not a
-     separate detector) is active. The third, widest box-shadow layer is a
-     warm amber halo (--bulb-warm-glow, themed light/dark above) behind the
-     two team-colored ones -- an incandescent-bulb warmth that reads
-     underneath whatever color the bulb itself is, rather than another
-     colored glow competing with it. Rides the same brightness keyframe as
-     the rest of the element since filter affects the whole box-shadow
-     stack, so it pulses in sync with the twinkle for free. Dropped
-     entirely (not just recolored) by .upset-lights below, which needs the
-     alert to read as urgent rather than cozy. */
+     separate detector) is active. */
   .seasonal-bulb {
     position: absolute; width: 8px; height: 12px;
     background: var(--bulb-color);
     border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
     transform: translate(-50%, -50%);
-    box-shadow:
-      0 0 5px 2px var(--bulb-color),
-      0 0 12px 3px var(--bulb-color),
-      0 0 22px 9px var(--bulb-warm-glow);
+    box-shadow: 0 0 5px 2px var(--bulb-color), 0 0 12px 3px var(--bulb-color);
     animation: seasonalBulbTwinkle 2.6s ease-in-out infinite;
   }
   @keyframes seasonalBulbTwinkle {
@@ -1138,6 +1119,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=25"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>
