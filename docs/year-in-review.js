@@ -263,6 +263,11 @@ async function loadYear(leagueId, year) {
   // already handles a null map by contributing 0 for every team, same
   // graceful-degrade convention as matchupTimeSeries above.
   const pregameWinProbByKey = allSnapshotRows.length ? extractPregameWinProb(allSnapshotRows) : null;
+  // Same idea, for computeProjectionStats -- see extractPregameExpectedScore's
+  // own comment for why a final row's own expected_score can't be used
+  // for this (it's converged to equal actual_score by the time a matchup
+  // is done, not the original projection).
+  const pregameExpectedByKey = allSnapshotRows.length ? extractPregameExpectedScore(allSnapshotRows) : null;
 
   // Only pass through teams that actually appear in THIS year's
   // standings -- otherwise the logo banner (and anywhere else teamInfo
@@ -277,7 +282,7 @@ async function loadYear(leagueId, year) {
   const maxWeek = Math.max(...finalRows.map((r) => r.week));
 
   renderEverything({
-    year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, isLite, pregameWinProbByKey, cachedPowerHistory,
+    year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, isLite, pregameWinProbByKey, pregameExpectedByKey, cachedPowerHistory,
     // Coalesced here so renderPodium never needs to know which table a
     // given result's team id actually came from -- same pattern as the
     // legacy_matchups fix.
@@ -620,6 +625,34 @@ function extractPregameWinProb(rows) {
   }
   const result = new Map();
   for (const [key, r] of earliest) result.set(key, r.win_prob);
+  return result;
+}
+
+// Earliest recorded expected_score per (year, week, matchup_id, team_id) --
+// the real pregame season-long projection, needed by computeProjectionStats
+// below. A FINAL row's own expected_score is NOT usable for this: per
+// playerExpected in winProb.js, once a player's game is over (or they're on
+// bye), their "expected" contribution locks to their actual points --so by
+// the time all_starters_done is true, expected_score has already converged
+// to be EXACTLY EQUAL to actual_score for every team, every week, no
+// exceptions. That's correct and intentional for the live win-prob model
+// (there's genuinely no more uncertainty left once a game ends), but it
+// means computeProjectionStats -- which wants "how far did the real score
+// end up from what was originally projected" -- would otherwise always see
+// a diff of exactly 0 and produce nonsense (the same team/week winning
+// BOTH "biggest overperformer" and "biggest underperformer", since every
+// row ties at 0). Same earliest-per-key technique as extractPregameWinProb
+// above, and same graceful null for legacy seasons with no poll history.
+function extractPregameExpectedScore(rows) {
+  const earliest = new Map();
+  for (const r of rows) {
+    if (r.expected_score == null) continue;
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const existing = earliest.get(key);
+    if (!existing || new Date(r.ts) < new Date(existing.ts)) earliest.set(key, r);
+  }
+  const result = new Map();
+  for (const [key, r] of earliest) result.set(key, r.expected_score);
   return result;
 }
 
@@ -1132,17 +1165,26 @@ function computeUpsetWatchLeaderboard(matchupTimeSeries) {
 
 
 // ============================================================
-// Projection stats -- needs (team, week, actual_score, expected_score)
-// rows for every FINAL matchup. Single-week extremes, plus each team's
-// own season-long average gap, then the extremes of THAT.
+// Projection stats -- needs (team, week, actual_score, PREGAME
+// expected_score) for every FINAL matchup. Single-week extremes, plus
+// each team's own season-long average gap, then the extremes of THAT.
+//
+// Takes pregameExpectedByKey (see extractPregameExpectedScore above)
+// rather than reading finalRows' own expected_score field -- that field
+// reflects the LAST poll before the matchup went final, which by then has
+// already converged to equal actual_score exactly (every player locked
+// in), not the original pregame projection this stat actually needs.
 // ============================================================
-function computeProjectionStats(finalRows) {
+function computeProjectionStats(finalRows, pregameExpectedByKey) {
   let bestWeek = null, worstWeek = null;
   const byTeam = new Map();
   for (const r of finalRows) {
-    const diff = r.actual_score - r.expected_score;
-    if (!bestWeek || diff > bestWeek.diff) bestWeek = { teamId: r.team_id, week: r.week, actual: r.actual_score, expected: r.expected_score, diff };
-    if (!worstWeek || diff < worstWeek.diff) worstWeek = { teamId: r.team_id, week: r.week, actual: r.actual_score, expected: r.expected_score, diff };
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const pregameExpected = pregameExpectedByKey ? pregameExpectedByKey.get(key) : null;
+    if (pregameExpected == null) continue; // no pregame projection on record -- skip rather than compare against nothing
+    const diff = r.actual_score - pregameExpected;
+    if (!bestWeek || diff > bestWeek.diff) bestWeek = { teamId: r.team_id, week: r.week, actual: r.actual_score, expected: pregameExpected, diff };
+    if (!worstWeek || diff < worstWeek.diff) worstWeek = { teamId: r.team_id, week: r.week, actual: r.actual_score, expected: pregameExpected, diff };
     if (!byTeam.has(r.team_id)) byTeam.set(r.team_id, []);
     byTeam.get(r.team_id).push(diff);
   }
@@ -1229,7 +1271,7 @@ function buildMatchupTimeSeries(allRows) {
   return series;
 }
 
-function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, podiumResults, playoffSpots, isLite, pregameWinProbByKey, cachedPowerHistory }) {
+function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, podiumResults, playoffSpots, isLite, pregameWinProbByKey, pregameExpectedByKey, cachedPowerHistory }) {
   document.getElementById('heroYear').textContent = `${year} Season`;
   renderLiteNote(isLite);
   renderLogoBanner(teamInfo);
@@ -1266,7 +1308,7 @@ function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSer
   // empty series already, so the cards that depend on them just don't
   // render, with no isLite-specific branching needed here.
   renderDramaAwards(standings, matchupTimeSeries, teamInfo);
-  renderNumbersAwards(standings, finalRows, teamInfo, isLite);
+  renderNumbersAwards(standings, finalRows, teamInfo, isLite, pregameExpectedByKey);
   renderLuckAwards(standings, teamInfo);
   renderUpsetLeaderboard(matchupTimeSeries, teamInfo);
   renderSoClose(standings, teamInfo, playoffSpots);
@@ -1366,16 +1408,16 @@ function renderDramaAwards(standings, matchupTimeSeries, teamInfo) {
   document.getElementById('dramaSection').style.display = cards.length ? '' : 'none';
 }
 
-function renderNumbersAwards(standings, finalRows, teamInfo, isLite) {
+function renderNumbersAwards(standings, finalRows, teamInfo, isLite, pregameExpectedByKey) {
   const cards = [];
   const bw = findBestWorstWeek(standings);
   if (bw.best) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">🔥 Best Week</div><div class="award-headline">${teamNameHtml(teamInfo[bw.best.teamId])}</div><div class="award-detail">${bw.best.score.toFixed(1)} points, Week ${bw.best.week}</div></div>`);
   if (bw.worst) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">🥶 Worst Week</div><div class="award-headline">${teamNameHtml(teamInfo[bw.worst.teamId])}</div><div class="award-detail">${bw.worst.score.toFixed(1)} points, Week ${bw.worst.week}</div></div>`);
 
-  // Projection stats need expected_score, which legacy (lite) years never
-  // recorded -- skipped entirely rather than computed against missing
-  // data, which would otherwise silently produce NaN.
-  const proj = isLite ? null : computeProjectionStats(finalRows);
+  // Projection stats need each team's PREGAME expected_score, which legacy
+  // (lite) years never recorded -- skipped entirely rather than computed
+  // against missing data, which would otherwise silently produce NaN.
+  const proj = isLite ? null : computeProjectionStats(finalRows, pregameExpectedByKey);
   if (proj && proj.bestWeek) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">📈 Biggest Overperformer</div><div class="award-headline">${teamNameHtml(teamInfo[proj.bestWeek.teamId])}</div><div class="award-detail">+${proj.bestWeek.diff.toFixed(1)} over projection, Week ${proj.bestWeek.week} (${proj.bestWeek.expected.toFixed(1)} projected &rarr; ${proj.bestWeek.actual.toFixed(1)} actual)</div></div>`);
   if (proj && proj.worstWeek) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">📉 Biggest Underperformer</div><div class="award-headline">${teamNameHtml(teamInfo[proj.worstWeek.teamId])}</div><div class="award-detail">${proj.worstWeek.diff.toFixed(1)} under projection, Week ${proj.worstWeek.week} (${proj.worstWeek.expected.toFixed(1)} projected &rarr; ${proj.worstWeek.actual.toFixed(1)} actual)</div></div>`);
 
