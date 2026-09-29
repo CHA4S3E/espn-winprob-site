@@ -264,12 +264,27 @@ async function upsertTeam(leagueId, espnTeam) {
   return data.id;
 }
 
-async function pollLeague(league) {
-  const year = new Date().getFullYear();
-  const week = await currentNflWeek(year);
+// How many ESPN scoring corrections after the fact are permanently
+// missed without this: the poller only ever polled `currentNflWeek()`,
+// so a stat correction ESPN applies to an already-final week (a
+// touchdown re-attributed to a different player, a defensive score
+// reversed, etc.) after the poller has already moved on to the next
+// week was never re-checked, ever -- the stale pre-correction score just
+// sat in the DB permanently, silently wrong in standings, Power
+// Rankings, and every Year in Review award computed from it. ESPN's own
+// corrections are rare but do land more than a week after a game in
+// practice, hence checking back this far rather than just one week.
+const STAT_CORRECTION_LOOKBACK_WEEKS = 3;
 
-  console.log(`[${league.slug}] polling year=${year} week=${week}`);
-
+// Fetches, computes, and (if changed) writes snapshots for exactly ONE
+// week of one league -- shared by both the normal current-week poll and
+// the stat-correction look-back below, which is the same work against a
+// different `week` and without the Power Picks plotting-window gate (a
+// past, already-played week has nothing left to gate; the gate only ever
+// existed to hold back an upcoming week's pregame reveal). Returns
+// insertedCount so callers can decide whether it's worth refreshing the
+// Power Rankings cache afterward.
+async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen = true, quiet = false } = {}) {
   const [leagueData, nflGameData] = await Promise.all([
     fetchLeagueWeek({
       espnLeagueId: league.espn_league_id,
@@ -281,37 +296,8 @@ async function pollLeague(league) {
     fetchNflGameStatusMap({ year, week }),
   ]);
 
-  const { statusMap: nflStatusMap, weekStart } = nflGameData;
+  const { statusMap: nflStatusMap } = nflGameData;
 
-  // Thursday-Monday plotting window, determined from ESPN's actual game
-  // dates rather than assuming "the week number changed" is enough. We
-  // still fetch and compute everything below regardless (so roster changes
-  // during Tue/Wed are visible in logs and nothing here depends on this
-  // flag to function) -- it ONLY gates whether we write snapshot rows.
-  // Fails OPEN (keeps the previous always-on behavior) if we can't
-  // determine a start date for some reason, rather than silently losing
-  // data over an edge case in the schedule response.
-  //
-  // Opens 24h before the week's first kickoff rather than exactly AT it --
-  // this is what powers the site's "Power Picks" pregame view (see app.js):
-  // once these rows exist, the real matchup pairings and this week's
-  // pregame win_prob/expected_score are visible a day early, with actual
-  // scores sitting at 0 and all_starters_done=false until games actually
-  // start. currentNflWeek() (above) already flips over to the new week
-  // several days ahead of its own kickoff, so this doesn't need to look
-  // ahead to a different week -- `week` is already the right one.
-  const POWER_PICKS_LEAD_MS = 24 * 60 * 60 * 1000;
-  const now = new Date();
-  const plottingOpen = !weekStart || now >= new Date(weekStart.getTime() - POWER_PICKS_LEAD_MS);
-  if (!plottingOpen) {
-    console.log(
-      `[${league.slug}] week ${week}'s plotting window hasn't opened yet ` +
-        `(opens ${new Date(weekStart.getTime() - POWER_PICKS_LEAD_MS).toISOString()}, ` +
-        `24h before kickoff at ${weekStart.toISOString()}) -- computing but not writing snapshots`
-    );
-  }
-
-  const teamIdByEspnId = {};
   for (const t of leagueData.teams || []) {
     teamIdByEspnId[t.id] = await upsertTeam(league.id, t);
   }
@@ -437,28 +423,89 @@ async function pollLeague(league) {
     if (result.away_inserted) insertedCount++; else skippedCount++;
   }
 
+  // For a normal current-week poll this always logs (quiet=false, the
+  // default). For a stat-correction look-back week (see pollLeague below)
+  // it's called with quiet=true, so the routine "nothing changed" cases
+  // stay silent and only an actual insert/rejection gets logged -- without
+  // this, every 5-minute cycle would print up to 3 extra "0 snapshots"
+  // look-back lines per league even when ESPN hasn't corrected anything.
+  const shouldLog = !quiet || insertedCount > 0 || rejectedCount > 0;
+  if (shouldLog) {
+    if (!plottingOpen) {
+      console.log(`[${league.slug}] week ${week}: plotting window closed -- 0 snapshots written this poll`);
+    } else if (schedule.length === 0) {
+      console.log(`[${league.slug}] week ${week}: no active matchups found (bye week?)`);
+    } else {
+      console.log(
+        `[${league.slug}] week ${week}: inserted ${insertedCount} changed snapshot row(s)` +
+          (skippedCount ? `, skipped ${skippedCount} unchanged` : '') +
+          (rejectedCount ? `, rejected ${rejectedCount} matchup(s) as implausible` : '')
+      );
+    }
+  }
+
+  return { insertedCount, skippedCount, rejectedCount };
+}
+
+// The actual per-league entry point main() calls. Computes the current
+// week + Power Picks plotting gate exactly as before, polls it, then also
+// re-polls the last few weeks (see STAT_CORRECTION_LOOKBACK_WEEKS above)
+// so a post-hoc ESPN stat correction to an already-final week gets picked
+// up automatically instead of sitting stale in the DB forever. Look-back
+// weeks are always "plotting open" -- they're already in the past, so
+// there's nothing left to gate; the plotting window only ever existed to
+// hold back an upcoming week's pregame reveal.
+async function pollLeague(league) {
+  const year = new Date().getFullYear();
+  const week = await currentNflWeek(year);
+
+  console.log(`[${league.slug}] polling year=${year} week=${week}`);
+
+  // Only need weekStart here, to compute the plotting gate up front --
+  // pollLeagueWeek() re-fetches NFL game status itself below (a cheap
+  // public scoreboard call) since plottingOpen has to already be known
+  // before calling it.
+  const { weekStart } = await fetchNflGameStatusMap({ year, week });
+
+  const POWER_PICKS_LEAD_MS = 24 * 60 * 60 * 1000;
+  const now = new Date();
+  const plottingOpen = !weekStart || now >= new Date(weekStart.getTime() - POWER_PICKS_LEAD_MS);
   if (!plottingOpen) {
-    console.log(`[${league.slug}] plotting window closed -- 0 snapshots written this poll`);
-  } else if (schedule.length === 0) {
-    console.log(`[${league.slug}] no active matchups found (bye week?)`);
-  } else {
     console.log(
-      `[${league.slug}] inserted ${insertedCount} changed snapshot row(s)` +
-        (skippedCount ? `, skipped ${skippedCount} unchanged` : '') +
-        (rejectedCount ? `, rejected ${rejectedCount} matchup(s) as implausible` : '')
+      `[${league.slug}] week ${week}'s plotting window hasn't opened yet ` +
+        `(opens ${new Date(weekStart.getTime() - POWER_PICKS_LEAD_MS).toISOString()}, ` +
+        `24h before kickoff at ${weekStart.toISOString()}) -- computing but not writing snapshots`
     );
   }
 
+  const teamIdByEspnId = {};
+  let totalInserted = 0;
+
+  const current = await pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen });
+  totalInserted += current.insertedCount;
+
+  for (let back = 1; back <= STAT_CORRECTION_LOOKBACK_WEEKS; back++) {
+    const lookbackWeek = week - back;
+    if (lookbackWeek < 1) break;
+    const result = await pollLeagueWeek(league, year, lookbackWeek, teamIdByEspnId, { quiet: true });
+    totalInserted += result.insertedCount;
+    if (result.insertedCount > 0) {
+      console.log(
+        `[${league.slug}] week ${lookbackWeek} look-back: picked up ${result.insertedCount} ` +
+          `changed snapshot row(s) -- likely a post-hoc ESPN stat correction`
+      );
+    }
+  }
+
   // Only worth refreshing the Power Rankings cache when this poll cycle
-  // actually changed something -- an idle period between real updates
-  // would otherwise burn a Supabase round-trip re-deriving the exact same
-  // history over and over. Best-effort and non-fatal: year-in-review.js
-  // already falls back to computing it client-side whenever the cache is
-  // empty for a league/year, so a failure here (project not migrated yet,
-  // a transient error) should never take down the actual snapshot poll
-  // above, which is why this is caught separately rather than left to
-  // pollLeague's own caller in main().
-  if (insertedCount > 0) {
+  // (current week + all look-back weeks combined) actually changed
+  // something -- an idle period between real updates would otherwise burn
+  // a Supabase round-trip re-deriving the exact same history over and
+  // over. Best-effort and non-fatal: year-in-review.js already falls back
+  // to computing it client-side whenever the cache is empty for a
+  // league/year, so a failure here (project not migrated yet, a transient
+  // error) should never take down the actual snapshot poll above.
+  if (totalInserted > 0) {
     try {
       await refreshPowerRatingCache(league, year, Object.values(teamIdByEspnId));
     } catch (err) {
