@@ -3836,62 +3836,158 @@ function buildWhatIfShell() {
   return `
     <div class="whatif-card" id="whatIfShell">
       <div class="whatif-title">🔀 What If</div>
-      <div class="whatif-sub">Pick any two teams from this week and see how the win-probability line would've moved if they'd played each other instead.</div>
+      <div class="whatif-sub">Pick any two teams from this week and see how the win-probability line would've moved if they'd played each other instead -- in the same ESPN-style card, including where a hypothetical Upset Watch would've fired.</div>
       <div class="whatif-picker">
         <select id="whatIfTeamASelect"></select>
         <span class="whatif-vs">vs</span>
         <select id="whatIfTeamBSelect"></select>
       </div>
-      <div class="whatif-chartBox"><canvas id="whatIfChart"></canvas></div>
-      <div class="whatif-summary" id="whatIfSummary"></div>
-      <div class="whatif-note">Each team's own score here is real and unaffected by this -- only who they're matched up against is hypothetical. Uses the same win-probability model as the live site; see a code comment near whatIfDynamicStddev for the one small approximation it makes.</div>
+      <div id="whatIfCardSlot"></div>
+      <div class="whatif-scoreline" id="whatIfScoreLine"></div>
+      <div class="whatif-note">Each team's own score is real and unaffected by this -- only who they're matched up against is hypothetical. Uses the same win-probability and Upset Watch models as the live site; see the comment near whatIfDynamicStddev for the one small approximation it makes.</div>
     </div>
   `;
 }
 
-function renderWhatIfChart(points, maxX, a, b) {
-  const canvas = document.getElementById('whatIfChart');
-  if (!canvas) return;
-  if (whatIfChartInstance) { whatIfChartInstance.destroy(); whatIfChartInstance = null; }
-  if (!points.length) return;
+// Same state machine the real ESPN card's live Upset Watch badge uses
+// (see walkUpsetState) -- it only ever needs a plain chronological
+// win_prob sequence from one side's perspective, which is exactly what
+// this view's own hypothetical rawPoints already are. The 'home'/'away'
+// labels walkUpsetState returns just mean "team A's role"/"team B's
+// role" in that shared state machine here, not any real designation.
+function getWhatIfLiveUpsetInfo(rawPoints, a, b, bothDone) {
+  if (bothDone || rawPoints.length < 2) return null;
+  const { watch, armed, peak, upsetSide } = walkUpsetState(rawPoints.map((p) => p.y));
+  if (!watch) return null;
+  return {
+    favorite: armed === 'home' ? a.info : b.info,
+    upsetTeam: upsetSide === 'home' ? a.info : b.info,
+    favoritePeak: peak,
+  };
+}
+
+// Mirrors getUpsetWatchHistory, replaying the same state machine over the
+// hypothetical sequence instead of a real team's stored win_prob -- used
+// by the hover handler below to say "Upset Watch would've been active
+// here" at the right points along the line.
+function getWhatIfUpsetHistory(rawPoints) {
+  const history = [];
+  let i = 0;
+  walkUpsetState(rawPoints.map((p) => p.y), (watchNow, upsetSideNow) => {
+    history.push({ ts: rawPoints[i].ts, watch: watchNow, upsetSide: upsetSideNow });
+    i++;
+  });
+  return history;
+}
+
+function renderWhatIfScoreLine(rawPoints, a, b) {
+  const el = document.getElementById('whatIfScoreLine');
+  if (!el) return;
+  if (!rawPoints.length) { el.textContent = ''; return; }
+  const latest = rawPoints[rawPoints.length - 1];
+  el.innerHTML = `Real scores: <b style="color:${a.info.color}">${a.info.name} ${latest.aActual.toFixed(1)}</b> &ndash; <b style="color:${b.info.color}">${latest.bActual.toFixed(1)} ${b.info.name}</b>`;
+}
+
+// Builds the actual hypothetical-matchup card -- deliberately built from
+// the SAME '.espn-card' markup/CSS and the SAME hover/pct-label/upset-
+// badge/seasonal-decor helpers the real ESPN view uses (setEspnPctLabels,
+// setUpsetBadgeState, renderTeamIcon, applyUpsetColor, decorateSeasonalCard,
+// applySeasonalUpsetState), rather than a parallel implementation -- so
+// this reads as a genuine sibling of that view instead of a different-
+// looking tool bolted on next to it, and a future tweak to the ESPN
+// card's look/interaction doesn't need a separate matching edit here.
+// One deliberate simplification vs. the real card: this always does a
+// full rebuild (destroy + recreate the chart) rather than updating in
+// place, so the little "+X.X%" delta-badge animation the real card shows
+// on each refresh doesn't fire here -- not worth the extra incremental-
+// update machinery for a view people dip into occasionally rather than
+// leave open and watch continuously.
+function renderWhatIfEspnCard(rawPoints, points, maxX, a, b, bothDone) {
+  const isLive = !bothDone && isRecentlyActive(rawPoints);
+  const upsetInfo = getWhatIfLiveUpsetInfo(rawPoints, a, b, bothDone);
+  const latestY = rawPoints[rawPoints.length - 1].y;
+
+  const card = document.createElement('div');
+  card.className = 'espn-card' + (upsetInfo ? ' upset-watch' : '');
+  if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
+  card.innerHTML = `
+    <div class="pumpkin-corner left">🎃</div>
+    <div class="pumpkin-corner right">🎃</div>
+    <div class="ghost-corner left">👻</div>
+    <div class="ghost-corner right">👻</div>
+    <div class="seasonal-garland"></div>
+    <div class="upset-watch-badge${upsetInfo ? ' visible pulsing' : ''}">🚨 UPSET WATCH</div>
+    <div class="espn-header">
+      <button class="why-btn" type="button" title="Why is this the number?">ⓘ</button>
+      <div class="why-blurb" hidden>This recombines ${a.info.name}'s and ${b.info.name}'s own real weekly performances into a hypothetical head-to-head, using the exact same win-probability model as the live site -- just re-paired against each other instead of their real opponents. Each team's own score is untouched; only who they're facing is hypothetical.</div>
+      <span class="postcard-status ${isLive ? 'live' : ''}">${bothDone ? 'Final' : '● Live'}</span>
+    </div>
+    <div class="espn-row espn-row-top">
+      <span class="espn-emoji">${renderTeamIcon(a.info)}</span>
+      <span class="espn-name" style="color:${a.info.color}">${a.info.name}</span>
+      <span class="espn-dash" style="background:${a.info.color}"></span>
+      <span class="delta-badge"></span>
+      <span class="espn-pct" style="color:${a.info.color}">${Math.round(latestY)}%</span>
+    </div>
+    <div class="espn-chartBox"><canvas></canvas></div>
+    <div class="espn-row espn-row-bottom">
+      <span class="espn-emoji">${renderTeamIcon(b.info)}</span>
+      <span class="espn-name" style="color:${b.info.color}">${b.info.name}</span>
+      <span class="espn-dash" style="background:${b.info.color}"></span>
+      <span class="delta-badge"></span>
+      <span class="espn-pct" style="color:${b.info.color}">${Math.round(100 - latestY)}%</span>
+    </div>
+  `;
+  wireWhyButton(card);
+
+  const canvas = card.querySelector('canvas');
+  const state = {
+    currentHomePct: latestY,
+    upsetHistory: getWhatIfUpsetHistory(rawPoints),
+    currentUpsetInfo: upsetInfo,
+  };
 
   whatIfChartInstance = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: {
-      datasets: [{
-        data: points,
-        parsing: false,
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.15,
-        fill: { target: { value: 50 } },
-        segment: {
-          borderColor: (c) => (midY(c) >= 50 ? a.info.color : b.info.color),
-          backgroundColor: (c) => {
-            const gradients = getBandGradients(c.chart, a.info.color, b.info.color);
-            if (!gradients) return 'transparent';
-            return midY(c) >= 50 ? gradients.home : gradients.away;
+      datasets: [
+        {
+          data: points,
+          parsing: false,
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.15,
+          fill: { target: { value: 50 } },
+          segment: {
+            borderColor: (c) => (midY(c) >= 50 ? a.info.color : b.info.color),
+            backgroundColor: (c) => {
+              const gradients = getBandGradients(c.chart, a.info.color, b.info.color);
+              if (!gradients) return 'transparent';
+              return midY(c) >= 50 ? gradients.home : gradients.away;
+            },
           },
         },
-      }],
+        {
+          // Vertical hover guide -- hidden until hovered, same convention
+          // as the real ESPN card (see renderEspnCard).
+          data: [], hidden: true, parsing: false, borderWidth: 1.5,
+          borderColor: themeVar('#222', '#ddd'), pointRadius: 0, fill: false, tension: 0, clip: false,
+        },
+        {
+          // The hover dot, drawn last so it sits on top.
+          data: [], hidden: true, parsing: false, showLine: false, pointRadius: 7,
+          pointBackgroundColor: themeVar('#111', '#eee'), pointBorderColor: themeVar('#fff', '#111'),
+          pointBorderWidth: 2, clip: false,
+        },
+      ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: { intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: (item) => {
-              const above = item.parsed.y >= 50;
-              const team = above ? a.info.name : b.info.name;
-              const pct = above ? item.parsed.y : 100 - item.parsed.y;
-              return `${team}: ${Math.round(pct)}%`;
-            },
-          },
-        },
-      },
+      resizeDelay: 100,
+      layout: { padding: { top: 10, right: 16, bottom: 0, left: 4 } },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      events: [],
       scales: {
         y: {
           min: 0, max: 100,
@@ -3899,44 +3995,81 @@ function renderWhatIfChart(points, maxX, a, b) {
             color: (c) => (c.tick.value === 50 ? themeVar('#999', '#888') : themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)')),
             lineWidth: (c) => (c.tick.value === 50 ? 1.5 : 1),
           },
-          ticks: { callback: (v) => (v === 0 || v === 50 || v === 100 ? v : ''), color: themeVar('#555', '#aaa') },
+          ticks: {
+            callback: (v) => (v === 0 ? 100 : (v === 50 || v === 100 ? v : '')),
+            color: (c) => {
+              if (c.tick.value === 100) return a.info.color;
+              if (c.tick.value === 0) return b.info.color;
+              return themeVar('#555', '#aaa');
+            },
+          },
         },
         x: {
-          type: 'linear',
-          min: 0,
-          max: maxX,
-          grid: { display: true, color: themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)') },
+          type: 'linear', min: 0, max: maxX,
+          grid: { color: themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)') },
           ticks: { display: false },
         },
       },
     },
   });
-}
+  whatIfChartInstance._state = state;
 
-function renderWhatIfSummary(points, a, b) {
-  const el = document.getElementById('whatIfSummary');
-  if (!el) return;
-  if (!points.length) {
-    el.innerHTML = '<div class="whatif-empty">Not enough overlapping data yet to compare these two.</div>';
-    return;
-  }
-  const latest = points[points.length - 1];
-  const aPct = latest.y;
-  const bPct = 100 - latest.y;
-  const leaderIsA = aPct >= bPct;
-  const bothDone = latest.aDone && latest.bDone;
-  el.innerHTML = `
-    <div class="whatif-tile">
-      <div class="whatif-tile-label">${bothDone ? 'Hypothetical Result' : 'Current Win Probability'}</div>
-      <div class="whatif-tile-value" style="color:${leaderIsA ? a.info.color : b.info.color}">
-        ${leaderIsA ? a.info.name : b.info.name}${bothDone ? ' wins' : ` ${Math.max(aPct, bPct).toFixed(1)}%`}
-      </div>
-    </div>
-    <div class="whatif-tile">
-      <div class="whatif-tile-label">Real Scores</div>
-      <div class="whatif-tile-value">${a.info.name} ${latest.aActual.toFixed(1)} &ndash; ${latest.bActual.toFixed(1)} ${b.info.name}</div>
-    </div>
-  `;
+  let lastHoverX = null;
+  canvas.addEventListener('mousemove', (evt) => {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = evt.clientX - rect.left;
+    const xValue = whatIfChartInstance.scales.x.getValueForPixel(mouseX);
+    if (xValue == null) return;
+    const currentPoints = whatIfChartInstance.data.datasets[0].data;
+    if (!currentPoints.length) return;
+
+    let nearest = currentPoints[0];
+    let minDist = Infinity;
+    for (const p of currentPoints) {
+      const d = Math.abs(p.x - xValue);
+      if (d < minDist) { minDist = d; nearest = p; }
+    }
+    if (nearest.x === lastHoverX) return;
+    lastHoverX = nearest.x;
+
+    whatIfChartInstance.data.datasets[1].data = [{ x: nearest.x, y: 0 }, { x: nearest.x, y: 100 }];
+    whatIfChartInstance.data.datasets[1].hidden = false;
+    whatIfChartInstance.data.datasets[2].data = [nearest];
+    whatIfChartInstance.data.datasets[2].hidden = false;
+    whatIfChartInstance.update('none');
+    setEspnPctLabels(canvas, nearest.y, { animate: false });
+
+    if (showUpsetHistory && whatIfChartInstance._state.upsetHistory.length) {
+      const nearestEntry = nearestByTs(whatIfChartInstance._state.upsetHistory, nearest.ts);
+      const wasActive = nearestEntry ? nearestEntry.watch : false;
+      const isCurrentlyLive = !!whatIfChartInstance._state.currentUpsetInfo;
+      if (wasActive) {
+        const historicalColor = nearestEntry.upsetSide === 'home' ? a.info.color : b.info.color;
+        setUpsetBadgeState(canvas, { text: '🚨 Upset Watch would’ve been active here', visible: true, pulsing: false, color: historicalColor });
+      } else if (isCurrentlyLive) {
+        setUpsetBadgeState(canvas, { text: '🚨 UPSET WATCH', visible: true, pulsing: false });
+      } else {
+        setUpsetBadgeState(canvas, { text: '🚨 UPSET WATCH', visible: false, pulsing: false });
+      }
+    }
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    lastHoverX = null;
+    whatIfChartInstance.data.datasets[1].hidden = true;
+    whatIfChartInstance.data.datasets[2].hidden = true;
+    whatIfChartInstance.update('none');
+    setEspnPctLabels(canvas, whatIfChartInstance._state.currentHomePct, { animate: false });
+    if (showUpsetHistory) {
+      const info = whatIfChartInstance._state.currentUpsetInfo;
+      setUpsetBadgeState(canvas, { text: '🚨 UPSET WATCH', visible: !!info, pulsing: !!info });
+    }
+  });
+
+  decorateSeasonalCard(card, currentSeasonalTheme, a.info, b.info);
+  applySeasonalUpsetState(card, currentSeasonalTheme, !!upsetInfo);
+
+  return card;
 }
 
 async function renderWhatIfView(byMatchup, teamInfo) {
@@ -3947,7 +4080,7 @@ async function renderWhatIfView(byMatchup, teamInfo) {
   // mirrors the cleanup the normal full-rebuild branch in loadMatchups
   // does, since this view bypasses that branch entirely. Staying in this
   // view across a routine 30s refresh or a week switch skips all of this,
-  // so the select boxes and chart update in place instead of flashing.
+  // so the select boxes update in place instead of flashing.
   const enteringFresh = !matchupsEl.classList.contains('view-whatif');
   if (enteringFresh) {
     matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn', 'view-power-picks', 'view-whatif');
@@ -4012,9 +4145,19 @@ async function renderWhatIfView(byMatchup, teamInfo) {
   const a = { id: whatIfTeamAId, info: teamInfo[whatIfTeamAId] };
   const b = { id: whatIfTeamBId, info: teamInfo[whatIfTeamBId] };
 
-  const { points, maxX } = computeHypotheticalPoints(rowsByTeam[a.id], rowsByTeam[b.id]);
-  renderWhatIfChart(points, maxX, a, b);
-  renderWhatIfSummary(points, a, b);
+  const { points, rawPoints, maxX } = computeHypotheticalPoints(rowsByTeam[a.id], rowsByTeam[b.id]);
+
+  if (whatIfChartInstance) { whatIfChartInstance.destroy(); whatIfChartInstance = null; }
+  const slot = document.getElementById('whatIfCardSlot');
+  slot.innerHTML = '';
+  if (!rawPoints.length) {
+    slot.innerHTML = '<div class="whatif-empty">Not enough overlapping data yet to compare these two.</div>';
+  } else {
+    const latest = rawPoints[rawPoints.length - 1];
+    const bothDone = !!(latest.aDone && latest.bDone);
+    slot.appendChild(renderWhatIfEspnCard(rawPoints, points, maxX, a, b, bothDone));
+  }
+  renderWhatIfScoreLine(rawPoints, a, b);
 }
 
 function destroyEntry(entry) {
