@@ -11,6 +11,16 @@ const themeToggle = document.getElementById('themeToggle');
 
 const charts = {}; // matchupId -> { mode, chart? , el?, needle? } depending on view
 let refreshTimer = null;
+// What If view (schedule-swap hypothetical) -- which two teams are
+// currently picked, and the one Chart.js instance it keeps (separate from
+// `charts`, which is keyed per-matchup and doesn't apply here: this view
+// has exactly one chart on screen at a time, for a pairing that isn't a
+// real matchup). Persisted across 30s refreshes and week/league switches
+// (re-validated against that week's actual team list each render) so
+// picking a pairing doesn't get reset out from under someone mid-browse.
+let whatIfTeamAId = null;
+let whatIfTeamBId = null;
+let whatIfChartInstance = null;
 // Timeline and Postcard are being deprecated -- hidden from the view
 // switcher unless explicitly re-enabled (see preferences.html). Default
 // OFF, matching the convention for other opt-in visual toggles.
@@ -3666,7 +3676,7 @@ function powerPickWinProbability(ratingA, ratingB) {
 }
 
 async function renderPowerPicksView(leagueId, year, week, byMatchup, teamInfo, { forcedPreview = false } = {}) {
-  matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn');
+  matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn', 'view-whatif');
   matchupsEl.classList.add('view-power-picks');
   Object.values(charts).forEach(destroyEntry);
   for (const key of Object.keys(charts)) delete charts[key];
@@ -3731,6 +3741,282 @@ async function renderPowerPicksView(leagueId, year, week, byMatchup, teamInfo, {
   }
 }
 
+// ============================== WHAT IF ==============================
+// Lets someone pick any two teams from this week (not just real
+// opponents) and see a win-probability line as if they'd played each
+// other instead -- built entirely from data already fetched for this
+// week (byMatchup), no new query. Each team's own actual/expected score
+// at every poll is independent of who they actually played, so the only
+// new work is re-pairing them and re-running the SAME win-probability
+// model the poller uses, with each team's own derived "done" state
+// (below) standing in for the stored all_starters_done flag, which is a
+// MATCHUP-level flag (true only once both REAL sides are done) and so
+// can't be reused for a hypothetical pairing.
+
+const WHATIF_DEFAULT_STDDEV = 21; // matches poll.js / winProb.js's DEFAULT_STDDEV
+const WHATIF_MIN_STDDEV = 1.5; // matches winProb.js's MIN_STDDEV
+
+// A team's own expected_score converges to EXACTLY equal its actual_score
+// once every one of its starters' real games has finished (see
+// playerExpected in winProb.js) -- the same quirk that was behind the
+// Year-in-Review overperformer/underperformer bug. Here it's the fix
+// itself: since the stored all_starters_done flag can't tell us whether
+// THIS specific team (as opposed to its real opponent) is done, this
+// equality is the only signal available to derive that per-team.
+function whatIfTeamDone(row) {
+  return Math.abs(row.actual_score - row.expected_score) < 0.05;
+}
+
+// Points-based half of the poller's own computeDynamicStddev (see
+// winProb.js) -- the only half reconstructable here. The other half (how
+// much real game-clock each roster had left at a given moment) needs each
+// player's own remaining-time fraction, which isn't persisted anywhere;
+// only the final per-team expected/actual totals are. Practical effect:
+// this runs very slightly more cautious than the live model would in the
+// closing minutes of a close game, and is effectively identical everywhere
+// else -- never worth blocking the feature over.
+function whatIfDynamicStddev(expectedA, actualA, expectedB, actualB) {
+  const totalProjectedBoth = expectedA + expectedB;
+  if (totalProjectedBoth <= 0) return WHATIF_MIN_STDDEV;
+  const remainingProjectedBoth = Math.max(expectedA - actualA, 0) + Math.max(expectedB - actualB, 0);
+  const ratio = Math.max(Math.min(remainingProjectedBoth / totalProjectedBoth, 1), 0);
+  return Math.max(WHATIF_DEFAULT_STDDEV * Math.sqrt(ratio), WHATIF_MIN_STDDEV);
+}
+
+// Ported from winProb.js's matchupWinProbability -- same "a finished
+// blowout is a known fact, not a random variable" and "one side locked in
+// and already behind can't be caught" handling, just fed each team's own
+// derived done-state instead of the stored matchup-level flag.
+function whatIfWinProbability({ expectedA, expectedB, actualA, actualB, aDone, bDone }) {
+  if (aDone && bDone) {
+    if (actualA > actualB) return 100;
+    if (actualA < actualB) return 0;
+    return 50;
+  }
+  if (aDone && !bDone && actualA < actualB) return 1;
+  if (bDone && !aDone && actualB < actualA) return 99;
+  const stddev = whatIfDynamicStddev(expectedA, actualA, expectedB, actualB);
+  const z = (expectedA - expectedB) / (stddev * Math.SQRT2);
+  return Math.max(0, Math.min(100, normalCdf(z) * 100));
+}
+
+// Mirrors computeChartPoints exactly (same nearestByTs + withCrossings
+// pipeline already used to line up two real teams' independently-timed
+// polls) -- just computing a hypothetical win_prob at each point instead
+// of reading the stored one.
+function computeHypotheticalPoints(rowsA, rowsB) {
+  if (!rowsA?.length || !rowsB?.length) return { points: [], rawPoints: [], maxX: 0 };
+
+  const allTimestamps = Array.from(new Set([...rowsA.map((r) => r.ts), ...rowsB.map((r) => r.ts)])).sort(
+    (x, y) => new Date(x) - new Date(y)
+  );
+
+  const rawPoints = allTimestamps
+    .map((ts, i) => {
+      const a = nearestByTs(rowsA, ts);
+      const b = nearestByTs(rowsB, ts);
+      if (!a || !b) return null;
+      const aDone = whatIfTeamDone(a);
+      const bDone = whatIfTeamDone(b);
+      const y = whatIfWinProbability({
+        expectedA: a.expected_score, expectedB: b.expected_score,
+        actualA: a.actual_score, actualB: b.actual_score,
+        aDone, bDone,
+      });
+      return { x: i, y, ts, aActual: a.actual_score, bActual: b.actual_score, aDone, bDone };
+    })
+    .filter(Boolean);
+
+  const points = withCrossings(rawPoints);
+  const maxX = rawPoints.length ? rawPoints[rawPoints.length - 1].x : 0;
+  return { points, rawPoints, maxX };
+}
+
+function buildWhatIfShell() {
+  return `
+    <div class="whatif-card" id="whatIfShell">
+      <div class="whatif-title">🔀 What If</div>
+      <div class="whatif-sub">Pick any two teams from this week and see how the win-probability line would've moved if they'd played each other instead.</div>
+      <div class="whatif-picker">
+        <select id="whatIfTeamASelect"></select>
+        <span class="whatif-vs">vs</span>
+        <select id="whatIfTeamBSelect"></select>
+      </div>
+      <div class="whatif-chartBox"><canvas id="whatIfChart"></canvas></div>
+      <div class="whatif-summary" id="whatIfSummary"></div>
+      <div class="whatif-note">Each team's own score here is real and unaffected by this -- only who they're matched up against is hypothetical. Uses the same win-probability model as the live site; see a code comment near whatIfDynamicStddev for the one small approximation it makes.</div>
+    </div>
+  `;
+}
+
+function renderWhatIfChart(points, maxX, a, b) {
+  const canvas = document.getElementById('whatIfChart');
+  if (!canvas) return;
+  if (whatIfChartInstance) { whatIfChartInstance.destroy(); whatIfChartInstance = null; }
+  if (!points.length) return;
+
+  whatIfChartInstance = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      datasets: [{
+        data: points,
+        parsing: false,
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.15,
+        fill: { target: { value: 50 } },
+        segment: {
+          borderColor: (c) => (midY(c) >= 50 ? a.info.color : b.info.color),
+          backgroundColor: (c) => {
+            const gradients = getBandGradients(c.chart, a.info.color, b.info.color);
+            if (!gradients) return 'transparent';
+            return midY(c) >= 50 ? gradients.home : gradients.away;
+          },
+        },
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const above = item.parsed.y >= 50;
+              const team = above ? a.info.name : b.info.name;
+              const pct = above ? item.parsed.y : 100 - item.parsed.y;
+              return `${team}: ${Math.round(pct)}%`;
+            },
+          },
+        },
+      },
+      scales: {
+        y: {
+          min: 0, max: 100,
+          grid: {
+            color: (c) => (c.tick.value === 50 ? themeVar('#999', '#888') : themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)')),
+            lineWidth: (c) => (c.tick.value === 50 ? 1.5 : 1),
+          },
+          ticks: { callback: (v) => (v === 0 || v === 50 || v === 100 ? v : ''), color: themeVar('#555', '#aaa') },
+        },
+        x: {
+          type: 'linear',
+          min: 0,
+          max: maxX,
+          grid: { display: true, color: themeVar('rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)') },
+          ticks: { display: false },
+        },
+      },
+    },
+  });
+}
+
+function renderWhatIfSummary(points, a, b) {
+  const el = document.getElementById('whatIfSummary');
+  if (!el) return;
+  if (!points.length) {
+    el.innerHTML = '<div class="whatif-empty">Not enough overlapping data yet to compare these two.</div>';
+    return;
+  }
+  const latest = points[points.length - 1];
+  const aPct = latest.y;
+  const bPct = 100 - latest.y;
+  const leaderIsA = aPct >= bPct;
+  const bothDone = latest.aDone && latest.bDone;
+  el.innerHTML = `
+    <div class="whatif-tile">
+      <div class="whatif-tile-label">${bothDone ? 'Hypothetical Result' : 'Current Win Probability'}</div>
+      <div class="whatif-tile-value" style="color:${leaderIsA ? a.info.color : b.info.color}">
+        ${leaderIsA ? a.info.name : b.info.name}${bothDone ? ' wins' : ` ${Math.max(aPct, bPct).toFixed(1)}%`}
+      </div>
+    </div>
+    <div class="whatif-tile">
+      <div class="whatif-tile-label">Real Scores</div>
+      <div class="whatif-tile-value">${a.info.name} ${latest.aActual.toFixed(1)} &ndash; ${latest.bActual.toFixed(1)} ${b.info.name}</div>
+    </div>
+  `;
+}
+
+async function renderWhatIfView(byMatchup, teamInfo) {
+  updateChampionshipStage(false, {}); // not relevant to this view, same as Power Picks
+
+  // Entering from a DIFFERENT view: tear down whatever that view left
+  // behind (its own Chart.js instances in `charts`, its view-* class) --
+  // mirrors the cleanup the normal full-rebuild branch in loadMatchups
+  // does, since this view bypasses that branch entirely. Staying in this
+  // view across a routine 30s refresh or a week switch skips all of this,
+  // so the select boxes and chart update in place instead of flashing.
+  const enteringFresh = !matchupsEl.classList.contains('view-whatif');
+  if (enteringFresh) {
+    matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn', 'view-power-picks', 'view-whatif');
+    matchupsEl.classList.add('view-whatif');
+    Object.values(charts).forEach(destroyEntry);
+    for (const key of Object.keys(charts)) delete charts[key];
+    matchupsEl.innerHTML = '';
+  }
+
+  // Flatten byMatchup (keyed by matchup_id -> both real teams' FULL weekly
+  // time series) into a per-team lookup -- every team's own rows exist
+  // somewhere in there already, this just re-indexes them by team_id
+  // instead of matchup_id so any two can be paired up regardless of who
+  // they actually played.
+  const rowsByTeam = {};
+  for (const rows of Object.values(byMatchup)) {
+    for (const r of rows) (rowsByTeam[r.team_id] ??= []).push(r);
+  }
+  for (const id of Object.keys(rowsByTeam)) rowsByTeam[id].sort((x, y) => new Date(x.ts) - new Date(y.ts));
+
+  const teamIds = Object.keys(rowsByTeam).filter((id) => teamInfo[id] && rowsByTeam[id].length);
+  teamIds.sort((x, y) => (teamInfo[x].name || '').localeCompare(teamInfo[y].name || ''));
+
+  if (teamIds.length < 2) {
+    matchupsEl.innerHTML = '<div class="whatif-empty">Not enough teams with data yet this week.</div>';
+    return;
+  }
+
+  // Keeps whatever was already picked, as long as both teams are still
+  // around this week (switching weeks/leagues, or a bye, can invalidate a
+  // previous pick) -- defaults to the first two teams otherwise so the
+  // view never opens empty.
+  if (!whatIfTeamAId || !teamIds.includes(whatIfTeamAId)) whatIfTeamAId = teamIds[0];
+  if (!whatIfTeamBId || !teamIds.includes(whatIfTeamBId) || whatIfTeamBId === whatIfTeamAId) {
+    whatIfTeamBId = teamIds.find((id) => id !== whatIfTeamAId) || teamIds[1];
+  }
+
+  if (!document.getElementById('whatIfShell')) {
+    matchupsEl.innerHTML = buildWhatIfShell();
+    const selA = document.getElementById('whatIfTeamASelect');
+    const selB = document.getElementById('whatIfTeamBSelect');
+    selA.addEventListener('change', () => {
+      whatIfTeamAId = selA.value;
+      if (whatIfTeamBId === whatIfTeamAId) whatIfTeamBId = teamIds.find((id) => id !== whatIfTeamAId);
+      renderWhatIfView(byMatchup, teamInfo);
+    });
+    selB.addEventListener('change', () => {
+      whatIfTeamBId = selB.value;
+      if (whatIfTeamAId === whatIfTeamBId) whatIfTeamAId = teamIds.find((id) => id !== whatIfTeamBId);
+      renderWhatIfView(byMatchup, teamInfo);
+    });
+  }
+
+  const selA = document.getElementById('whatIfTeamASelect');
+  const selB = document.getElementById('whatIfTeamBSelect');
+  const optionsHtml = teamIds.map((id) => `<option value="${id}">${teamInfo[id].name}</option>`).join('');
+  selA.innerHTML = optionsHtml;
+  selB.innerHTML = optionsHtml;
+  selA.value = whatIfTeamAId;
+  selB.value = whatIfTeamBId;
+
+  const a = { id: whatIfTeamAId, info: teamInfo[whatIfTeamAId] };
+  const b = { id: whatIfTeamBId, info: teamInfo[whatIfTeamBId] };
+
+  const { points, maxX } = computeHypotheticalPoints(rowsByTeam[a.id], rowsByTeam[b.id]);
+  renderWhatIfChart(points, maxX, a, b);
+  renderWhatIfSummary(points, a, b);
+}
+
 function destroyEntry(entry) {
   if (entry?.chart) entry.chart.destroy();
 }
@@ -3777,8 +4063,6 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     document.documentElement.setAttribute('data-seasonal-theme', currentSeasonalTheme);
   }
 
-  const { render, update } = VIEW_RENDERERS[viewMode];
-
   const championshipWeekActive = debugChampionshipWeek || week === CHAMPIONSHIP_WEEK;
 
   if (Object.keys(byMatchup).length === 0) {
@@ -3818,6 +4102,21 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     return;
   }
 
+  // What If doesn't fit the per-matchup VIEW_RENDERERS model below (one
+  // card per REAL matchup) -- it's a single interactive card for a
+  // hypothetical pairing, same reason Power Picks above takes over the
+  // whole area rather than going through that path.
+  if (viewMode === 'whatif') {
+    await renderWhatIfView(byMatchup, teamInfo);
+    return;
+  }
+
+  // Only looked up once we know we're rendering one of the per-matchup
+  // card views below -- VIEW_RENDERERS has no entry for 'whatif' (or for
+  // Power Picks, handled above), so this has to come after both of those
+  // early returns rather than at the top of the function.
+  const { render, update } = VIEW_RENDERERS[viewMode];
+
   updateChampionshipStage(championshipWeekActive, byMatchup);
 
   // Only worth the extra season-wide query when the hero banner/ribbons
@@ -3839,7 +4138,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     // overwrite here would also wipe out the .view-fading class that
     // setViewMode adds during a transition, breaking the fade-in half of
     // the cross-fade before it ever gets a chance to play.
-    matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn', 'view-power-picks');
+    matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn', 'view-power-picks', 'view-whatif');
     matchupsEl.classList.add(`view-${viewMode}`);
     Object.values(charts).forEach(destroyEntry);
     for (const key of Object.keys(charts)) delete charts[key];
