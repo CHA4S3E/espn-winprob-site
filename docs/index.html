@@ -988,10 +988,11 @@
   /* ---- What If view (interactive hypothetical schedule-swap) ----
      One full-width card, not a per-matchup grid -- there's exactly one
      hypothetical pairing on screen at a time, picked from two selects
-     rather than drawn from the real schedule. Kept visually close to the
-     Timeline/ESPN line-chart treatment (same chart styling, same tile
-     convention as Forecast's tiles below) so it reads as a sibling view,
-     not a bolted-on tool. */
+     rather than drawn from the real schedule. The pairing itself renders
+     as a genuine .espn-card (see #whatIfCardSlot in app.js's
+     renderWhatIfEspnCard) reusing that view's own chart/hover/upset-badge
+     styling verbatim, so only the wrapper (title, picker, note) needs its
+     own rules here. */
   #matchups.view-whatif { display: flex; flex-direction: column; gap: 20px; }
   .whatif-card {
     border: 1px solid var(--border); border-radius: 14px; padding: 20px 24px 24px; background: var(--card-bg);
@@ -1004,11 +1005,7 @@
     border: 1px solid var(--border); background: var(--input-bg); color: inherit; max-width: 220px;
   }
   .whatif-vs { font-family: var(--font-display); color: var(--muted); font-size: var(--text-sm); text-transform: uppercase; letter-spacing: 0.05em; }
-  .whatif-chartBox { position: relative; height: 280px; width: 100%; margin-bottom: 16px; }
-  .whatif-summary { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; padding-top: 14px; border-top: 1px solid var(--border); }
-  .whatif-tile { background: var(--input-bg); border-radius: 10px; padding: 12px 16px; flex: 1 1 45%; min-width: 180px; text-align: center; }
-  .whatif-tile-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
-  .whatif-tile-value { font-family: var(--font-display); font-weight: 400; font-size: var(--text-lg); }
+  .whatif-scoreline { text-align: center; font-size: var(--text-sm); color: var(--muted); margin-top: 14px; }
   .whatif-note { font-size: var(--text-xs); color: var(--muted); text-align: center; margin-top: 12px; line-height: 1.4; }
   .whatif-empty { text-align: center; color: var(--muted); padding: 40px 20px; }
 
