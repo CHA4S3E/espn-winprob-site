@@ -56,10 +56,26 @@
      border to read as distinct rather than blending into the list. */
   .debug-heading { margin: 30px 0 4px; font-size: 15px; }
   .setting-group-debug { border-style: dashed; }
+
+  /* ---- Top nav -- same pill-tab treatment duplicated across every page
+     on the site (see index.html's own comment on this). */
+  .top-nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+  .top-nav-link {
+    font-size: 13px; text-decoration: none; color: var(--accent);
+    padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-bg);
+  }
+  .top-nav-link.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 </style>
 </head>
 <body>
 <div id="wrap">
+  <nav class="top-nav">
+    <a class="top-nav-link" href="index.html">Matchups</a>
+    <a class="top-nav-link" href="standings.html">Standings</a>
+    <a class="top-nav-link" href="playoff-race.html">Playoff Race</a>
+    <a class="top-nav-link is-active" href="preferences.html">Display</a>
+  </nav>
+
   <h2>Display Settings</h2>
   <div class="sub">These are saved on this device and apply next time you load the main page.</div>
 
@@ -209,7 +225,6 @@
     </label>
   </div>
 
-  <a class="back-link" href="index.html">&larr; Back to matchups</a>
 </div>
 
 <script>
