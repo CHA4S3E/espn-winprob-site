@@ -225,6 +225,32 @@
     </label>
   </div>
 
+  <div class="setting-group setting-group-debug">
+    <div class="setting-title">Cold Snap (before Christmas)</div>
+    <div class="setting-desc">Whichever week falls immediately BEFORE Christmas week gets a quiet frost treatment -- pale ice-crystal particles in the background instead of snow, a static frost vignette in the corners, and a thin frost edge on ESPN/Forecasting cards instead of a garland. No Upset Watch tie-in, by design -- this is deliberately a quieter in-between week, not another full holiday look. This forces that look on for whichever week is currently selected, regardless of the real schedule.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="debugColdSnapPreWeek">
+      <span>
+        <div class="option-label">Force Cold Snap (before Christmas) look (default: off)</div>
+        <div class="option-example">Overridden by Thanksgiving/Christmas/Halloween above if more than one is somehow on</div>
+      </span>
+    </label>
+  </div>
+
+  <div class="setting-group setting-group-debug">
+    <div class="setting-title">Cold Snap (after Christmas)</div>
+    <div class="setting-desc">Same quiet frost treatment as above, but for whichever week falls immediately AFTER Christmas week -- same particles, vignette, and card frost edge, just with a different kickoff-countdown hint line ("The magic doesn't end here" instead of "settling in"). This forces that look on for whichever week is currently selected, regardless of the real schedule.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="debugColdSnapPostWeek">
+      <span>
+        <div class="option-label">Force Cold Snap (after Christmas) look (default: off)</div>
+        <div class="option-example">Overridden by Thanksgiving/Christmas/Halloween/Cold-Snap-before above if more than one is somehow on</div>
+      </span>
+    </label>
+  </div>
+
 </div>
 
 <script>
@@ -335,6 +361,20 @@
   halloweenDebugCheckbox.checked = localStorage.getItem(HALLOWEEN_DEBUG_KEY) === 'true';
   halloweenDebugCheckbox.addEventListener('change', () => {
     localStorage.setItem(HALLOWEEN_DEBUG_KEY, halloweenDebugCheckbox.checked ? 'true' : 'false');
+  });
+
+  const COLDSNAP_PRE_DEBUG_KEY = 'winProbDebugColdSnapPreWeek';
+  const coldSnapPreDebugCheckbox = document.getElementById('debugColdSnapPreWeek');
+  coldSnapPreDebugCheckbox.checked = localStorage.getItem(COLDSNAP_PRE_DEBUG_KEY) === 'true';
+  coldSnapPreDebugCheckbox.addEventListener('change', () => {
+    localStorage.setItem(COLDSNAP_PRE_DEBUG_KEY, coldSnapPreDebugCheckbox.checked ? 'true' : 'false');
+  });
+
+  const COLDSNAP_POST_DEBUG_KEY = 'winProbDebugColdSnapPostWeek';
+  const coldSnapPostDebugCheckbox = document.getElementById('debugColdSnapPostWeek');
+  coldSnapPostDebugCheckbox.checked = localStorage.getItem(COLDSNAP_POST_DEBUG_KEY) === 'true';
+  coldSnapPostDebugCheckbox.addEventListener('change', () => {
+    localStorage.setItem(COLDSNAP_POST_DEBUG_KEY, coldSnapPostDebugCheckbox.checked ? 'true' : 'false');
   });
 </script>
 </body>
