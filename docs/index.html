@@ -248,42 +248,62 @@
   #frostVignette::before { left: 0; }
   #frostVignette::after { right: 0; }
 
-  /* ---- Site-wide championship spotlights -- new: three large, slow,
-     very-low-opacity beams sweeping behind the ENTIRE page for all of
-     championship week (pregame AND live), not just inside the hero
-     banner box above -- a persistent "stadium lights are on" ambience.
-     Tinted by the two championship teams' own colors via the SAME
-     --champ-color-a/-b custom properties the banner's starburst/beams
-     read (set once on <html> by updateChampionshipStage in app.js, so
-     both pick them up through ordinary CSS custom-property inheritance
-     rather than needing two separate JS writes). Gated by
-     data-championship-active rather than the seasonal-theme attribute,
-     since Championship Week is tracked independently and can in
-     principle land the same week as Cold Snap's post-Christmas phase. */
+  /* ---- Site-wide championship spotlights -- four large, slow beams
+     sweeping behind the ENTIRE page for all of championship week
+     (pregame AND live), not just inside the hero banner box above -- a
+     persistent "stadium lights are on" ambience. Two beams per
+     championship team (was three beams total, with one neutral-blue
+     "arena" beam -- replaced so every beam actually represents one of
+     the two teams playing). Tinted by the two championship teams' own
+     colors via the SAME --champ-color-a/-b custom properties the
+     banner's starburst/beams read (set once on <html> by
+     updateChampionshipStage in app.js, so both pick them up through
+     ordinary CSS custom-property inheritance rather than needing two
+     separate JS writes). Gated by data-championship-active rather than
+     the seasonal-theme attribute, since Championship Week is tracked
+     independently and can in principle land the same week as Cold
+     Snap's post-Christmas phase. */
   #champSpotlights {
     position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
     opacity: 0; transition: opacity 0.8s ease;
   }
   html[data-championship-active="true"] #champSpotlights { opacity: 1; }
+  /* Four beams, two per championship team (was three, with a third
+     neutral-blue one) -- cb1/cb2 are the home team's color, cb3/cb4 the
+     away team's, each pair swept at different speeds/positions so they
+     don't read as a mirrored duplicate of each other. Brighter than the
+     first pass (alpha roughly doubled) and each beam gets its own
+     drop-shadow glow in the team's color, which a plain gradient alone
+     can't produce -- that's what gives the "lit up" look rather than
+     just a tinted wedge. */
   .champ-beam {
     position: absolute; bottom: -20%; width: 260px; height: 160%;
     clip-path: polygon(47% 100%, 53% 100%, 100% 0%, 0% 0%);
     mix-blend-mode: screen; transform-origin: 50% 100%;
   }
   .champ-beam.cb1 {
-    left: 8%;
-    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-a, #f4c430) 10%, transparent) 0%, color-mix(in srgb, var(--champ-color-a, #f4c430) 3%, transparent) 40%, transparent 75%);
+    left: 4%;
+    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-a, #f4c430) 22%, transparent) 0%, color-mix(in srgb, var(--champ-color-a, #f4c430) 7%, transparent) 40%, transparent 75%);
+    filter: drop-shadow(0 0 60px color-mix(in srgb, var(--champ-color-a, #f4c430) 55%, transparent));
     animation: champSweep 22s ease-in-out infinite;
   }
   .champ-beam.cb2 {
-    left: 50%;
-    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-b, #e0574a) 9%, transparent) 0%, color-mix(in srgb, var(--champ-color-b, #e0574a) 3%, transparent) 40%, transparent 75%);
-    animation: champSweep 28s ease-in-out infinite reverse; animation-delay: -6s;
+    left: 33%;
+    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-a, #f4c430) 18%, transparent) 0%, color-mix(in srgb, var(--champ-color-a, #f4c430) 6%, transparent) 40%, transparent 75%);
+    filter: drop-shadow(0 0 50px color-mix(in srgb, var(--champ-color-a, #f4c430) 45%, transparent));
+    animation: champSweep 27s ease-in-out infinite reverse; animation-delay: -9s;
   }
   .champ-beam.cb3 {
-    left: 85%;
-    background: linear-gradient(to top, rgba(58,103,223,0.08) 0%, rgba(58,103,223,0.02) 40%, transparent 75%);
-    animation: champSweep 25s ease-in-out infinite; animation-delay: -11s;
+    left: 63%;
+    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-b, #e0574a) 20%, transparent) 0%, color-mix(in srgb, var(--champ-color-b, #e0574a) 6%, transparent) 40%, transparent 75%);
+    filter: drop-shadow(0 0 55px color-mix(in srgb, var(--champ-color-b, #e0574a) 50%, transparent));
+    animation: champSweep 25s ease-in-out infinite; animation-delay: -4s;
+  }
+  .champ-beam.cb4 {
+    left: 92%;
+    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-b, #e0574a) 16%, transparent) 0%, color-mix(in srgb, var(--champ-color-b, #e0574a) 5%, transparent) 40%, transparent 75%);
+    filter: drop-shadow(0 0 45px color-mix(in srgb, var(--champ-color-b, #e0574a) 40%, transparent));
+    animation: champSweep 30s ease-in-out infinite reverse; animation-delay: -14s;
   }
   @keyframes champSweep {
     0%   { transform: translateX(-50%) rotate(-22deg); }
@@ -1339,6 +1359,7 @@
   <div class="champ-beam cb1"></div>
   <div class="champ-beam cb2"></div>
   <div class="champ-beam cb3"></div>
+  <div class="champ-beam cb4"></div>
 </div>
 <div id="leaderGradient"><div class="leader-gradient-layer" id="leaderGradientLayerA"></div><div class="leader-gradient-layer" id="leaderGradientLayerB"></div></div>
 <div id="wrap">
