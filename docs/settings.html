@@ -58,9 +58,28 @@
     background: #fff; color: #a04000; cursor: pointer;
   }
   #unlockBtn:hover { background: #fff0e0; }
+
+  /* ---- Top nav -- same pill-tab treatment duplicated across every page
+     on the site (see index.html's own comment on this), just using this
+     page's own plain hardcoded palette since it doesn't theme via CSS
+     vars at all. */
+  .top-nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+  .top-nav-link {
+    font-size: 13px; text-decoration: none; color: #1a3fa0;
+    padding: 6px 14px; border-radius: 999px; border: 1px solid #eee; background: #fff;
+  }
+  .top-nav-link:hover { background: #f5f5f5; }
+  .top-nav-link.is-active { background: #1a3fa0; color: #fff; border-color: #1a3fa0; }
 </style>
 </head>
 <body>
+  <nav class="top-nav">
+    <a class="top-nav-link" href="index.html">Matchups</a>
+    <a class="top-nav-link" href="standings.html">Standings</a>
+    <a class="top-nav-link" href="playoff-race.html">Playoff Race</a>
+    <a class="top-nav-link" href="preferences.html">Display</a>
+  </nav>
+
   <h2>Team Colors & Names</h2>
   <div class="sub">Set once per team -- every week's matchup chart for this league reuses these automatically.</div>
 
