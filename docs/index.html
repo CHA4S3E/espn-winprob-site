@@ -74,6 +74,8 @@
     --btn-border: #dddddd;
     --btn-hover: #f5f5f5;
     --accent: #1a3fa0;
+    --win: #2e8b57;
+    --loss: #c0392b;
     --live: #c0392b;
     --live-glow-a: rgba(192, 57, 43, 0.45);
     --live-glow-b: rgba(192, 57, 43, 0.9);
@@ -131,6 +133,8 @@
     --btn-border: #3a3d44;
     --btn-hover: #262a31;
     --accent: #3a67df;
+    --win: #4fbd82;
+    --loss: #e0574a;
     --live: #e0574a;
     --live-glow-a: rgba(224, 87, 74, 0.5);
     --live-glow-b: rgba(224, 87, 74, 1);
@@ -978,6 +982,34 @@
   .fc-team-pct { font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl); font-variant-numeric: tabular-nums; margin-left: auto; }
   .needle-sub { font-size: var(--text-sm); color: var(--muted); margin-top: 2px; text-align: center; }
 
+  /* ---- Power Score projection row (Forecast view only) -- sits right
+     under each team's own row in .fc-info-col, same "pre-game number,
+     projected number, colored delta" convention the Standings page's
+     Power Rankings table already uses (see .power-delta* below, shared
+     verbatim with standings.html's own rules). Negative margin-top pulls
+     it up snug against its own team row rather than inheriting
+     .fc-info-col's full 12px gap meant for separating the two teams. */
+  .fc-power-row {
+    display: flex; align-items: baseline; gap: 6px; font-size: var(--text-xs);
+    color: var(--muted); margin-top: -6px;
+  }
+  /* buildFcPowerRow sets the hidden attribute when there's no projection
+     yet (see its comment) -- without this, the author-origin "display:
+     flex" above wins the cascade over the UA's own [hidden] { display:
+     none } at equal (0,1,0) specificity, same gotcha already fixed at
+     #yearInReviewLink[hidden] and .championship-stage[hidden]. */
+  .fc-power-row[hidden] { display: none; }
+  .fc-power-label { text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; }
+  .fc-power-value { font-variant-numeric: tabular-nums; }
+  /* "+3.2" in the win color, "-1.8" in the loss color, or a neutral "±0.0"
+     -- identical rule set to standings.html's own .power-delta*, kept in
+     sync by hand (same cross-file duplication convention every other
+     ported chunk of math in this project already follows). */
+  .power-delta { font-family: var(--font-body); font-size: var(--text-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .power-delta-up { color: var(--win); }
+  .power-delta-down { color: var(--loss); }
+  .power-delta-flat, .power-delta-new { color: var(--muted); font-weight: 400; }
+
   /* ---- Forecasting content -- tiles rather than a flat title/note
      stack, reusing the SAME --input-bg tinted-tile convention the
      weekly recap's own cards already use, for visual consistency
@@ -1144,6 +1176,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=27"></script>
+<script src="app.js?v=28"></script>
 </body>
 </html>
