@@ -156,13 +156,30 @@
     border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin: 18px 0;
   }
 
-  a.back-link { display: block; text-align: center; margin-top: 24px; font-size: var(--text-sm); color: var(--accent); }
+  /* ---- Top nav -- same pill-tab treatment duplicated across every page
+     on the site (see index.html's own comment on this), replacing what
+     used to be a single link at the very bottom of the page. */
+  .top-nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+  .top-nav-link {
+    font-size: var(--text-sm); text-decoration: none; color: var(--accent);
+    padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--card-bg);
+  }
+  .top-nav-link:hover { background: var(--btn-hover); }
+  .top-nav-link.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 </style>
 </head>
 <body>
 <div id="wrap">
   <h1>Playoff Race</h1>
   <div class="sub" id="subtext">Projected playoff picture, based on current standings</div>
+
+  <nav class="top-nav">
+    <a class="top-nav-link" href="index.html">Matchups</a>
+    <a class="top-nav-link" href="standings.html">Standings</a>
+    <a class="top-nav-link is-active" href="playoff-race.html">Playoff Race</a>
+    <a class="top-nav-link" href="preferences.html">Display</a>
+  </nav>
 
   <div id="controls">
     <select id="leagueSelect"></select>
@@ -199,7 +216,6 @@
     <div class="disclaimer" id="disclaimerText"></div>
   </div>
 
-  <a class="back-link" href="standings.html">&larr; Back to standings</a>
 </div>
 
 <div class="modal-overlay" id="modalOverlay" hidden>
