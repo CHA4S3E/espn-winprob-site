@@ -4074,6 +4074,11 @@ function renderWhatIfEspnCard(rawPoints, points, maxX, a, b, bothDone) {
 
 async function renderWhatIfView(byMatchup, teamInfo) {
   updateChampionshipStage(false, {}); // not relevant to this view, same as Power Picks
+  // Every other view clears this once it actually has something to show
+  // (see renderPowerPicksView, and the normal full-rebuild branch below) --
+  // this one never did, so "Loading..." stuck on screen forever the whole
+  // time anyone was looking at a What If pairing.
+  statusEl.textContent = '';
 
   // Entering from a DIFFERENT view: tear down whatever that view left
   // behind (its own Chart.js instances in `charts`, its view-* class) --
