@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Playoff Race — Fantasy Win Probability Tracker</title>
+<meta name="theme-color" content="#ffffff" id="themeColorMeta">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%F0%9F%8F%86</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+  const initialTheme =
+    localStorage.getItem('winProbTheme') ||
+    (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', initialTheme);
+  document.getElementById('themeColorMeta').setAttribute('content', initialTheme === 'dark' ? '#14161a' : '#ffffff');
+</script>
+<style>
+  html { scrollbar-gutter: stable; overflow-y: scroll; background: var(--bg); }
+
+  :root {
+    --bg: #ffffff; --fg: #222222; --muted: #888888; --border: #eeeeee;
+    --card-bg: #ffffff; --input-bg: #fafafa; --input-border: #cccccc;
+    --btn-border: #dddddd; --btn-hover: #f5f5f5; --accent: #1a3fa0;
+    --win: #2e8b57; --loss: #c0392b; --tie: #888888;
+    --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
+    --font-body: 'Inter', -apple-system, Arial, sans-serif;
+    --text-xs: 11px; --text-sm: 12px; --text-base: 14px; --text-lg: 16px;
+    --text-xl: 20px; --text-2xl: 26px; --text-3xl: 34px;
+  }
+  html[data-theme="dark"] {
+    --bg: #14161a; --fg: #e8e8e8; --muted: #9aa0a6; --border: #2a2d33;
+    --card-bg: #1c1f24; --input-bg: #20232a; --input-border: #3a3d44;
+    --btn-border: #3a3d44; --btn-hover: #262a31; --accent: #3a67df;
+    --win: #4fbd82; --loss: #e0574a; --tie: #9aa0a6;
+  }
+  ::selection { background: var(--accent); color: #fff; }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: var(--font-body); background: var(--bg); color: var(--fg);
+    margin: 0; padding: 30px 20px 60px; -webkit-font-smoothing: antialiased;
+  }
+  #wrap { max-width: 720px; margin: 0 auto; }
+
+  h1 {
+    font-family: var(--font-display); font-weight: 400; font-size: var(--text-3xl);
+    text-align: center; margin: 0 0 4px;
+  }
+  .sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 24px; }
+
+  #controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
+  select, input[type="number"] {
+    padding: 7px 12px; font-size: var(--text-base); font-family: var(--font-body);
+    border-radius: 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--fg);
+  }
+  input[type="number"] { width: 70px; }
+  .control-label { font-size: var(--text-sm); color: var(--muted); display: flex; align-items: center; gap: 6px; }
+
+  #loadingState, #emptyState {
+    text-align: center; color: var(--muted); font-size: var(--text-base); padding: 40px 20px;
+  }
+
+  .section-title {
+    font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl);
+    text-align: center; margin: 36px 0 2px;
+  }
+  .section-sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 16px; }
+
+  /* ---- Playoff Picture -- reuses the same row grid standings.html uses,
+     just with a GB (games/points back of the cutoff) column swapped in
+     where PA normally sits, and a dashed divider dropped in after the
+     last playoff seed rather than a column of its own. */
+  .picture-table, .odds-table { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+  .picture-row, .picture-header, .odds-row, .odds-header {
+    display: grid; align-items: center; gap: 10px; padding: 12px 14px;
+  }
+  .picture-header, .odds-header {
+    grid-template-columns: 40px 1fr 74px 56px 70px;
+    font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted); background: var(--input-bg); border-bottom: 1px solid var(--border);
+  }
+  .picture-row { grid-template-columns: 40px 1fr 74px 56px 70px; background: var(--card-bg); border-left: 3px solid var(--team-color, var(--border)); border-bottom: 1px solid var(--border); }
+  .picture-row:last-child { border-bottom: none; }
+  .picture-row.cutoff-row { border-bottom: 3px dashed var(--accent); }
+
+  .col-rank { font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl); color: var(--muted); text-align: center; }
+  .col-team { min-width: 0; }
+  .team-name { font-family: var(--font-display); font-weight: 400; font-size: var(--text-lg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+  .team-icon-img { width: 18px; height: 18px; border-radius: 4px; object-fit: cover; vertical-align: middle; margin-right: 6px; }
+  .col-record, .col-pct, .col-gb { font-variant-numeric: tabular-nums; text-align: right; font-size: var(--text-base); }
+  .col-pct { color: var(--muted); font-size: var(--text-sm); }
+  .col-gb { font-size: var(--text-sm); }
+  .in-cutoff { color: var(--win); font-weight: 600; }
+  .out-cutoff { color: var(--muted); }
+
+  @media (max-width: 480px) {
+    .picture-header, .picture-row, .odds-header, .odds-row { grid-template-columns: 32px 1fr 60px 50px 60px; }
+    .team-name { font-size: var(--text-base); }
+  }
+
+  /* ---- Reseed preview -- deliberately NOT a table (these pairings are
+     a projection, not a ranking), just a stack of small matchup cards so
+     it doesn't visually read as more certain than it is. */
+  .reseed-note { text-align: center; font-size: var(--text-xs); color: var(--muted); margin-bottom: 14px; }
+  .reseed-grid { display: grid; gap: 8px; }
+  .reseed-card {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px;
+    font-size: var(--text-sm);
+  }
+  .reseed-side { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .reseed-seed { color: var(--muted); font-variant-numeric: tabular-nums; width: 18px; text-align: right; }
+  .reseed-vs { color: var(--muted); font-size: var(--text-xs); flex: 0 0 auto; }
+
+  /* ---- Playoff odds table -- odds bar is a plain filled div rather than
+     a canvas/chart; it only ever needs to communicate one number (width =
+     percent), so a real chart would be overkill for an inline table row. */
+  .odds-row { grid-template-columns: 40px 1fr 150px 40px; background: var(--card-bg); border-left: 3px solid var(--team-color, var(--border)); border-bottom: 1px solid var(--border); }
+  .odds-row:last-child { border-bottom: none; }
+  .odds-header { grid-template-columns: 40px 1fr 150px 40px; }
+  .odds-cell { display: flex; flex-direction: column; gap: 4px; }
+  .odds-pct { font-variant-numeric: tabular-nums; font-size: var(--text-sm); text-align: right; }
+  .odds-bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .odds-bar-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+  .magnify-btn {
+    background: none; border: 1px solid var(--btn-border); border-radius: 8px; cursor: pointer;
+    font-size: var(--text-lg); padding: 4px 8px; color: var(--fg); line-height: 1;
+  }
+  .magnify-btn:hover { background: var(--btn-hover); }
+
+  /* ---- Magnifying-glass modal -- shows what the simulation actually did
+     for one team, rather than just handing over the one summary percent. */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex;
+    align-items: center; justify-content: center; padding: 20px; z-index: 50;
+  }
+  .modal-overlay[hidden] { display: none; }
+  .modal-box {
+    background: var(--card-bg); border-radius: 14px; padding: 22px; max-width: 480px; width: 100%;
+    max-height: 86vh; overflow-y: auto; border: 1px solid var(--border);
+  }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .modal-title { font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl); }
+  .modal-close { background: none; border: none; font-size: var(--text-xl); cursor: pointer; color: var(--muted); line-height: 1; }
+  .modal-stats { display: flex; gap: 18px; margin: 10px 0 16px; flex-wrap: wrap; }
+  .modal-stat { font-size: var(--text-xs); color: var(--muted); }
+  .modal-stat b { display: block; font-size: var(--text-lg); color: var(--fg); font-family: var(--font-display); font-weight: 400; }
+  .modal-chart-label { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 14px 0 6px; }
+  canvas { max-width: 100%; }
+
+  .disclaimer {
+    font-size: var(--text-xs); color: var(--muted); background: var(--input-bg);
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin: 18px 0;
+  }
+
+  a.back-link { display: block; text-align: center; margin-top: 24px; font-size: var(--text-sm); color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>Playoff Race</h1>
+  <div class="sub" id="subtext">Projected playoff picture, based on current standings</div>
+
+  <div id="controls">
+    <select id="leagueSelect"></select>
+    <label class="control-label">Simulate through week
+      <input type="number" id="throughWeekInput" min="1" max="25">
+    </label>
+    <label class="control-label">Simulations
+      <select id="simCountSelect">
+        <option value="2000">2,000</option>
+        <option value="5000" selected>5,000</option>
+        <option value="10000">10,000</option>
+      </select>
+    </label>
+  </div>
+
+  <div id="loadingState">Loading…</div>
+  <div id="emptyState" style="display:none">No completed weeks yet this season — check back once week 1 wraps up.</div>
+
+  <div id="content" style="display:none">
+    <div class="section-title">Playoff Picture</div>
+    <div class="section-sub" id="pictureSub">If the season ended today</div>
+    <div id="pictureTable" class="picture-table"></div>
+
+    <div id="reseedSection" style="display:none">
+      <div class="section-title">Next Reseed Matchups</div>
+      <div class="reseed-note" id="reseedNote"></div>
+      <div id="reseedGrid" class="reseed-grid"></div>
+    </div>
+
+    <div class="section-title">Playoff Odds</div>
+    <div class="section-sub">Monte Carlo simulation of the rest of the season — click 🔍 to see how a team's simulations actually played out</div>
+    <div id="oddsTable" class="odds-table"></div>
+
+    <div class="disclaimer" id="disclaimerText"></div>
+  </div>
+
+  <a class="back-link" href="standings.html">&larr; Back to standings</a>
+</div>
+
+<div class="modal-overlay" id="modalOverlay" hidden>
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title" id="modalTitle">Team</div>
+      <button class="modal-close" id="modalClose" type="button">&times;</button>
+    </div>
+    <div class="modal-stats" id="modalStats"></div>
+    <div class="modal-chart-label">Final seed, across all simulated seasons</div>
+    <canvas id="seedChart" height="160"></canvas>
+    <div class="modal-chart-label">Final record (wins), across all simulated seasons</div>
+    <canvas id="winsChart" height="160"></canvas>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="playoff-race.js"></script>
+</body>
+</html>
