@@ -532,35 +532,131 @@ async function getPlayoffTiers(leagueId, year, byMatchup) {
   return computePlayoffTiers(byMatchup, championshipTierCache.rows || []);
 }
 
+// Fills in one side of the hero banner's team flank (logo/icon + name),
+// or hides it entirely when there's no resolvable team (e.g. the debug
+// toggle forcing the banner on over a week with no computable
+// championship matchup). Shared by both home/away so the two sides can
+// never drift out of sync in markup or behavior.
+function renderHypeTeam(prefix, team) {
+  const wrap = document.getElementById(`hypeTeam${prefix}`);
+  const iconEl = document.getElementById(`hypeTeam${prefix}Icon`);
+  const nameEl = document.getElementById(`hypeTeam${prefix}Name`);
+  if (!wrap || !iconEl || !nameEl) return;
+  if (!team) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  iconEl.innerHTML = renderTeamIcon(team);
+  nameEl.textContent = team.name;
+}
+
+// Big broadcast-style Days/Hrs/Min countdown readout (the banner's new
+// centerpiece, replacing the old one-line "Kickoff in 2d 14h 37m" text).
+// Shares formatCountdown's underlying math but needs the parts
+// separately rather than a single pre-joined string, since each unit is
+// its own glowing digit block. The days block (and its separator) hide
+// themselves once there's less than a day left, rather than sitting
+// there showing a dead "00" for the entire final day.
+function renderHypeCountdownBig(msRemaining) {
+  const digitsEl = document.getElementById('hypeCountdown');
+  const fallbackEl = document.getElementById('hypeCountdownFallback');
+  if (!digitsEl || !fallbackEl) return false;
+  const formatted = formatCountdown(msRemaining);
+  if (!formatted) return false;
+  const totalSeconds = Math.floor(msRemaining / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  digitsEl.hidden = false;
+  fallbackEl.hidden = true;
+  const daysEl = document.getElementById('hcbDays');
+  const hoursEl = document.getElementById('hcbHours');
+  const minutesEl = document.getElementById('hcbMinutes');
+  if (daysEl) daysEl.textContent = String(days).padStart(2, '0');
+  if (hoursEl) hoursEl.textContent = String(hours).padStart(2, '0');
+  if (minutesEl) minutesEl.textContent = String(minutes).padStart(2, '0');
+  const daysBlock = document.getElementById('hcbDaysBlock');
+  const daysSep = document.getElementById('hcbDaysSep');
+  if (daysBlock) daysBlock.hidden = days <= 0;
+  if (daysSep) daysSep.hidden = days <= 0;
+  return true;
+}
+
 // Shows/hides the Week 17 hero banner and switches it between pregame
-// (spotlight sweep + countdown) and live (spotlights faded out, see CSS)
-// based on whether any score has actually come in yet for this week --
-// not on wall-clock time, so it stays correct even if an NFL game gets
-// delayed or moved.
-function updateChampionshipStage(active, byMatchup) {
+// (spotlight sweep + big countdown) and live (spotlights faded out, see
+// CSS) based on whether any score has actually come in yet for this
+// week -- not on wall-clock time, so it stays correct even if an NFL
+// game gets delayed or moved. `championshipTeams` (from loadMatchups,
+// via getPlayoffTiers) carries the actual two teams playing in it --
+// drives the team flanks, the live score line, and the
+// --champ-color-a/-b custom properties that recolor the starburst, the
+// in-banner beams, AND the site-wide spotlights (set on <html> so both
+// pick them up through normal CSS custom-property inheritance, rather
+// than needing two separate JS writes).
+function updateChampionshipStage(active, byMatchup, championshipTeams) {
+  document.documentElement.setAttribute('data-championship-active', active ? 'true' : 'false');
+  if (!active) {
+    document.documentElement.style.removeProperty('--champ-color-a');
+    document.documentElement.style.removeProperty('--champ-color-b');
+  }
   if (!championshipStageEl) return;
   championshipStageEl.hidden = !active;
   if (!active) return;
 
+  if (championshipTeams) {
+    document.documentElement.style.setProperty('--champ-color-a', championshipTeams.home.color);
+    document.documentElement.style.setProperty('--champ-color-b', championshipTeams.away.color);
+  } else {
+    document.documentElement.style.removeProperty('--champ-color-a');
+    document.documentElement.style.removeProperty('--champ-color-b');
+  }
+  renderHypeTeam('Home', championshipTeams ? championshipTeams.home : null);
+  renderHypeTeam('Away', championshipTeams ? championshipTeams.away : null);
+
+  const champRows = championshipTeams ? byMatchup[championshipTeams.matchupId] : null;
   const hasStarted = Object.values(byMatchup).some((rows) => rows.some((r) => Number(r.actual_score) > 0));
   championshipStageEl.setAttribute('data-mode', hasStarted ? 'live' : 'pregame');
 
   const hypeCountdownEl = document.getElementById('hypeCountdown');
-  if (!hypeCountdownEl) return;
+  const hypeCountdownFallbackEl = document.getElementById('hypeCountdownFallback');
+  const hypeLiveNoteEl = document.getElementById('hypeLiveNote');
+  const homeScoreEl = document.getElementById('hypeTeamHomeScore');
+  const awayScoreEl = document.getElementById('hypeTeamAwayScore');
+
   if (hasStarted) {
-    hypeCountdownEl.hidden = true;
+    if (hypeCountdownEl) hypeCountdownEl.hidden = true;
+    if (hypeCountdownFallbackEl) hypeCountdownFallbackEl.hidden = true;
+    if (hypeLiveNoteEl) hypeLiveNoteEl.hidden = false;
+    // Live score sits right under each team's name/logo -- the banner's
+    // own small piece of "more representation," so the matchup it's
+    // hyping is never just a generic title once it's actually underway.
+    if (champRows) {
+      const homeRow = champRows.find((r) => r.is_home);
+      const awayRow = champRows.find((r) => !r.is_home);
+      if (homeScoreEl) { homeScoreEl.hidden = !homeRow; if (homeRow) homeScoreEl.textContent = Number(homeRow.actual_score || 0).toFixed(1); }
+      if (awayScoreEl) { awayScoreEl.hidden = !awayRow; if (awayRow) awayScoreEl.textContent = Number(awayRow.actual_score || 0).toFixed(1); }
+    }
     return;
   }
+
+  if (homeScoreEl) homeScoreEl.hidden = true;
+  if (awayScoreEl) awayScoreEl.hidden = true;
+  if (hypeLiveNoteEl) hypeLiveNoteEl.hidden = true;
+  if (!hypeCountdownEl || !hypeCountdownFallbackEl) return;
   if (kickoffCountdownTarget) {
-    const formatted = formatCountdown(kickoffCountdownTarget.getTime() - Date.now());
-    hypeCountdownEl.hidden = !formatted;
-    if (formatted) hypeCountdownEl.innerHTML = `Kickoff in <span>${formatted}</span>`;
+    const shown = renderHypeCountdownBig(kickoffCountdownTarget.getTime() - Date.now());
+    if (!shown) {
+      hypeCountdownEl.hidden = true;
+      hypeCountdownFallbackEl.hidden = true;
+    }
   } else {
     // No resolved kickoff time (e.g. browsing an older week, or the debug
     // toggle forcing this on outside a real week 17) -- generic copy
     // instead of a wrong or stale number.
-    hypeCountdownEl.hidden = false;
-    hypeCountdownEl.textContent = 'Before kickoff';
+    hypeCountdownEl.hidden = true;
+    hypeCountdownFallbackEl.hidden = false;
+    hypeCountdownFallbackEl.textContent = 'Before kickoff';
   }
 }
 
@@ -2223,13 +2319,14 @@ function tickKickoffCountdown() {
   el.hidden = false;
 
   // Piggybacks on this same 1s tick to refresh the championship hero
-  // banner's own countdown text, rather than running a second timer for
-  // what's fundamentally the same clock. Only touches it while the stage
-  // is actually in pregame mode -- once live, updateChampionshipStage
-  // hides this line itself and there's nothing to tick.
+  // banner's own big countdown digits, rather than running a second timer
+  // for what's fundamentally the same clock. Only touches it while the
+  // stage is actually in pregame mode -- once live, updateChampionshipStage
+  // hides the digits/fallback itself and there's nothing to tick.
   const hypeCountdownEl = document.getElementById('hypeCountdown');
-  if (hypeCountdownEl && !hypeCountdownEl.hidden) {
-    hypeCountdownEl.innerHTML = `Kickoff in <span>${formatted}</span>`;
+  const hypeCountdownFallbackEl = document.getElementById('hypeCountdownFallback');
+  if (hypeCountdownEl && hypeCountdownFallbackEl && (!hypeCountdownEl.hidden || !hypeCountdownFallbackEl.hidden)) {
+    renderHypeCountdownBig(remaining);
   }
 
   // Seasonal hint -- kcHintTheme is set by updateKickoffCountdown based on
@@ -4481,20 +4578,45 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   // early returns rather than at the top of the function.
   const { render, update } = VIEW_RENDERERS[viewMode];
 
-  updateChampionshipStage(championshipWeekActive, byMatchup);
-
-  // Only worth the extra season-wide query when the hero banner/ribbons
-  // are actually showing, and only on a full rebuild -- tiers depend on
-  // LOCKED regular-season results, so there's nothing to recompute on a
-  // routine 30s poll of week 17 itself.
+  // Moved ahead of updateChampionshipStage (used to run after it) so the
+  // hero banner can show the actual championship-game teams -- tier 0 from
+  // computePlayoffTiers is ALWAYS the championship matchup itself. Used to
+  // be gated to full rebuilds only (tiers depend on LOCKED regular-season
+  // results, so the SORT never changes mid-week), but the banner's own
+  // live score readout needs this on every poll now, not just a rebuild;
+  // getPlayoffTiers is still cheap on every call after the first real
+  // fetch (its own season-rows cache, keyed by league+year, is what was
+  // actually expensive here, not the sort itself).
   let tierInfo = null;
-  if (championshipWeekActive && (!preserveCharts || Object.keys(charts).length === 0)) {
+  if (championshipWeekActive) {
     try {
       tierInfo = await getPlayoffTiers(leagueId, year, byMatchup);
     } catch {
       tierInfo = null; // best-effort -- falls back to natural matchup order below
     }
   }
+
+  // Championship-game team identity -- drives the hero banner's team
+  // flanks (logo/name either side of the countdown), its live score
+  // readout once the game starts, and the --champ-color-a/-b custom
+  // properties that recolor the starburst/beams/site-wide spotlights to
+  // the two actual teams instead of a fixed gold/red/blue palette.
+  let championshipTeams = null;
+  if (tierInfo && tierInfo.order[0]) {
+    const champMatchupId = tierInfo.order[0];
+    const champRows = byMatchup[champMatchupId];
+    const homeRow = champRows && champRows.find((r) => r.is_home);
+    const awayRow = champRows && champRows.find((r) => !r.is_home);
+    if (homeRow && awayRow) {
+      championshipTeams = {
+        matchupId: champMatchupId,
+        home: teamInfo[homeRow.team_id] || { name: 'Home', color: '#f4c430', emoji: '', logoUrl: '' },
+        away: teamInfo[awayRow.team_id] || { name: 'Away', color: '#e0574a', emoji: '', logoUrl: '' },
+      };
+    }
+  }
+
+  updateChampionshipStage(championshipWeekActive, byMatchup, championshipTeams);
 
   // Unlike tierInfo above, this recomputes on EVERY call (including a
   // routine 30s refresh), not just a full rebuild -- the whole point is
