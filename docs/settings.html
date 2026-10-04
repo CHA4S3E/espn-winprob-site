@@ -85,17 +85,25 @@
       Year: <select id="resultsYearSelect"></select>
     </label>
     <div id="finalStandingsList"></div>
+    <button id="saveSeasonResultsBtn" type="button">Save Final Standings</button>
+
+    <hr style="margin:24px 0;border:none;border-top:1px solid #eee">
+    <div class="sub" style="text-align:left;margin-bottom:10px">
+      These two are current-season settings, not final placements -- they apply right now (the Playoff Race
+      page reads them live) and save independently of the Final Standings above, with the button below.
+    </div>
     <label style="display:block;margin:14px 0">
-      Playoff spots (how many teams made the playoffs -- separate from final placement, used for the "So Close" award):
+      Playoff spots (how many teams make the playoffs -- used for the Playoff Race page's cutoff line, and
+      for the "So Close" award once the season's over):
       <input type="number" id="playoffSpotsInput" min="1" max="20" style="width:60px">
     </label>
     <label style="display:block;margin:14px 0">
       Reseed weeks (weeks where matchups get re-paired by standings -- 1v2, 3v4, etc -- instead of
-      ESPN's normal schedule, e.g. "12,13,14". Leave blank if this league doesn't do this. Used by the
-      Playoff Race page's simulation, not anything else on the site):
+      a normal schedule, e.g. "12,13,14". Leave blank if this league doesn't do this):
       <input type="text" id="reseedWeeksInput" placeholder="e.g. 12,13,14" style="width:160px">
     </label>
-    <button id="saveSeasonResultsBtn" type="button">Save Final Standings</button>
+    <button id="savePlayoffSettingsBtn" type="button">Save Playoff Settings</button>
+    <span id="playoffSettingsSavedNote"></span>
   </div>
 
   <a class="back" href="index.html">&larr; Back to charts</a>
