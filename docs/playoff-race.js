@@ -142,6 +142,27 @@ function computeStandings(rows, teamInfoMap, throughWeek) {
   return standings;
 }
 
+// computeStandings only ever returns a row for a team that has at least
+// one FINISHED matchup -- fine for the main Standings page (nothing to
+// show for a team with zero games), but wrong here: the Playoff Picture,
+// Next Reseed Matchups, and the simulation all need every real team in
+// the league, including one that joined late or simply hasn't finished a
+// game yet this season, starting from a 0-0 record rather than being
+// silently left off entirely (which is exactly what made the Playoff
+// Picture look "incomplete" -- a missing team isn't just missing from the
+// picture, it also throws off reseed pairing counts and the simulation's
+// own field size).
+function fillMissingTeams(standings, teamIds, teamInfoMap) {
+  const present = new Set(standings.map((s) => s.teamId));
+  const missing = teamIds.filter((id) => !present.has(id));
+  const combined = standings.concat(missing.map((id) => ({
+    teamId: id, team: teamInfoMap[id] || { name: 'Unknown', color: '#888' },
+    wins: 0, losses: 0, ties: 0, winPct: 0, pointsFor: 0, pointsAgainst: 0,
+  })));
+  combined.sort((x, y) => y.winPct - x.winPct || y.pointsFor - x.pointsFor);
+  return combined;
+}
+
 function computePowerRatings(rows, teamIds, pregameWinProbByKey, throughWeek, opts) {
   const decay = (opts && opts.decay) ?? 0.85;
   const priorK = (opts && opts.priorK) ?? 3;
@@ -521,10 +542,10 @@ function simulateSeason({ teamIds, standings, ratings, leagueAvgScore, cw, throu
   // single game's score swing, which is what sampleNormal needs below.
   const muByTeam = new Map(teamIds.map((id) => [id, leagueAvgScore + (ratings.get(id)?.rating || 0)]));
 
+  // `standings` has already been through fillMissingTeams by the time it
+  // gets here (see renderAll), so every team in teamIds has a row -- no
+  // separate backfill needed at this layer too.
   const startRecord = new Map(standings.map((s) => [s.teamId, { wins: s.wins, losses: s.losses, ties: s.ties, pointsFor: s.pointsFor }]));
-  // Any team with no standings row yet (zero games played so far) --
-  // still needs to be simulable, just starting from nothing.
-  for (const id of teamIds) if (!startRecord.has(id)) startRecord.set(id, { wins: 0, losses: 0, ties: 0, pointsFor: 0 });
 
   const seedHist = new Map(teamIds.map((id) => [id, new Array(n + 1).fill(0)])); // index 1..n
   const winsHist = new Map(teamIds.map((id) => [id, new Map()])); // final wins -> count
@@ -708,8 +729,8 @@ function renderAll() {
   const cw = lastCompletedWeek(allRows);
   if (!cw) { contentEl.style.display = 'none'; emptyState.style.display = 'block'; return; }
 
-  const standings = computeStandings(allRows, teamInfo, cw);
-  if (!standings.length) { contentEl.style.display = 'none'; emptyState.style.display = 'block'; return; }
+  if (!teamIds.length) { contentEl.style.display = 'none'; emptyState.style.display = 'block'; return; }
+  const standings = fillMissingTeams(computeStandings(allRows, teamInfo, cw), teamIds, teamInfo);
 
   emptyState.style.display = 'none';
   contentEl.style.display = 'block';
