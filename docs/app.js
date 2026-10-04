@@ -65,6 +65,12 @@ let showDeltaPopups = localStorage.getItem('winProbShowDeltaPopups') !== 'false'
 // out -- alternating every time the leader actually changes.
 let leaderBarActiveLayer = null; // 'A' | 'B' | null (nothing shown yet)
 let leaderBarCurrentTeamId = null;
+// Separate cache key for championship week's win-probability-split mode
+// (see updateLeaderBar) -- a rounded home win% rather than a team id, so
+// it can't collide with leaderBarCurrentTeamId's own cache, and each mode
+// invalidates the other's cache on entry/exit so switching between them
+// (or just leaving/entering championship week) always repaints once.
+let leaderBarChampHomePct = null;
 document.documentElement.setAttribute('data-theme', theme);
 
 // ============================== THEME / COLOR ADJUSTMENT ==============================
@@ -1718,11 +1724,48 @@ function computeWeekLeader(byMatchup, teamInfo) {
 // different week's data entirely, since that's handled the same way:
 // whatever the new leader turns out to be just becomes "the new color,"
 // with no special-casing needed for why it changed.
-function updateLeaderBar(byMatchup, teamInfo) {
+//
+// During championship week specifically, this stops tracking "whoever
+// has the most points this week" across the whole league and instead
+// shows a horizontal split of the two CHAMPIONSHIP teams' own colors,
+// sized by their live win probability -- a team favored 70/30 fills 70%
+// of the bar's width with its own color, so the very top of the page
+// reads as a live odds bar for the game that matters most that week.
+function updateLeaderBar(byMatchup, teamInfo, championshipWeekActive, championshipTeams) {
   const bar = document.getElementById('leaderGradient');
   const layerA = document.getElementById('leaderGradientLayerA');
   const layerB = document.getElementById('leaderGradientLayerB');
   if (!bar || !layerA || !layerB) return;
+
+  if (championshipWeekActive && championshipTeams) {
+    const champRows = byMatchup[championshipTeams.matchupId];
+    // latestPct itself defaults to 50 when there's no home row to read,
+    // but it assumes an array -- guard against champRows being missing
+    // entirely too, so a stale matchupId just shows an even 50/50 split
+    // rather than erroring out.
+    const homePct = Math.round(champRows ? latestPct(champRows) : 50);
+    if (homePct !== leaderBarChampHomePct) {
+      const homeColor = colorWithAlpha(championshipTeams.home.color, 0.35);
+      const awayColor = colorWithAlpha(championshipTeams.away.color, 0.35);
+      const gradient = `linear-gradient(to right, ${homeColor} 0%, ${homeColor} ${homePct}%, ${awayColor} ${homePct}%, ${awayColor} 100%)`;
+      const nextLayer = leaderBarActiveLayer === 'A' ? layerB : layerA;
+      const prevLayer = leaderBarActiveLayer === 'A' ? layerA : layerB;
+      nextLayer.style.background = gradient;
+      // The non-championship gradient below fades to transparent on its
+      // OWN (a straight top-to-bottom color->transparent stop) -- here the
+      // gradient runs horizontally instead (to carry the win-prob split),
+      // so the same vertical fade has to come from a mask instead.
+      nextLayer.style.maskImage = 'linear-gradient(to bottom, black, transparent)';
+      nextLayer.style.webkitMaskImage = 'linear-gradient(to bottom, black, transparent)';
+      nextLayer.classList.add('visible');
+      prevLayer.classList.remove('visible');
+      leaderBarChampHomePct = homePct;
+      leaderBarCurrentTeamId = null; // invalidate the OTHER mode's cache, so leaving championship week always repaints once
+      leaderBarActiveLayer = leaderBarActiveLayer === 'A' ? 'B' : 'A';
+    }
+    return;
+  }
+  leaderBarChampHomePct = null; // invalidate THIS mode's cache, so entering championship week always repaints once
 
   const leader = computeWeekLeader(byMatchup, teamInfo);
   if (!leader) {
@@ -1746,6 +1789,11 @@ function updateLeaderBar(byMatchup, teamInfo) {
   const prevLayer = leaderBarActiveLayer === 'A' ? layerA : layerB;
 
   nextLayer.style.background = gradient;
+  // Clear any mask left over from championship week's horizontal-split
+  // gradient above -- this mode's gradient already fades to transparent
+  // on its own, no mask needed.
+  nextLayer.style.maskImage = '';
+  nextLayer.style.webkitMaskImage = '';
   nextLayer.classList.add('visible');
   prevLayer.classList.remove('visible');
 
@@ -4503,7 +4551,49 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   }
 
   renderRecapBanner(byMatchup, teamInfo);
-  updateLeaderBar(byMatchup, teamInfo);
+
+  // Computed here (rather than further down, where this used to live)
+  // because updateLeaderBar, right below, needs it too now -- during
+  // championship week the leader bar switches from "whoever has the most
+  // points this week" to a win-probability split between the two
+  // championship teams specifically. Tier 0 from computePlayoffTiers is
+  // ALWAYS the championship matchup itself. No longer gated to full
+  // rebuilds only (it used to be, back when only the ribbons/banner
+  // needed it) -- the leader bar and the hero banner's live score both
+  // need this fresh on every poll, and getPlayoffTiers is cheap on every
+  // call after the first real fetch (its own season-rows cache, keyed by
+  // league+year, is what was actually expensive, not the sort itself).
+  const championshipWeekActive = debugChampionshipWeek || week === CHAMPIONSHIP_WEEK;
+  let tierInfo = null;
+  if (championshipWeekActive) {
+    try {
+      tierInfo = await getPlayoffTiers(leagueId, year, byMatchup);
+    } catch {
+      tierInfo = null; // best-effort -- falls back to natural matchup order below
+    }
+  }
+
+  // Championship-game team identity -- drives the leader bar's win-prob
+  // split, the hero banner's team flanks (logo/name either side of the
+  // countdown) and live score, the --champ-color-a/-b custom properties
+  // that recolor the starburst/beams/site-wide spotlights, and (further
+  // below) the card order + ribbons.
+  let championshipTeams = null;
+  if (tierInfo && tierInfo.order[0]) {
+    const champMatchupId = tierInfo.order[0];
+    const champRows = byMatchup[champMatchupId];
+    const homeRow = champRows && champRows.find((r) => r.is_home);
+    const awayRow = champRows && champRows.find((r) => !r.is_home);
+    if (homeRow && awayRow) {
+      championshipTeams = {
+        matchupId: champMatchupId,
+        home: teamInfo[homeRow.team_id] || { name: 'Home', color: '#f4c430', emoji: '', logoUrl: '' },
+        away: teamInfo[awayRow.team_id] || { name: 'Away', color: '#e0574a', emoji: '', logoUrl: '' },
+      };
+    }
+  }
+
+  updateLeaderBar(byMatchup, teamInfo, championshipWeekActive, championshipTeams);
   renderByeWeekNote(byMatchup, teamInfo);
   updateKickoffCountdown(byMatchup, year, week); // fire-and-forget -- doesn't block matchup rendering
 
@@ -4523,8 +4613,6 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     // no CSS hooked up to it yet.
     document.documentElement.setAttribute('data-seasonal-theme', currentSeasonalTheme);
   }
-
-  const championshipWeekActive = debugChampionshipWeek || week === CHAMPIONSHIP_WEEK;
 
   if (Object.keys(byMatchup).length === 0) {
     updateChampionshipStage(false, {});
@@ -4578,44 +4666,10 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   // early returns rather than at the top of the function.
   const { render, update } = VIEW_RENDERERS[viewMode];
 
-  // Moved ahead of updateChampionshipStage (used to run after it) so the
-  // hero banner can show the actual championship-game teams -- tier 0 from
-  // computePlayoffTiers is ALWAYS the championship matchup itself. Used to
-  // be gated to full rebuilds only (tiers depend on LOCKED regular-season
-  // results, so the SORT never changes mid-week), but the banner's own
-  // live score readout needs this on every poll now, not just a rebuild;
-  // getPlayoffTiers is still cheap on every call after the first real
-  // fetch (its own season-rows cache, keyed by league+year, is what was
-  // actually expensive here, not the sort itself).
-  let tierInfo = null;
-  if (championshipWeekActive) {
-    try {
-      tierInfo = await getPlayoffTiers(leagueId, year, byMatchup);
-    } catch {
-      tierInfo = null; // best-effort -- falls back to natural matchup order below
-    }
-  }
-
-  // Championship-game team identity -- drives the hero banner's team
-  // flanks (logo/name either side of the countdown), its live score
-  // readout once the game starts, and the --champ-color-a/-b custom
-  // properties that recolor the starburst/beams/site-wide spotlights to
-  // the two actual teams instead of a fixed gold/red/blue palette.
-  let championshipTeams = null;
-  if (tierInfo && tierInfo.order[0]) {
-    const champMatchupId = tierInfo.order[0];
-    const champRows = byMatchup[champMatchupId];
-    const homeRow = champRows && champRows.find((r) => r.is_home);
-    const awayRow = champRows && champRows.find((r) => !r.is_home);
-    if (homeRow && awayRow) {
-      championshipTeams = {
-        matchupId: champMatchupId,
-        home: teamInfo[homeRow.team_id] || { name: 'Home', color: '#f4c430', emoji: '', logoUrl: '' },
-        away: teamInfo[awayRow.team_id] || { name: 'Away', color: '#e0574a', emoji: '', logoUrl: '' },
-      };
-    }
-  }
-
+  // tierInfo/championshipTeams are now computed up near the top of this
+  // function (right after fetchMatchupData) -- see the comment there --
+  // since the leader bar needed them too and that runs long before this
+  // point. Just reused here for the hero banner.
   updateChampionshipStage(championshipWeekActive, byMatchup, championshipTeams);
 
   // Unlike tierInfo above, this recomputes on EVERY call (including a
