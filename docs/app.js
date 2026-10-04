@@ -21,6 +21,14 @@ let refreshTimer = null;
 let whatIfTeamAId = null;
 let whatIfTeamBId = null;
 let whatIfChartInstance = null;
+// Forecast view's Power Score projection (see computePowerProjection) --
+// teamId -> { baseline, projected }, recomputed once per loadMatchups()
+// call whenever viewMode is 'needle' and read directly by
+// renderNeedleCard/updateNeedleCard via buildFcPowerRow, same convention
+// as currentSeasonalTheme/showConfidenceBand (module state read straight
+// from a render function rather than threaded through VIEW_RENDERERS'
+// fixed (rows, home, away, allDone) signature).
+let powerProjectionByTeam = null;
 // Timeline and Postcard are being deprecated -- hidden from the view
 // switcher unless explicitly re-enabled (see preferences.html). Default
 // OFF, matching the convention for other opt-in visual toggles.
@@ -2880,12 +2888,14 @@ function renderNeedleCard(rows, home, away, allDone) {
           <span class="delta-badge"></span>
           <span class="fc-team-pct" style="color:${home.color}">${Math.round(homePct)}%</span>
         </div>
+        ${buildFcPowerRow(homeRow?.team_id)}
         <div class="fc-team-row">
           <span class="fc-team-name" style="color:${away.color}">${away.name}</span>
           <span class="fc-team-dash" style="color:${away.color}"></span>
           <span class="delta-badge"></span>
           <span class="fc-team-pct" style="color:${away.color}">${Math.round(100 - homePct)}%</span>
         </div>
+        ${buildFcPowerRow(awayRow?.team_id)}
       </div>
     </div>
     <div class="needle-sub">
@@ -2940,6 +2950,14 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
   const teamPcts = card.querySelectorAll('.fc-team-pct');
   if (teamPcts[0]) teamPcts[0].textContent = `${Math.round(homePct)}%`;
   if (teamPcts[1]) teamPcts[1].textContent = `${Math.round(100 - homePct)}%`;
+
+  // buildFcPowerRow always returns a '.fc-power-row' element (hidden when
+  // there's nothing to show), so outerHTML-replacing it in place never
+  // loses the slot for next time, the same reason that function's own
+  // comment gives.
+  const powerRows = card.querySelectorAll('.fc-power-row');
+  if (powerRows[0]) powerRows[0].outerHTML = buildFcPowerRow(homeRow?.team_id);
+  if (powerRows[1]) powerRows[1].outerHTML = buildFcPowerRow(awayRow?.team_id);
 
   const deltaBadges = card.querySelectorAll('.delta-badge');
   if (deltaBadges.length === 2) {
@@ -3675,6 +3693,93 @@ function powerPickWinProbability(ratingA, ratingB) {
   return 100 * normalCdf(z);
 }
 
+// ============================== FORECAST POWER PROJECTION ==============================
+// Shows each team's Power Score moving from its PRE-GAME value (through
+// last week) to a live PROJECTED value for this week, right on the
+// Forecast card -- same question Power Picks answers before kickoff, kept
+// updating once games are actually live.
+//
+// computePowerRatings only ever counts a matchup once BOTH sides are
+// all_starters_done -- that's correct for the real cached Power Rankings
+// (standings.js, year-in-review.js, poll.js's cache), which should never
+// show a number that isn't fully earned yet. This is deliberately
+// different: it feeds the SAME function a synthetic "finished" version of
+// THIS week's still-in-progress matchups, using each team's current live
+// expected_score as a stand-in for its final actual_score -- same idea as
+// the What If view's hypothetical pairing, just applied to the real
+// schedule instead of a swapped one. Never written anywhere; purely a
+// client-side projection that naturally sharpens into the real number as
+// expected_score itself converges toward actual_score over the course of
+// the week.
+function renderPowerDelta(delta) {
+  if (Math.abs(delta) < 0.05) return '<span class="power-delta power-delta-flat">±0.0</span>';
+  const sign = delta > 0 ? '+' : '−'; // true minus sign, matching standings.js's own convention
+  const cls = delta > 0 ? 'power-delta-up' : 'power-delta-down';
+  return `<span class="power-delta ${cls}">${sign}${Math.abs(delta).toFixed(1)}</span>`;
+}
+
+async function computePowerProjection(leagueId, year, week, byMatchup, teamInfo) {
+  const history = await fetchPowerPicksHistory(leagueId, year);
+  const teamIds = Object.keys(teamInfo);
+  const pregameMap = extractPregameWinProb(history);
+
+  const baseline = computePowerRatings(history, teamIds, pregameMap, week - 1);
+
+  // One synthetic row per side per real matchup THIS week -- a later ts
+  // than anything real (so computePowerRatings' own latest-by-ts dedupe
+  // always prefers it over that team's real, still-in-progress row for
+  // this exact week) and all_starters_done forced true (so it's counted
+  // as a finished game for the regression at all). pregameMap is left
+  // untouched -- it's built from the real history, which already has each
+  // team's real pregame win_prob recorded from when this week's plotting
+  // window opened, same number the real Power Rankings would eventually
+  // use once this week actually finishes.
+  const projectedRows = history.slice();
+  const bumpedTs = new Date(Date.now() + 1000).toISOString();
+  for (const rows of Object.values(byMatchup)) {
+    const homeRow = latestRow(rows, true);
+    const awayRow = latestRow(rows, false);
+    if (!homeRow || !awayRow) continue;
+    for (const row of [homeRow, awayRow]) {
+      projectedRows.push({
+        year, week, matchup_id: row.matchup_id, team_id: row.team_id,
+        actual_score: row.expected_score, all_starters_done: true, ts: bumpedTs,
+      });
+    }
+  }
+
+  const projected = computePowerRatings(projectedRows, teamIds, pregameMap, week);
+
+  const result = new Map();
+  for (const id of teamIds) result.set(id, { baseline: baseline.get(id), projected: projected.get(id) });
+  return result;
+}
+
+// Always returns a '.fc-power-row' element (hidden when there's nothing to
+// show yet) rather than sometimes omitting it -- updateNeedleCard replaces
+// this element's outerHTML in place on every refresh, and needs a stable
+// element to find there every time, not one that disappears the first
+// time projection data isn't ready yet.
+function buildFcPowerRow(teamId) {
+  const entry = teamId != null ? powerProjectionByTeam?.get(teamId) : null;
+  const projected = entry?.projected;
+  if (!projected || !projected.gamesPlayed) return '<div class="fc-power-row" hidden></div>';
+
+  const baseline = entry.baseline;
+  const hasBaseline = !!(baseline && baseline.gamesPlayed);
+  const deltaHtml = hasBaseline
+    ? renderPowerDelta(projected.score - baseline.score)
+    : '<span class="power-delta power-delta-new">New</span>';
+  const fromHtml = hasBaseline ? `${baseline.score.toFixed(1)} → ` : '';
+  return `
+    <div class="fc-power-row">
+      <span class="fc-power-label">Power Score</span>
+      <span class="fc-power-value">${fromHtml}${projected.score.toFixed(1)}</span>
+      ${deltaHtml}
+    </div>
+  `;
+}
+
 async function renderPowerPicksView(leagueId, year, week, byMatchup, teamInfo, { forcedPreview = false } = {}) {
   matchupsEl.classList.remove('view-timeline', 'view-postcard', 'view-needle', 'view-espn', 'view-whatif');
   matchupsEl.classList.add('view-power-picks');
@@ -3685,7 +3790,13 @@ async function renderPowerPicksView(leagueId, year, week, byMatchup, teamInfo, {
   let ratings = null;
   try {
     const history = await fetchPowerPicksHistory(leagueId, year);
-    const teamIds = Object.keys(teamInfo).map(Number);
+    // Team ids are uuids (see teams.id in the schema) -- Number(uuid) is
+    // always NaN, which silently collapsed every team into one bogus key
+    // here and made computePowerRatings' lookups miss for every real team.
+    // havePicks below just degrades quietly when ratings don't resolve,
+    // which is almost certainly why this went unnoticed: Power Picks still
+    // rendered (projections only, no prediction), never errored.
+    const teamIds = Object.keys(teamInfo);
     const pregameMap = extractPregameWinProb(history);
     ratings = computePowerRatings(history, teamIds, pregameMap, week - 1);
   } catch (err) {
@@ -4278,6 +4389,21 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     } catch {
       tierInfo = null; // best-effort -- falls back to natural matchup order below
     }
+  }
+
+  // Unlike tierInfo above, this recomputes on EVERY call (including a
+  // routine 30s refresh), not just a full rebuild -- the whole point is
+  // that it tracks each team's live expected_score as the week plays out,
+  // same as the win-probability numbers it sits next to on the card.
+  if (viewMode === 'needle') {
+    try {
+      powerProjectionByTeam = await computePowerProjection(leagueId, year, week, byMatchup, teamInfo);
+    } catch (err) {
+      console.warn('Forecast: could not compute Power Score projection (non-fatal):', err.message);
+      powerProjectionByTeam = null;
+    }
+  } else {
+    powerProjectionByTeam = null;
   }
 
   if (!preserveCharts || Object.keys(charts).length === 0) {
