@@ -89,6 +89,12 @@
       Playoff spots (how many teams made the playoffs -- separate from final placement, used for the "So Close" award):
       <input type="number" id="playoffSpotsInput" min="1" max="20" style="width:60px">
     </label>
+    <label style="display:block;margin:14px 0">
+      Reseed weeks (weeks where matchups get re-paired by standings -- 1v2, 3v4, etc -- instead of
+      ESPN's normal schedule, e.g. "12,13,14". Leave blank if this league doesn't do this. Used by the
+      Playoff Race page's simulation, not anything else on the site):
+      <input type="text" id="reseedWeeksInput" placeholder="e.g. 12,13,14" style="width:160px">
+    </label>
     <button id="saveSeasonResultsBtn" type="button">Save Final Standings</button>
   </div>
 
