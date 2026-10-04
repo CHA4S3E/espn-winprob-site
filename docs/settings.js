@@ -269,8 +269,9 @@ async function loadSeasonResultsForYear() {
   const leagueId = leagueSelect.value;
   const year = Number(document.getElementById('resultsYearSelect').value);
 
-  const { data: league } = await sb.from('leagues').select('playoff_spots').eq('id', leagueId).single();
+  const { data: league } = await sb.from('leagues').select('playoff_spots, reseed_weeks').eq('id', leagueId).single();
   document.getElementById('playoffSpotsInput').value = league && league.playoff_spots != null ? league.playoff_spots : '';
+  document.getElementById('reseedWeeksInput').value = league && league.reseed_weeks && league.reseed_weeks.length ? league.reseed_weeks.join(',') : '';
 
   const [participants, { data: results }] = await Promise.all([
     getParticipantsForYear(leagueId, year),
@@ -300,6 +301,14 @@ document.getElementById('saveSeasonResultsBtn').addEventListener('click', async 
   const playoffSpotsRaw = document.getElementById('playoffSpotsInput').value;
   const playoffSpots = playoffSpotsRaw === '' ? null : Number(playoffSpotsRaw);
 
+  // Parses "12, 13,14" into [12,13,14] -- tolerant of stray spaces and a
+  // trailing comma, since this is hand-typed. Any non-numeric junk just
+  // gets dropped rather than blocking the whole save over a typo.
+  const reseedWeeksRaw = document.getElementById('reseedWeeksInput').value;
+  const reseedWeeks = reseedWeeksRaw.trim()
+    ? reseedWeeksRaw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0)
+    : null;
+
   const rows = [...document.querySelectorAll('.final-standing-row')]
     .map((row) => ({
       teamId: row.dataset.teamId, source: row.dataset.source,
@@ -325,7 +334,7 @@ document.getElementById('saveSeasonResultsBtn').addEventListener('click', async 
   }));
 
   const results = await Promise.all([
-    sb.from('leagues').update({ playoff_spots: playoffSpots }).eq('id', leagueId),
+    sb.from('leagues').update({ playoff_spots: playoffSpots, reseed_weeks: reseedWeeks }).eq('id', leagueId),
     podiumRows.length
       ? sb.from('season_results').upsert(podiumRows, { onConflict: 'league_id,year,place' })
       : Promise.resolve({ error: null }),
