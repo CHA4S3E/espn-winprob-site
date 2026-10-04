@@ -221,6 +221,29 @@
     .fog-layer { animation: none !important; }
   }
   html[data-reduce-motion="true"] .fog-layer { animation: none !important; }
+
+  /* Cold Snap corner frost -- a static (no animation, unlike the Halloween
+     fog above) soft pale-cyan vignette creeping in from the top corners
+     only. Page-level ambience that reads as "cold" at a glance even before
+     anyone notices the particles, and costs nothing (pure CSS, no canvas).
+     Gated on BOTH coldsnap-pre and coldsnap-post via the attribute
+     selector list below -- same visual either side of Christmas. */
+  #frostVignette {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0;
+    transition: opacity 0.6s ease;
+  }
+  html[data-seasonal-theme="coldsnap-pre"] #frostVignette,
+  html[data-seasonal-theme="coldsnap-post"] #frostVignette { opacity: 1; }
+  #frostVignette::before, #frostVignette::after {
+    content: ''; position: absolute; top: 0; width: 46vw; height: 32vh;
+    background: radial-gradient(ellipse at top, rgba(168, 216, 255, 0.22), transparent 70%);
+  }
+  html[data-theme="dark"] #frostVignette::before, html[data-theme="dark"] #frostVignette::after {
+    background: radial-gradient(ellipse at top, rgba(140, 190, 255, 0.16), transparent 70%);
+  }
+  #frostVignette::before { left: 0; }
+  #frostVignette::after { right: 0; }
+
   /* Canvases default to display:inline, which reserves a few pixels of
      invisible "descender" space below them (same as an inline image) --
      any small reflow nearby (like percentage text changing width on hover)
@@ -375,6 +398,13 @@
      warm amber and Christmas's green/red. */
   #kickoffCountdown.seasonal-halloween {
     border-color: #5b2a86; box-shadow: 0 0 0 1px rgba(180,120,255,0.18), 0 0 18px rgba(120,200,90,0.10);
+  }
+  /* Cold Snap: pale icy blue, distinct from all three above -- the same
+     class covers both coldsnap-pre and coldsnap-post (see app.js's
+     seasonalCssTheme), since only the hint TEXT differs between them, not
+     the look. */
+  #kickoffCountdown.seasonal-coldsnap {
+    border-color: #4a7ba6; box-shadow: 0 0 0 1px rgba(91,155,213,0.18), 0 0 18px rgba(168,216,255,0.14);
   }
   /* Starts pulsing once kickoff is within an hour (see tickKickoffCountdown
      in app.js, which toggles this class) -- same glow technique as Upset
@@ -745,6 +775,24 @@
   @keyframes ghostFloat {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-5px); }
+  }
+
+  /* Cold Snap card decor -- deliberately the quietest of the four: no
+     corner emoji, no garland (decorateSeasonalCard in app.js never builds
+     one for this theme), just a thin frost-colored top edge and a very
+     faint cool tint over the card. The point is that it reads as noticed
+     but not centerpiece, unlike the other three full treatments. */
+  .espn-card.seasonal-coldsnap::before,
+  .needle-card.seasonal-coldsnap::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, transparent, rgba(168, 216, 255, 0.9), transparent);
+  }
+  .espn-card.seasonal-coldsnap, .needle-card.seasonal-coldsnap {
+    background: linear-gradient(180deg, rgba(168, 216, 255, 0.07), transparent 40%), var(--card-bg);
+  }
+  html[data-theme="dark"] .espn-card.seasonal-coldsnap,
+  html[data-theme="dark"] .needle-card.seasonal-coldsnap {
+    background: linear-gradient(180deg, rgba(140, 190, 255, 0.08), transparent 40%), var(--card-bg);
   }
 
   /* Shared wire-and-decoration strand for the Thanksgiving leaf garland,
@@ -1135,6 +1183,12 @@
      pure CSS (a repeating blurred radial gradient sliding via transform),
      no canvas or per-frame JS needed. -->
 <div id="seasonalFog"><div class="fog-layer fog-layer-1"></div><div class="fog-layer fog-layer-2"></div></div>
+<!-- Cold Snap corner frost -- always in the DOM, gated purely by CSS via
+     html[data-seasonal-theme="coldsnap-pre"/"coldsnap-post"] (see the
+     #frostVignette rule above). Static, unlike the Halloween fog -- no
+     layers or animation, just two blurred radial gradients in the top
+     corners, which is enough to read as "cold" at a glance. -->
+<div id="frostVignette"></div>
 <div id="leaderGradient"><div class="leader-gradient-layer" id="leaderGradientLayerA"></div><div class="leader-gradient-layer" id="leaderGradientLayerB"></div></div>
 <div id="wrap">
   <div class="title-row">
