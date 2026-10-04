@@ -328,13 +328,27 @@ function parseReseedWeeks() {
 
 async function savePlayoffSettings() {
   const leagueId = leagueSelect.value;
-  const { error } = await sb.from('leagues')
+  // .select() on the update matters here -- without it, Supabase returns
+  // no error and no row count when RLS silently matches zero rows (e.g.
+  // an UPDATE policy missing on `leagues` -- see 019_leagues_update_policy.sql),
+  // so "Saved" would show even though nothing actually changed. Asking
+  // for the updated row back turns that into something checkable: zero
+  // rows returned with no error means the write was blocked, not applied.
+  const { data, error } = await sb.from('leagues')
     .update({ playoff_spots: parsePlayoffSpots(), reseed_weeks: parseReseedWeeks() })
-    .eq('id', leagueId);
+    .eq('id', leagueId)
+    .select();
   const note = document.getElementById('playoffSettingsSavedNote');
-  note.textContent = error ? 'Failed to save: ' + error.message : 'Saved ✓';
-  if (error) console.error('Playoff settings save failed:', error);
-  setTimeout(() => (note.textContent = ''), 1800);
+  if (error) {
+    note.textContent = 'Failed to save: ' + error.message;
+    console.error('Playoff settings save failed:', error);
+  } else if (!data || !data.length) {
+    note.textContent = 'Not saved -- no row updated (likely a missing RLS update policy on leagues; see 019_leagues_update_policy.sql)';
+    console.error('Playoff settings update matched zero rows for league', leagueId, '-- RLS likely blocked it silently.');
+  } else {
+    note.textContent = 'Saved ✓';
+  }
+  setTimeout(() => (note.textContent = ''), data && data.length ? 1800 : 6000);
 }
 
 document.getElementById('savePlayoffSettingsBtn').addEventListener('click', () => {
@@ -374,11 +388,18 @@ document.getElementById('saveSeasonResultsBtn').addEventListener('click', async 
   }));
 
   const results = await Promise.all([
-    sb.from('leagues').update({ playoff_spots: playoffSpots, reseed_weeks: reseedWeeks }).eq('id', leagueId),
+    // .select() so a zero-row RLS-silenced update (see savePlayoffSettings'
+    // own comment on this) is at least distinguishable from here on, even
+    // though this combined button doesn't have its own dedicated note span.
+    sb.from('leagues').update({ playoff_spots: playoffSpots, reseed_weeks: reseedWeeks }).eq('id', leagueId).select(),
     podiumRows.length
       ? sb.from('season_results').upsert(podiumRows, { onConflict: 'league_id,year,place' })
       : Promise.resolve({ error: null }),
   ]);
+  const leaguesResult = results[0];
+  if (!leaguesResult.error && (!leaguesResult.data || !leaguesResult.data.length)) {
+    console.error('Final Standings save: the leagues update matched zero rows for league', leagueId, '-- RLS likely blocked it silently (see 019_leagues_update_policy.sql).');
+  }
   const error = results.find((r) => r.error)?.error;
 
   savedNote.textContent = error ? 'Failed to save: ' + error.message : 'Saved \u2713';
