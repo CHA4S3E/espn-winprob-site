@@ -262,6 +262,20 @@
   }
   .sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 18px; }
 
+  /* Team settings used to sit in the top nav as its own tab; it's a
+     rarely-used, PIN-gated admin page, not a view anyone switches to
+     day-to-day, so it's tucked behind a small "i" next to the title
+     instead -- same "info affordance" convention as a tooltip icon,
+     just linking to a real page rather than popping inline text. */
+  .title-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .title-row h2 { margin-bottom: 0; }
+  .info-icon {
+    width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center; font-size: 12px; font-style: italic;
+    font-family: Georgia, 'Times New Roman', serif; color: var(--muted); text-decoration: none;
+  }
+  .info-icon:hover { background: var(--btn-hover); color: var(--accent); border-color: var(--accent); }
+
   /* Deliberately distinct from the plain utility dropdowns below it --
      this is meant to feel like a once-a-year, "your Wrapped is ready"
      moment, not just another control alongside the league/year/week
@@ -1087,8 +1101,22 @@
   .fc-meter-marker { position: absolute; top: -3px; width: 3px; height: 13px; background: var(--fg); border-radius: 2px; }
   .fc-meter-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
 
-  a.settings-link { display: block; text-align: center; margin-top: 10px; font-size: 13px; color: var(--accent); }
-  #settingsLinks { margin-top: 26px; }
+  /* ---- Top nav (page-level, not the in-page view toggle below it) --
+     moved up here from a stacked list of links at the very bottom of the
+     page, which was easy to miss and meant leaving a page required
+     scrolling all the way down first. Same pill-tab treatment duplicated
+     verbatim on standings.html/playoff-race.html/settings.html/
+     preferences.html so the whole site reads as one consistent nav,
+     rather than just this one page's old link list moving while the
+     others kept theirs at the bottom. */
+  .top-nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+  .top-nav-link {
+    font-size: var(--text-sm); text-decoration: none; color: var(--accent);
+    padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--card-bg);
+  }
+  .top-nav-link:hover { background: var(--btn-hover); }
+  .top-nav-link.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -1109,8 +1137,18 @@
 <div id="seasonalFog"><div class="fog-layer fog-layer-1"></div><div class="fog-layer fog-layer-2"></div></div>
 <div id="leaderGradient"><div class="leader-gradient-layer" id="leaderGradientLayerA"></div><div class="leader-gradient-layer" id="leaderGradientLayerB"></div></div>
 <div id="wrap">
-  <h2>Fantasy Win Probability</h2>
+  <div class="title-row">
+    <h2>Fantasy Win Probability</h2>
+    <a class="info-icon" href="settings.html" title="Team settings" aria-label="Team settings">i</a>
+  </div>
   <div class="sub">Updates automatically every ~1 minute while games are live.</div>
+
+  <nav class="top-nav">
+    <a class="top-nav-link is-active" href="index.html">Matchups</a>
+    <a class="top-nav-link" href="standings.html">Standings</a>
+    <a class="top-nav-link" href="playoff-race.html">Playoff Race</a>
+    <a class="top-nav-link" href="preferences.html">Display</a>
+  </nav>
 
   <!-- Week 17 hero banner -- hidden entirely outside championship week
        (real or debug-forced, see updateChampionshipStage in app.js).
@@ -1168,12 +1206,6 @@
   <div id="byeWeekNote" hidden></div>
   <div id="matchups" class="view-espn"></div>
 
-  <div id="settingsLinks">
-    <a class="settings-link" href="settings.html">Team colors & names &rarr;</a>
-    <a class="settings-link" href="preferences.html">Display settings &rarr;</a>
-    <a class="settings-link" href="standings.html">Standings &rarr;</a>
-    <a class="settings-link" href="playoff-race.html">Playoff Race &rarr;</a>
-  </div>
 </div>
 
 <script src="config.js"></script>
