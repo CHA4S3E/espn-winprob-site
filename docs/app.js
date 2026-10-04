@@ -597,8 +597,10 @@ function applyTierRibbon(card, tierData) {
 let debugThanksgivingWeek = localStorage.getItem('winProbDebugThanksgivingWeek') === 'true'; // set on preferences.html
 let debugChristmasWeek = localStorage.getItem('winProbDebugChristmasWeek') === 'true'; // set on preferences.html
 let debugHalloweenWeek = localStorage.getItem('winProbDebugHalloweenWeek') === 'true'; // set on preferences.html
-let currentSeasonalTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' | 'halloween' -- the CURRENTLY SELECTED week's theme, set once per loadMatchups call, read by the card render/update functions
-let kcHintTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' | 'halloween' -- the theme of the week the kickoff countdown is counting down TO (see updateKickoffCountdown), independent of currentSeasonalTheme
+let debugColdSnapPreWeek = localStorage.getItem('winProbDebugColdSnapPreWeek') === 'true'; // set on preferences.html
+let debugColdSnapPostWeek = localStorage.getItem('winProbDebugColdSnapPostWeek') === 'true'; // set on preferences.html
+let currentSeasonalTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' | 'halloween' | 'coldsnap-pre' | 'coldsnap-post' -- the CURRENTLY SELECTED week's theme, set once per loadMatchups call, read by the card render/update functions
+let kcHintTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' | 'halloween' | 'coldsnap-pre' | 'coldsnap-post' -- the theme of the week the kickoff countdown is counting down TO (see updateKickoffCountdown), independent of currentSeasonalTheme
 
 // Renders a JS Date as its US-Eastern calendar date (YYYY-MM-DD) -- NFL
 // scheduling's own home timezone. Needed because a Thursday-NIGHT game's
@@ -697,6 +699,20 @@ async function weekIsHalloween(year, week) {
   return weekSpansDateKey(year, week, halloweenDateKey(year));
 }
 
+// Cold Snap: the week immediately before and the week immediately after
+// Christmas week specifically -- NOT just "any week in winter." Defined
+// relative to weekIsChristmas itself (± one week number) rather than an
+// independent date calculation, so it automatically inherits Christmas's
+// own real-schedule lookup and can't drift out of sync with it season to
+// season. Christmas week itself keeps its existing full treatment
+// unchanged -- these are the two quieter weeks bracketing it.
+async function weekIsColdSnapPre(year, week) {
+  return weekIsChristmas(year, week + 1);
+}
+async function weekIsColdSnapPost(year, week) {
+  return weekIsChristmas(year, week - 1);
+}
+
 // The real (non-debug) answer -- used for the kickoff countdown's hint,
 // which should always reflect the actual schedule regardless of whether
 // a debug toggle is forcing the full look on for a different week.
@@ -705,6 +721,8 @@ async function realSeasonalTheme(year, week) {
     if (await weekIsHalloween(year, week)) return 'halloween';
     if (await weekIsThanksgiving(year, week)) return 'thanksgiving';
     if (await weekIsChristmas(year, week)) return 'christmas';
+    if (await weekIsColdSnapPre(year, week)) return 'coldsnap-pre';
+    if (await weekIsColdSnapPost(year, week)) return 'coldsnap-post';
   } catch {
     // best-effort -- fall through to 'none' rather than throwing
   }
@@ -713,12 +731,14 @@ async function realSeasonalTheme(year, week) {
 
 // The debug-overridable answer -- used for the currently selected week's
 // full decor treatment. Thanksgiving wins over Christmas, which wins over
-// Halloween, if more than one debug toggle is somehow on at once (see the
-// preferences.html copy).
+// Halloween, which wins over either Cold Snap phase, if more than one
+// debug toggle is somehow on at once (see the preferences.html copy).
 async function determineSeasonalTheme(year, week) {
   if (debugThanksgivingWeek) return 'thanksgiving';
   if (debugChristmasWeek) return 'christmas';
   if (debugHalloweenWeek) return 'halloween';
+  if (debugColdSnapPreWeek) return 'coldsnap-pre';
+  if (debugColdSnapPostWeek) return 'coldsnap-post';
   return realSeasonalTheme(year, week);
 }
 
@@ -726,7 +746,20 @@ const SEASONAL_HINT_COPY = {
   thanksgiving: '🦃 Thanksgiving week is almost here',
   christmas: '🎄 Christmas week is almost here',
   halloween: '🦇 Halloween week is closing in',
+  'coldsnap-pre': '🥶 Cold Snap week is settling in',
+  'coldsnap-post': '✨ The magic doesn’t end here',
 };
+
+// Cold Snap has two distinct theme tokens (coldsnap-pre/coldsnap-post)
+// because the kickoff-countdown hint text genuinely differs between them,
+// but the visual treatment (particles, card decor, countdown tint) is
+// identical on either side of Christmas. Anywhere a CSS class or a
+// particle-count table is keyed by theme, both tokens normalize to the
+// same 'coldsnap' bucket through this helper, rather than duplicating
+// every CSS rule and lookup entry twice for a difference that's text-only.
+function seasonalCssTheme(theme) {
+  return theme === 'coldsnap-pre' || theme === 'coldsnap-post' ? 'coldsnap' : theme;
+}
 
 function prefersReducedMotion() {
   return document.documentElement.getAttribute('data-reduce-motion') === 'true'
@@ -762,10 +795,39 @@ function makeSeasonalBat(width, height, initial, sizeScale) {
 // width/height/sizeScale let one generator serve both the full-page field
 // (large canvas, full-size particles) and the field confined to the
 // kickoff countdown box (tiny canvas, particles scaled down to fit).
+// Ice crystal -- a thin 6-spoke crystal rather than a filled glowing dot,
+// so Cold Snap reads as distinctly "frost" rather than "more snow" even
+// though it falls the same way. Pale icy blue-white, slower and sparser
+// than Christmas's snow, with a slow twinkle (opacity breathing via
+// twinklePhase, applied at draw time) instead of a steady glow. Reuses
+// the same generic fall/sway/rotate physics as snow/leaves in
+// stepSeasonalParticle -- only size/speed/opacity feel and the draw
+// routine are different, so no special-case stepping (unlike bats) is
+// needed.
+function makeSeasonalIceCrystal(width, height, initial, sizeScale) {
+  const scale = sizeScale == null ? 1 : sizeScale;
+  return {
+    x: seasonalRand(0, width),
+    y: initial ? seasonalRand(0, height) : seasonalRand(-40, -10),
+    size: seasonalRand(5, 10) * scale,
+    speedY: seasonalRand(0.25, 0.6) * scale,
+    speedX: seasonalRand(-0.15, 0.15) * scale,
+    swayAmp: seasonalRand(10, 28) * scale,
+    swaySpeed: seasonalRand(0.2, 0.5),
+    swayPhase: seasonalRand(0, Math.PI * 2),
+    rotation: seasonalRand(0, 360),
+    rotSpeed: seasonalRand(-0.3, 0.3),
+    twinklePhase: seasonalRand(0, Math.PI * 2),
+    twinkleSpeed: seasonalRand(0.4, 0.9),
+    baseOpacity: seasonalRand(0.35, 0.7),
+  };
+}
+
 function makeSeasonalParticle(theme, width, height, initial, sizeScale) {
   const scale = sizeScale == null ? 1 : sizeScale;
   const isLeaf = theme === 'thanksgiving';
   if (theme === 'halloween') return makeSeasonalBat(width, height, initial, sizeScale);
+  if (seasonalCssTheme(theme) === 'coldsnap') return makeSeasonalIceCrystal(width, height, initial, sizeScale);
   return {
     x: seasonalRand(0, width),
     y: initial ? seasonalRand(0, height) : seasonalRand(-40, -10),
@@ -884,9 +946,43 @@ function drawSeasonalBat(targetCtx, p, t) {
   targetCtx.restore();
 }
 
+// Twinkle (opacity breathing) rather than a steady glow, and a pale
+// icy-blue stroke that swaps slightly for light/dark mode same as the
+// snow color swap above -- readability first, same reasoning.
+function drawSeasonalIceCrystal(targetCtx, p, t) {
+  const isLight = theme === 'light';
+  const twinkle = 0.65 + 0.35 * Math.sin(t * 0.001 * p.twinkleSpeed + p.twinklePhase);
+  targetCtx.save();
+  targetCtx.translate(p.x, p.y);
+  targetCtx.rotate((p.rotation * Math.PI) / 180);
+  targetCtx.globalAlpha = p.baseOpacity * twinkle;
+  targetCtx.strokeStyle = isLight ? '#5b9bd5' : '#bfe0ff';
+  targetCtx.lineWidth = Math.max(0.8, p.size * 0.1);
+  targetCtx.lineCap = 'round';
+  const s = p.size;
+  for (let i = 0; i < 3; i++) {
+    targetCtx.save();
+    targetCtx.rotate((Math.PI / 3) * i);
+    targetCtx.beginPath();
+    targetCtx.moveTo(0, -s);
+    targetCtx.lineTo(0, s);
+    targetCtx.stroke();
+    // small side branches near each tip, like a simplified snowflake
+    targetCtx.beginPath();
+    targetCtx.moveTo(0, -s); targetCtx.lineTo(s * 0.3, -s * 0.65);
+    targetCtx.moveTo(0, -s); targetCtx.lineTo(-s * 0.3, -s * 0.65);
+    targetCtx.moveTo(0, s); targetCtx.lineTo(s * 0.3, s * 0.65);
+    targetCtx.moveTo(0, s); targetCtx.lineTo(-s * 0.3, s * 0.65);
+    targetCtx.stroke();
+    targetCtx.restore();
+  }
+  targetCtx.restore();
+}
+
 function drawSeasonalParticle(targetCtx, theme, p, t) {
   if (theme === 'thanksgiving') drawSeasonalLeaf(targetCtx, p);
   else if (theme === 'halloween') drawSeasonalBat(targetCtx, p, t);
+  else if (seasonalCssTheme(theme) === 'coldsnap') drawSeasonalIceCrystal(targetCtx, p, t);
   else drawSeasonalSnow(targetCtx, p);
 }
 
@@ -903,12 +999,12 @@ function resizeSeasonalCanvas() {
 window.addEventListener('resize', resizeSeasonalCanvas);
 resizeSeasonalCanvas();
 
-const SEASONAL_PARTICLE_COUNTS = { thanksgiving: 45, christmas: 90, halloween: 22, none: 0 };
-const SEASONAL_KC_PARTICLE_COUNTS = { thanksgiving: 10, christmas: 16, halloween: 6, none: 0 };
+const SEASONAL_PARTICLE_COUNTS = { thanksgiving: 45, christmas: 90, halloween: 22, coldsnap: 28, none: 0 };
+const SEASONAL_KC_PARTICLE_COUNTS = { thanksgiving: 10, christmas: 16, halloween: 6, coldsnap: 8, none: 0 };
 
 function seedSeasonalParticles() {
   if (!seasonalCanvas) return;
-  const count = SEASONAL_PARTICLE_COUNTS[currentSeasonalTheme] || 0;
+  const count = SEASONAL_PARTICLE_COUNTS[seasonalCssTheme(currentSeasonalTheme)] || 0;
   seasonalParticles = [];
   for (let i = 0; i < count; i++) {
     seasonalParticles.push(makeSeasonalParticle(currentSeasonalTheme, seasonalCanvas.width, seasonalCanvas.height, true, 1));
@@ -947,7 +1043,7 @@ window.addEventListener('resize', resizeKcCanvas);
 function seedKcParticles() {
   resizeKcCanvas();
   if (!kcCanvas) return;
-  const count = SEASONAL_KC_PARTICLE_COUNTS[kcHintTheme] || 0;
+  const count = SEASONAL_KC_PARTICLE_COUNTS[seasonalCssTheme(kcHintTheme)] || 0;
   kcParticles = [];
   for (let i = 0; i < count; i++) {
     kcParticles.push(makeSeasonalParticle(kcHintTheme, kcCanvas.width, kcCanvas.height, true, 0.5));
@@ -1053,7 +1149,7 @@ function buildSeasonalCobweb(container) {
 // bulb stagger timing and reset the leaf-sway animation, which reads as a
 // flicker/restart for a completely unrelated reason.
 function decorateSeasonalCard(card, theme, home, away) {
-  card.classList.remove('seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween', 'upset-active');
+  card.classList.remove('seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween', 'seasonal-coldsnap', 'upset-active');
   const garland = card.querySelector('.seasonal-garland');
   if (garland) { garland.innerHTML = ''; garland.classList.remove('upset-lights', 'upset-leaves', 'upset-spiders'); }
   if (theme === 'none' || !garland) return;
@@ -1067,6 +1163,12 @@ function decorateSeasonalCard(card, theme, home, away) {
   } else if (theme === 'halloween') {
     card.classList.add('seasonal-halloween');
     buildSeasonalCobweb(garland);
+  } else if (theme === 'coldsnap-pre' || theme === 'coldsnap-post') {
+    // Deliberately no garland content -- Cold Snap is the quiet in-between,
+    // not another full holiday treatment (see index.html's CSS comment).
+    // The frost-edge + tint look is driven purely by the seasonal-coldsnap
+    // class in CSS, and there's no Upset Watch tie-in for the same reason.
+    card.classList.add('seasonal-coldsnap');
   }
 }
 
@@ -2087,7 +2189,7 @@ function tickKickoffCountdown() {
   if (!el) return;
   if (!kickoffCountdownTarget) {
     el.hidden = true;
-    el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween');
+    el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween', 'seasonal-coldsnap');
     return;
   }
   const remaining = kickoffCountdownTarget.getTime() - Date.now();
@@ -2098,7 +2200,7 @@ function tickKickoffCountdown() {
     kickoffCountdownTarget = null;
     kcHintTheme = 'none'; // stops the mini particle field too, not just the label
     el.hidden = true;
-    el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween');
+    el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween', 'seasonal-coldsnap');
     return;
   }
   // Sets the label/time child elements' text directly rather than
@@ -2136,12 +2238,15 @@ function tickKickoffCountdown() {
   // (tint + one-line hint text); the actual particle preview inside this
   // box is driven by its own independent kcTick loop reading the same
   // kcHintTheme variable, not by this function.
-  el.classList.remove('seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween');
+  el.classList.remove('seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween', 'seasonal-coldsnap');
   const seasonalHintEl = document.getElementById('kickoffSeasonalHint');
   if (kcHintTheme === 'none') {
     if (seasonalHintEl) seasonalHintEl.hidden = true;
   } else {
-    el.classList.add(`seasonal-${kcHintTheme}`);
+    // seasonalCssTheme normalizes coldsnap-pre/coldsnap-post to the same
+    // 'seasonal-coldsnap' class -- only the hint TEXT below differs by
+    // phase, the box tint is identical either side of Christmas.
+    el.classList.add(`seasonal-${seasonalCssTheme(kcHintTheme)}`);
     if (seasonalHintEl) {
       seasonalHintEl.hidden = false;
       seasonalHintEl.textContent = SEASONAL_HINT_COPY[kcHintTheme] || '';
