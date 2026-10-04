@@ -356,17 +356,20 @@
 
   /* Team settings used to sit in the top nav as its own tab; it's a
      rarely-used, PIN-gated admin page, not a view anyone switches to
-     day-to-day, so it's tucked behind a small "i" next to the title
-     instead -- same "info affordance" convention as a tooltip icon,
-     just linking to a real page rather than popping inline text. */
-  .title-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
+     day-to-day -- tucked behind the "i" that's ALREADY sitting right there
+     in "Win" instead of a separate icon next to the title. No visible
+     button at all: the link inherits the title's own color/weight/size
+     and has no border or background, so at rest it reads as completely
+     ordinary title text. Only a hover/focus color shift gives away that
+     it's clickable -- same "hidden in plain sight" affordance as the
+     original circular "i" icon, just folded into the word itself instead
+     of bolted on beside it. */
+  .title-row { display: flex; align-items: center; justify-content: center; }
   .title-row h2 { margin-bottom: 0; }
   .info-icon {
-    width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; border: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: center; font-size: 12px; font-style: italic;
-    font-family: Georgia, 'Times New Roman', serif; color: var(--muted); text-decoration: none;
+    color: inherit; text-decoration: none; cursor: pointer;
   }
-  .info-icon:hover { background: var(--btn-hover); color: var(--accent); border-color: var(--accent); }
+  .info-icon:hover, .info-icon:focus-visible { color: var(--accent); }
 
   /* Deliberately distinct from the plain utility dropdowns below it --
      this is meant to feel like a once-a-year, "your Wrapped is ready"
@@ -1364,8 +1367,7 @@
 <div id="leaderGradient"><div class="leader-gradient-layer" id="leaderGradientLayerA"></div><div class="leader-gradient-layer" id="leaderGradientLayerB"></div></div>
 <div id="wrap">
   <div class="title-row">
-    <h2>Fantasy Win Probability</h2>
-    <a class="info-icon" href="settings.html" title="Team settings" aria-label="Team settings">i</a>
+    <h2>Fantasy W<a class="info-icon" href="settings.html" title="Team settings" aria-label="Team settings">i</a>n Probability</h2>
   </div>
   <div class="sub">Updates automatically every ~1 minute while games are live.</div>
 
