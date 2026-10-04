@@ -269,9 +269,7 @@ async function loadSeasonResultsForYear() {
   const leagueId = leagueSelect.value;
   const year = Number(document.getElementById('resultsYearSelect').value);
 
-  const { data: league } = await sb.from('leagues').select('playoff_spots, reseed_weeks').eq('id', leagueId).single();
-  document.getElementById('playoffSpotsInput').value = league && league.playoff_spots != null ? league.playoff_spots : '';
-  document.getElementById('reseedWeeksInput').value = league && league.reseed_weeks && league.reseed_weeks.length ? league.reseed_weeks.join(',') : '';
+  await loadPlayoffSettingsInputs(leagueId);
 
   const [participants, { data: results }] = await Promise.all([
     getParticipantsForYear(leagueId, year),
@@ -294,20 +292,62 @@ async function loadSeasonResultsForYear() {
   updateLockUI();
 }
 
+// ============================================================
+// Playoff spots / reseed weeks -- a league-wide pair of settings (NOT
+// per-year, unlike everything else in this panel), read live by the
+// Playoff Race page. Pulled into their own load/parse/save helpers so
+// there's exactly one place that can get this wrong, and so a failed
+// load surfaces loudly (console warning) instead of just leaving the
+// inputs looking blank/unset with no explanation -- which is otherwise
+// indistinguishable from "nothing's been saved yet" and was the whole
+// reason this needed hardening.
+// ============================================================
+async function loadPlayoffSettingsInputs(leagueId) {
+  const { data: league, error } = await sb.from('leagues').select('playoff_spots, reseed_weeks').eq('id', leagueId).single();
+  if (error) {
+    console.warn('Could not load playoff settings -- has 018_reseed_weeks.sql been run against this Supabase project?', error.message);
+  }
+  document.getElementById('playoffSpotsInput').value = league && league.playoff_spots != null ? league.playoff_spots : '';
+  document.getElementById('reseedWeeksInput').value = league && league.reseed_weeks && league.reseed_weeks.length ? league.reseed_weeks.join(',') : '';
+}
+
+function parsePlayoffSpots() {
+  const raw = document.getElementById('playoffSpotsInput').value;
+  return raw === '' ? null : Number(raw);
+}
+
+// Parses "12, 13,14" into [12,13,14] -- tolerant of stray spaces and a
+// trailing comma, since this is hand-typed. Any non-numeric junk just
+// gets dropped rather than blocking the whole save over a typo.
+function parseReseedWeeks() {
+  const raw = document.getElementById('reseedWeeksInput').value;
+  return raw.trim()
+    ? raw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0)
+    : null;
+}
+
+async function savePlayoffSettings() {
+  const leagueId = leagueSelect.value;
+  const { error } = await sb.from('leagues')
+    .update({ playoff_spots: parsePlayoffSpots(), reseed_weeks: parseReseedWeeks() })
+    .eq('id', leagueId);
+  const note = document.getElementById('playoffSettingsSavedNote');
+  note.textContent = error ? 'Failed to save: ' + error.message : 'Saved ✓';
+  if (error) console.error('Playoff settings save failed:', error);
+  setTimeout(() => (note.textContent = ''), 1800);
+}
+
+document.getElementById('savePlayoffSettingsBtn').addEventListener('click', () => {
+  if (!unlocked) return;
+  savePlayoffSettings();
+});
+
 document.getElementById('saveSeasonResultsBtn').addEventListener('click', async () => {
   if (!unlocked) return;
   const leagueId = leagueSelect.value;
   const year = Number(document.getElementById('resultsYearSelect').value);
-  const playoffSpotsRaw = document.getElementById('playoffSpotsInput').value;
-  const playoffSpots = playoffSpotsRaw === '' ? null : Number(playoffSpotsRaw);
-
-  // Parses "12, 13,14" into [12,13,14] -- tolerant of stray spaces and a
-  // trailing comma, since this is hand-typed. Any non-numeric junk just
-  // gets dropped rather than blocking the whole save over a typo.
-  const reseedWeeksRaw = document.getElementById('reseedWeeksInput').value;
-  const reseedWeeks = reseedWeeksRaw.trim()
-    ? reseedWeeksRaw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0)
-    : null;
+  const playoffSpots = parsePlayoffSpots();
+  const reseedWeeks = parseReseedWeeks();
 
   const rows = [...document.querySelectorAll('.final-standing-row')]
     .map((row) => ({
