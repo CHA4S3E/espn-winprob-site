@@ -223,11 +223,15 @@
   html[data-reduce-motion="true"] .fog-layer { animation: none !important; }
 
   /* Cold Snap corner frost -- a static (no animation, unlike the Halloween
-     fog above) soft pale-cyan vignette creeping in from the top corners
+     fog above) soft pale-cyan vignette creeping in from the BOTTOM corners
      only. Page-level ambience that reads as "cold" at a glance even before
      anyone notices the particles, and costs nothing (pure CSS, no canvas).
-     Gated on BOTH coldsnap-pre and coldsnap-post via the attribute
-     selector list below -- same visual either side of Christmas. */
+     Anchored to the bottom (fixed to the viewport, not the page) rather
+     than the top -- the top is already #leaderGradient's territory (the
+     "whoever's in the lead" tint over the top 25vh), and stacking a second
+     ambient wash there read as muddy/competing. Gated on BOTH
+     coldsnap-pre and coldsnap-post via the attribute selector list below --
+     same visual either side of Christmas. */
   #frostVignette {
     position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0;
     transition: opacity 0.6s ease;
@@ -235,14 +239,59 @@
   html[data-seasonal-theme="coldsnap-pre"] #frostVignette,
   html[data-seasonal-theme="coldsnap-post"] #frostVignette { opacity: 1; }
   #frostVignette::before, #frostVignette::after {
-    content: ''; position: absolute; top: 0; width: 46vw; height: 32vh;
-    background: radial-gradient(ellipse at top, rgba(168, 216, 255, 0.22), transparent 70%);
+    content: ''; position: absolute; bottom: 0; width: 46vw; height: 32vh;
+    background: radial-gradient(ellipse at bottom, rgba(168, 216, 255, 0.22), transparent 70%);
   }
   html[data-theme="dark"] #frostVignette::before, html[data-theme="dark"] #frostVignette::after {
-    background: radial-gradient(ellipse at top, rgba(140, 190, 255, 0.16), transparent 70%);
+    background: radial-gradient(ellipse at bottom, rgba(140, 190, 255, 0.16), transparent 70%);
   }
   #frostVignette::before { left: 0; }
   #frostVignette::after { right: 0; }
+
+  /* ---- Site-wide championship spotlights -- new: three large, slow,
+     very-low-opacity beams sweeping behind the ENTIRE page for all of
+     championship week (pregame AND live), not just inside the hero
+     banner box above -- a persistent "stadium lights are on" ambience.
+     Tinted by the two championship teams' own colors via the SAME
+     --champ-color-a/-b custom properties the banner's starburst/beams
+     read (set once on <html> by updateChampionshipStage in app.js, so
+     both pick them up through ordinary CSS custom-property inheritance
+     rather than needing two separate JS writes). Gated by
+     data-championship-active rather than the seasonal-theme attribute,
+     since Championship Week is tracked independently and can in
+     principle land the same week as Cold Snap's post-Christmas phase. */
+  #champSpotlights {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+    opacity: 0; transition: opacity 0.8s ease;
+  }
+  html[data-championship-active="true"] #champSpotlights { opacity: 1; }
+  .champ-beam {
+    position: absolute; bottom: -20%; width: 260px; height: 160%;
+    clip-path: polygon(47% 100%, 53% 100%, 100% 0%, 0% 0%);
+    mix-blend-mode: screen; transform-origin: 50% 100%;
+  }
+  .champ-beam.cb1 {
+    left: 8%;
+    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-a, #f4c430) 10%, transparent) 0%, color-mix(in srgb, var(--champ-color-a, #f4c430) 3%, transparent) 40%, transparent 75%);
+    animation: champSweep 22s ease-in-out infinite;
+  }
+  .champ-beam.cb2 {
+    left: 50%;
+    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-b, #e0574a) 9%, transparent) 0%, color-mix(in srgb, var(--champ-color-b, #e0574a) 3%, transparent) 40%, transparent 75%);
+    animation: champSweep 28s ease-in-out infinite reverse; animation-delay: -6s;
+  }
+  .champ-beam.cb3 {
+    left: 85%;
+    background: linear-gradient(to top, rgba(58,103,223,0.08) 0%, rgba(58,103,223,0.02) 40%, transparent 75%);
+    animation: champSweep 25s ease-in-out infinite; animation-delay: -11s;
+  }
+  @keyframes champSweep {
+    0%   { transform: translateX(-50%) rotate(-22deg); }
+    50%  { transform: translateX(-50%) rotate(22deg); }
+    100% { transform: translateX(-50%) rotate(-22deg); }
+  }
+  @media (prefers-reduced-motion: reduce) { .champ-beam { animation: none !important; opacity: 0 !important; } }
+  html[data-reduce-motion="true"] .champ-beam { animation: none !important; opacity: 0 !important; }
 
   /* Canvases default to display:inline, which reserves a few pixels of
      invisible "descender" space below them (same as an inline image) --
@@ -637,11 +686,24 @@
      only during week 17 (or the debug preference -- see
      updateChampionshipStage in app.js), which toggles this element's
      `hidden` attribute and its own data-mode between "pregame" (spotlight
-     sweep + countdown) and "live" (beams faded to 0 opacity, not removed,
-     so there's no layout jump switching between the two). ---- */
+     sweep + starburst + big countdown) and "live" (beams/starburst faded
+     to 0 opacity, not removed, so there's no layout jump switching between
+     the two).
+
+     v2 ("grand/New Year's" direction): a slowly rotating two-color
+     starburst behind the title (was just a flat ambient glow), a big
+     broadcast-style Days/Hrs/Min countdown readout as the actual
+     centerpiece (was one small text line), and the two championship
+     teams' own logos/names flanking that countdown. The starburst, the
+     beams below, AND the site-wide #champSpotlights overlay (further
+     down) all read their colors from --champ-color-a/--champ-color-b --
+     two custom properties set on <html> by updateChampionshipStage in
+     app.js from the actual two teams' colors, with the original fixed
+     gold/red kept only as the CSS fallback (var(..., #f4c430)) for the
+     rare case no team identity could be resolved. ---- */
   .championship-stage {
     position: relative;
-    height: 200px;
+    height: 240px;
     margin: 4px 0 18px;
     border-radius: 14px;
     overflow: hidden;
@@ -664,9 +726,44 @@
     content: '';
     position: absolute;
     inset: 0;
-    background: radial-gradient(ellipse 90% 60% at 50% 100%, rgba(244,196,48,0.10), transparent 70%);
+    background: radial-gradient(ellipse 90% 60% at 50% 100%, color-mix(in srgb, var(--champ-color-a, #f4c430) 10%, transparent), transparent 70%);
     pointer-events: none;
   }
+  /* Starburst -- a conic-gradient pinwheel alternating the two teams'
+     colors (was solid gold), rotating very slowly, clipped to a soft
+     radial mask so it reads as rays bursting from behind the title
+     rather than a hard pinwheel edge. */
+  .championship-stage .starburst {
+    position: absolute; width: 900px; height: 900px; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    background: conic-gradient(from 0deg,
+      color-mix(in srgb, var(--champ-color-a, #f4c430) 16%, transparent) 0deg, transparent 12deg,
+      color-mix(in srgb, var(--champ-color-b, #e0574a) 16%, transparent) 24deg, transparent 36deg,
+      color-mix(in srgb, var(--champ-color-a, #f4c430) 16%, transparent) 48deg, transparent 60deg,
+      color-mix(in srgb, var(--champ-color-b, #e0574a) 16%, transparent) 72deg, transparent 84deg,
+      color-mix(in srgb, var(--champ-color-a, #f4c430) 16%, transparent) 96deg, transparent 108deg,
+      color-mix(in srgb, var(--champ-color-b, #e0574a) 16%, transparent) 120deg, transparent 132deg,
+      color-mix(in srgb, var(--champ-color-a, #f4c430) 16%, transparent) 144deg, transparent 156deg,
+      color-mix(in srgb, var(--champ-color-b, #e0574a) 16%, transparent) 168deg, transparent 180deg,
+      color-mix(in srgb, var(--champ-color-a, #f4c430) 16%, transparent) 192deg, transparent 204deg,
+      color-mix(in srgb, var(--champ-color-b, #e0574a) 16%, transparent) 216deg, transparent 228deg,
+      color-mix(in srgb, var(--champ-color-a, #f4c430) 16%, transparent) 240deg, transparent 252deg,
+      color-mix(in srgb, var(--champ-color-b, #e0574a) 16%, transparent) 264deg, transparent 276deg,
+      color-mix(in srgb, var(--champ-color-a, #f4c430) 16%, transparent) 288deg, transparent 300deg,
+      color-mix(in srgb, var(--champ-color-b, #e0574a) 16%, transparent) 312deg, transparent 324deg,
+      color-mix(in srgb, var(--champ-color-a, #f4c430) 16%, transparent) 336deg, transparent 348deg,
+      color-mix(in srgb, var(--champ-color-b, #e0574a) 16%, transparent) 360deg);
+    mask-image: radial-gradient(circle, black 0%, transparent 62%);
+    -webkit-mask-image: radial-gradient(circle, black 0%, transparent 62%);
+    animation: starburstSpin 50s linear infinite;
+    opacity: 1; transition: opacity 0.8s ease;
+    pointer-events: none;
+  }
+  .championship-stage[data-mode="live"] .starburst { opacity: 0; }
+  @keyframes starburstSpin { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .championship-stage .starburst { animation: none !important; } }
+  html[data-reduce-motion="true"] .championship-stage .starburst { animation: none !important; }
+
   .championship-stage .beam-field {
     position: absolute;
     inset: 0;
@@ -681,14 +778,14 @@
     left: 50%;
     width: 120px;
     height: 220%;
-    background: linear-gradient(to top, rgba(244,196,48,0.32) 0%, rgba(244,196,48,0.10) 35%, rgba(244,196,48,0) 75%);
+    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-a, #f4c430) 32%, transparent) 0%, color-mix(in srgb, var(--champ-color-a, #f4c430) 10%, transparent) 35%, transparent 75%);
     clip-path: polygon(46% 100%, 54% 100%, 100% 0%, 0% 0%);
     mix-blend-mode: screen;
     transform-origin: 50% 100%;
     animation: championshipSweep 7s ease-in-out infinite;
   }
   .championship-stage .beam.b2 {
-    background: linear-gradient(to top, rgba(224,87,74,0.26) 0%, rgba(224,87,74,0.08) 35%, rgba(224,87,74,0) 75%);
+    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-b, #e0574a) 26%, transparent) 0%, color-mix(in srgb, var(--champ-color-b, #e0574a) 8%, transparent) 35%, transparent 75%);
     animation-duration: 9s; animation-delay: -2.3s;
   }
   .championship-stage .beam.b3 {
@@ -696,7 +793,7 @@
     animation-duration: 11s; animation-delay: -5.1s;
   }
   .championship-stage .beam.b4 {
-    background: linear-gradient(to top, rgba(244,196,48,0.20) 0%, rgba(244,196,48,0.06) 35%, rgba(244,196,48,0) 75%);
+    background: linear-gradient(to top, color-mix(in srgb, var(--champ-color-a, #f4c430) 20%, transparent) 0%, color-mix(in srgb, var(--champ-color-a, #f4c430) 6%, transparent) 35%, transparent 75%);
     animation-duration: 8s; animation-delay: -1s;
   }
   @keyframes championshipSweep {
@@ -707,16 +804,60 @@
   .championship-stage .hype-copy { position: relative; z-index: 2; }
   .championship-stage .hype-eyebrow {
     font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
-    color: #f4c430; font-weight: 700; margin-bottom: 8px; opacity: 0.9;
+    color: #f4c430; font-weight: 700; margin-bottom: 6px; opacity: 0.9;
   }
   .championship-stage[data-mode="live"] .hype-eyebrow::after { content: ' \2014 LIVE'; color: #ff6a5a; }
   .championship-stage .hype-title {
-    font-family: var(--font-display); font-weight: 400; font-size: 34px;
-    letter-spacing: 0.01em; margin: 0 0 8px; color: #fff;
+    font-family: var(--font-display); font-weight: 400; font-size: 24px;
+    letter-spacing: 0.01em; margin: 0 0 12px; color: #fff;
     text-shadow: 0 0 30px rgba(244,196,48,0.3);
   }
-  .championship-stage .hype-countdown { font-size: 13px; color: #9aa3af; font-weight: 600; }
-  .championship-stage .hype-countdown span { color: #f4c430; font-variant-numeric: tabular-nums; font-weight: 800; }
+
+  /* Team flanks -- logo/icon + name either side of the countdown,
+     colored by the team's own color. .hype-team[hidden] lets
+     renderHypeTeam in app.js hide a side cleanly (e.g. no resolvable
+     championship matchup yet) without leaving a lopsided gap. */
+  .championship-stage .hype-matchup {
+    display: flex; align-items: center; justify-content: center; gap: 28px; position: relative; z-index: 2;
+  }
+  .championship-stage .hype-team { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 84px; }
+  .championship-stage .hype-team[hidden] { display: none; }
+  .championship-stage .hype-team-icon { font-size: 28px; line-height: 1; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5)); }
+  .championship-stage .hype-team-icon .team-icon-img { width: 38px; height: 38px; object-fit: cover; border-radius: 8px; display: block; }
+  .championship-stage .hype-team-name {
+    font-family: var(--font-display); font-size: 13px; font-weight: 400; color: #fff;
+    text-align: center; max-width: 100px; line-height: 1.2;
+  }
+  .championship-stage .hype-team-home .hype-team-name { color: var(--champ-color-a, #f4c430); }
+  .championship-stage .hype-team-away .hype-team-name { color: var(--champ-color-b, #e0574a); }
+  .championship-stage .hype-team-score {
+    font-variant-numeric: tabular-nums; font-weight: 800; font-size: 15px; color: #fff; margin-top: 2px;
+  }
+  .championship-stage .hype-center { display: flex; flex-direction: column; align-items: center; min-width: 170px; }
+
+  /* Big countdown -- the new centerpiece, replacing the old one-line
+     "Kickoff in 2d 14h 37m" text. Segmented into labeled blocks the way a
+     real broadcast countdown graphic would be, each digit glowing gold.
+     The fallback line (no resolvable kickoff time, e.g. browsing an
+     older week under the debug toggle) and the live note share the same
+     slot so only one is ever visible at a time. */
+  .championship-stage .hype-countdown-big { display: flex; gap: 14px; justify-content: center; position: relative; z-index: 2; }
+  .championship-stage .hype-countdown-big[hidden] { display: none; }
+  .championship-stage .cd-block { display: flex; flex-direction: column; align-items: center; }
+  .championship-stage .cd-block[hidden] { display: none; }
+  .championship-stage .cd-digits {
+    font-family: var(--font-display); font-variant-numeric: tabular-nums; font-weight: 700;
+    font-size: 36px; line-height: 1; color: #fff;
+    text-shadow: 0 0 18px rgba(244,196,48,0.65), 0 0 40px rgba(244,196,48,0.25);
+  }
+  .championship-stage .cd-label { font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: #9aa3af; margin-top: 4px; }
+  .championship-stage .cd-sep { font-size: 36px; line-height: 1; color: rgba(244,196,48,0.5); align-self: flex-start; margin-top: -2px; }
+  .championship-stage .cd-sep[hidden] { display: none; }
+  .championship-stage .hype-countdown-fallback { font-size: 13px; color: #9aa3af; font-weight: 600; position: relative; z-index: 2; }
+  .championship-stage .hype-live-note {
+    font-family: var(--font-display); font-size: 18px; color: #ff6a5a;
+    text-shadow: 0 0 18px rgba(255,106,90,0.5); position: relative; z-index: 2;
+  }
 
   /* Reduced motion (OS-level or the site preference) -- keeps the hero and
      its text, drops the sweeping beams entirely rather than just slowing
@@ -1189,6 +1330,16 @@
      layers or animation, just two blurred radial gradients in the top
      corners, which is enough to read as "cold" at a glance. -->
 <div id="frostVignette"></div>
+<!-- Championship Week site-wide spotlights -- always in the DOM, gated
+     purely by CSS via html[data-championship-active="true"] (see the
+     #champSpotlights rule above), which app.js sets alongside the hero
+     banner's own visibility. Tinted by --champ-color-a/-b, the same
+     custom properties the banner itself reads. -->
+<div id="champSpotlights">
+  <div class="champ-beam cb1"></div>
+  <div class="champ-beam cb2"></div>
+  <div class="champ-beam cb3"></div>
+</div>
 <div id="leaderGradient"><div class="leader-gradient-layer" id="leaderGradientLayerA"></div><div class="leader-gradient-layer" id="leaderGradientLayerB"></div></div>
 <div id="wrap">
   <div class="title-row">
@@ -1207,10 +1358,14 @@
   <!-- Week 17 hero banner -- hidden entirely outside championship week
        (real or debug-forced, see updateChampionshipStage in app.js).
        data-mode="pregame"/"live" (set by the same function) switches the
-       spotlight sweep on/off via CSS -- the beam markup itself always
-       stays in the DOM so there's no animation restart flicker when a
-       poll flips the mode. -->
+       spotlight sweep/starburst on/off via CSS -- the beam/starburst
+       markup itself always stays in the DOM so there's no animation
+       restart flicker when a poll flips the mode. Team logo/name/score
+       elements (renderHypeTeam in app.js) and the big countdown digits
+       (renderHypeCountdownBig) start empty/hidden and get filled in on
+       the first render -- never left showing stale placeholder content. -->
   <div id="championshipStage" class="championship-stage" hidden>
+    <div class="starburst"></div>
     <div class="beam-field">
       <div class="beam b1"></div>
       <div class="beam b2"></div>
@@ -1220,7 +1375,29 @@
     <div class="hype-copy">
       <div class="hype-eyebrow">Week 17</div>
       <h1 class="hype-title">Championship Week</h1>
-      <div class="hype-countdown" id="hypeCountdown" hidden></div>
+      <div class="hype-matchup">
+        <div class="hype-team hype-team-home" id="hypeTeamHome" hidden>
+          <span class="hype-team-icon" id="hypeTeamHomeIcon"></span>
+          <span class="hype-team-name" id="hypeTeamHomeName"></span>
+          <span class="hype-team-score" id="hypeTeamHomeScore" hidden></span>
+        </div>
+        <div class="hype-center">
+          <div class="hype-countdown-big" id="hypeCountdown" hidden>
+            <div class="cd-block" id="hcbDaysBlock"><div class="cd-digits" id="hcbDays">00</div><div class="cd-label">Days</div></div>
+            <div class="cd-sep" id="hcbDaysSep">:</div>
+            <div class="cd-block"><div class="cd-digits" id="hcbHours">00</div><div class="cd-label">Hrs</div></div>
+            <div class="cd-sep">:</div>
+            <div class="cd-block"><div class="cd-digits" id="hcbMinutes">00</div><div class="cd-label">Min</div></div>
+          </div>
+          <div class="hype-countdown-fallback" id="hypeCountdownFallback" hidden>Before kickoff</div>
+          <div class="hype-live-note" id="hypeLiveNote" hidden>Championship is underway</div>
+        </div>
+        <div class="hype-team hype-team-away" id="hypeTeamAway" hidden>
+          <span class="hype-team-icon" id="hypeTeamAwayIcon"></span>
+          <span class="hype-team-name" id="hypeTeamAwayName"></span>
+          <span class="hype-team-score" id="hypeTeamAwayScore" hidden></span>
+        </div>
+      </div>
     </div>
   </div>
 
