@@ -251,6 +251,37 @@
     </label>
   </div>
 
+  <div class="setting-group setting-group-debug">
+    <div class="setting-title">Night-game sky</div>
+    <div class="setting-desc">During primetime games (Thursday / Sunday / Monday night -- any game in progress that kicked off at 6pm Eastern or later) the site gets a night sky: twinkling stars that drift slightly as you scroll, a moon showing the real lunar phase, a stadium-light haze along the bottom edge, rare shooting stars, and a brighter glowing shooting star in the team's color whenever a team takes the lead in a live matchup. Dark mode gets the full night sky; light mode just gets a dusk-tinted haze. It's deliberately absent the rest of the week. Seasonal themes dim it (Thanksgiving/Christmas/Halloween), replace the stars (Cold Snap), or share the stage with it (Championship Week). This forces it on regardless of the real schedule.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="debugNightSky">
+      <span>
+        <div class="option-label">Force night-game sky (default: off)</div>
+        <div class="option-example">To preview a lead-change star on demand, open the browser console on the main page and run fireSkyLeadStar('#3a67df', 1) (1 = crosses left to right, -1 = right to left)</div>
+      </span>
+    </label>
+  </div>
+
+  <div class="setting-group setting-group-debug">
+    <div class="setting-title">Holiday comet</div>
+    <div class="setting-desc">In the week before Halloween, Thanksgiving, Christmas, or Championship Week, a small still comet with that event's symbol sits near the top of the main page (scrolls away with the page, like the moon). It shows on any night of the week, not just primetime. This forces one on regardless of the real schedule.</div>
+
+    <label class="option-row">
+      <span>
+        <div class="option-label">Force comet (default: none)</div>
+        <select id="debugComet" style="margin-top:6px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--fg);font-size:13px;">
+          <option value="none">None (follow the real schedule)</option>
+          <option value="halloween">Halloween is next week</option>
+          <option value="thanksgiving">Thanksgiving is next week</option>
+          <option value="christmas">Christmas is next week</option>
+          <option value="championship">Championship Week is next week</option>
+        </select>
+      </span>
+    </label>
+  </div>
+
 </div>
 
 <script>
@@ -375,6 +406,20 @@
   coldSnapPostDebugCheckbox.checked = localStorage.getItem(COLDSNAP_POST_DEBUG_KEY) === 'true';
   coldSnapPostDebugCheckbox.addEventListener('change', () => {
     localStorage.setItem(COLDSNAP_POST_DEBUG_KEY, coldSnapPostDebugCheckbox.checked ? 'true' : 'false');
+  });
+
+  const NIGHT_SKY_DEBUG_KEY = 'winProbDebugNightSky';
+  const nightSkyDebugCheckbox = document.getElementById('debugNightSky');
+  nightSkyDebugCheckbox.checked = localStorage.getItem(NIGHT_SKY_DEBUG_KEY) === 'true';
+  nightSkyDebugCheckbox.addEventListener('change', () => {
+    localStorage.setItem(NIGHT_SKY_DEBUG_KEY, nightSkyDebugCheckbox.checked ? 'true' : 'false');
+  });
+
+  const COMET_DEBUG_KEY = 'winProbDebugComet';
+  const cometDebugSelect = document.getElementById('debugComet');
+  cometDebugSelect.value = localStorage.getItem(COMET_DEBUG_KEY) || 'none';
+  cometDebugSelect.addEventListener('change', () => {
+    localStorage.setItem(COMET_DEBUG_KEY, cometDebugSelect.value);
   });
 </script>
 </body>
