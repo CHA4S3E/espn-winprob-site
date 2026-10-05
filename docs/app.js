@@ -1334,6 +1334,11 @@ window.fireSkyLeadStar = fireSkyLeadStar;
 let leadSideByMatchup = {};
 let leadTrackKey = null;
 function trackLeadChanges(leagueId, year, week, byMatchup, teamInfo) {
+  // Tabbed-out polls are skipped on purpose: leadSideByMatchup keeps the
+  // side from the last time you were looking, so the refresh fired by the
+  // visibilitychange handler below compares against that and the star plays
+  // when you come back (net change only -- A->B->A while away fires nothing).
+  if (document.hidden) return;
   const key = `${leagueId}|${year}|${week}`;
   const fresh = key !== leadTrackKey;
   if (fresh) { leadTrackKey = key; leadSideByMatchup = {}; }
@@ -5175,6 +5180,12 @@ async function init() {
     const advanced = await checkForLatestWeekAdvance();
     if (!advanced) loadMatchups({ preserveCharts: true });
   }, 30000);
+  // Returning to the tab: background timers are throttled, so refresh now
+  // instead of waiting up to 30s -- any lead that changed while away then
+  // fires its star (see trackLeadChanges).
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadMatchups({ preserveCharts: true });
+  });
   setInterval(tickKickoffCountdown, 1000); // display-only tick, no network -- see updateKickoffCountdown for when the target itself gets (re)computed
 }
 
