@@ -1,4 +1,4 @@
-const { url, anonKey } = window.SUPABASE_CONFIG;
+xconst { url, anonKey } = window.SUPABASE_CONFIG;
 const sb = window.supabase.createClient(url, anonKey);
 
 const leagueSelect = document.getElementById('leagueSelect');
@@ -1113,8 +1113,19 @@ function seedSeasonalParticles() {
   }
 }
 
+// Perf (this and kcTick/skyTick): when there's nothing to draw the loop
+// clears its canvas once, then just re-checks a few times a second instead
+// of clearing a full-screen canvas 60x/sec forever.
+const IDLE_RECHECK_MS = 400;
+let seasonalCleared = false;
 function seasonalTick(t) {
   if (seasonalCtx) {
+    if (currentSeasonalTheme === 'none' || prefersReducedMotion()) {
+      if (!seasonalCleared) { seasonalCtx.clearRect(0, 0, seasonalCanvas.width, seasonalCanvas.height); seasonalCleared = true; }
+      setTimeout(() => requestAnimationFrame(seasonalTick), IDLE_RECHECK_MS);
+      return;
+    }
+    seasonalCleared = false;
     seasonalCtx.clearRect(0, 0, seasonalCanvas.width, seasonalCanvas.height);
     if (currentSeasonalTheme !== 'none' && !prefersReducedMotion()) {
       for (const p of seasonalParticles) {
@@ -1152,8 +1163,15 @@ function seedKcParticles() {
   }
 }
 
+let kcCleared = false;
 function kcTick(t) {
   if (kcCtx) {
+    if (kcHintTheme === 'none' || prefersReducedMotion()) {
+      if (!kcCleared) { kcCtx.clearRect(0, 0, kcCanvas.width, kcCanvas.height); kcCleared = true; }
+      setTimeout(() => requestAnimationFrame(kcTick), IDLE_RECHECK_MS);
+      return;
+    }
+    kcCleared = false;
     kcCtx.clearRect(0, 0, kcCanvas.width, kcCanvas.height);
     if (kcHintTheme !== 'none' && !prefersReducedMotion()) {
       for (const p of kcParticles) {
@@ -1323,6 +1341,7 @@ function drawSkyLead(c, s) {
 function fireSkyLeadStar(color, dir) {
   if (!skyCanvas || !skyActive || prefersReducedMotion()) return;
   skyLeads.push(makeSkyLead(skyCanvas.width, skyCanvas.height, color, dir));
+  if (skyIdleTimer) { clearTimeout(skyIdleTimer); skyIdleTimer = null; requestAnimationFrame(skyTick); }
 }
 window.fireSkyLeadStar = fireSkyLeadStar;
 
@@ -1363,10 +1382,19 @@ function trackLeadChanges(leagueId, year, week, byMatchup, teamInfo) {
   }
 }
 
+let skyCleared = false, skyIdleTimer = null;
 function skyTick(t) {
+  skyIdleTimer = null;
   if (skyCtx) {
-    skyCtx.clearRect(0, 0, skyCanvas.width, skyCanvas.height);
     const now = performance.now();
+    if (!(skyActive || now < skyHideAt || skyLeads.length)) {
+      if (!skyCleared) { skyCtx.clearRect(0, 0, skyCanvas.width, skyCanvas.height); skyCleared = true; }
+      // fireSkyLeadStar wakes this early so a lead star never waits on the recheck
+      skyIdleTimer = setTimeout(() => requestAnimationFrame(skyTick), IDLE_RECHECK_MS);
+      return;
+    }
+    skyCleared = false;
+    skyCtx.clearRect(0, 0, skyCanvas.width, skyCanvas.height);
     if (skyActive || now < skyHideAt || skyLeads.length) {
       const dark = theme === 'dark';
       const reduced = prefersReducedMotion();
@@ -1659,20 +1687,22 @@ async function checkForLatestWeekAdvance() {
   const leagueId = leagueSelect.value;
   if (!leagueId) return false;
 
-  let data;
+  // Perf: this used to download EVERY snapshot's (year, week) for the whole
+  // league on every poll just to find the max. Same answer from one row:
+  // newest year, then newest week within it.
+  let latest;
   try {
-    data = await fetchAllRows((from, to) =>
-      sb.from('snapshots').select('year, week').eq('league_id', leagueId).order('id').range(from, to)
-    );
+    const { data, error } = await sb.from('snapshots').select('year, week')
+      .eq('league_id', leagueId)
+      .order('year', { ascending: false }).order('week', { ascending: false }).limit(1);
+    if (error) throw error;
+    latest = data && data[0];
   } catch {
     return false; // transient error -- try again next cycle
   }
-  if (!data.length) return false;
-
-  const years = [...new Set(data.map((d) => d.year))].sort((a, b) => b - a);
-  const latestYear = years[0];
-  const weeksForLatestYear = [...new Set(data.filter((d) => d.year === latestYear).map((d) => d.week))].sort((a, b) => b - a);
-  const latestWeek = weeksForLatestYear[0];
+  if (!latest) return false;
+  const latestYear = latest.year;
+  const latestWeek = latest.week;
 
   const currentYear = Number(yearSelect.value);
   const currentWeek = Number(weekSelect.value);
@@ -1697,14 +1727,59 @@ function intensity(y) {
   return Math.min(Math.abs(y - 50) / 50, 1);
 }
 
+// Perf: snapshot rows for a league/year/week are append-only (the poller only
+// inserts), so after the first full download each poll asks only for rows
+// newer than the last one we hold, and merges. Switching back to a week you
+// already loaded is then near-instant too. Every FULL_REFETCH_MS the cache
+// entry is rebuilt from scratch so a manual cleanup (rows deleted in
+// Supabase) can't leave ghosts on screen forever. Bounded LRU so a long
+// session of week-hopping doesn't hold the whole season in memory.
+const SNAPSHOT_CACHE_MAX = 8;
+const FULL_REFETCH_MS = 10 * 60 * 1000;
+const snapshotCache = new Map(); // key -> { rows, maxId, fullAt }
+const TEAMS_CACHE_MS = 5 * 60 * 1000; // team names/colors change on settings.html, not mid-game
+const teamsCache = new Map(); // leagueId -> { at, data }
+
+async function fetchSnapshotsCached(leagueId, year, week) {
+  const key = `${leagueId}|${year}|${week}`;
+  const now = Date.now();
+  let entry = snapshotCache.get(key);
+  if (entry && now - entry.fullAt > FULL_REFETCH_MS) entry = null;
+  const base = () => sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week);
+  let rows;
+  if (!entry) {
+    rows = await fetchAllRows((from, to) => base().order('ts').range(from, to));
+    entry = { rows, maxId: 0, fullAt: now };
+  } else {
+    const fresh = await fetchAllRows((from, to) => base().gt('id', entry.maxId).order('id').range(from, to));
+    if (fresh.length) {
+      const lastTs = entry.rows.length ? entry.rows[entry.rows.length - 1].ts : null;
+      const outOfOrder = lastTs && fresh.some((r) => r.ts < lastTs);
+      entry = { rows: entry.rows.concat(fresh), maxId: entry.maxId, fullAt: entry.fullAt };
+      if (outOfOrder) entry.rows.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+    }
+  }
+  for (const r of entry.rows) if (r.id > entry.maxId) entry.maxId = r.id;
+  snapshotCache.delete(key); // re-insert = most recently used
+  snapshotCache.set(key, entry);
+  while (snapshotCache.size > SNAPSHOT_CACHE_MAX) snapshotCache.delete(snapshotCache.keys().next().value);
+  return entry.rows;
+}
+
+async function fetchTeamsCached(leagueId) {
+  const hit = teamsCache.get(leagueId);
+  if (hit && Date.now() - hit.at < TEAMS_CACHE_MS) return hit.data;
+  const { data, error } = await sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId);
+  if (error) throw error;
+  teamsCache.set(leagueId, { at: Date.now(), data });
+  return data;
+}
+
 async function fetchMatchupData(leagueId, year, week) {
-  const [snaps, { data: teams, error: teamErr }] = await Promise.all([
-    fetchAllRows((from, to) =>
-      sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').range(from, to)
-    ),
-    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId),
+  const [snaps, teams] = await Promise.all([
+    fetchSnapshotsCached(leagueId, year, week),
+    fetchTeamsCached(leagueId),
   ]);
-  if (teamErr) throw teamErr;
 
   const rawEntries = (teams || []).map((t) => {
     const settings = t.team_settings || {};
@@ -5176,16 +5251,29 @@ async function init() {
   // position. Checks for a newly-arrived week first (see
   // checkForLatestWeekAdvance) -- if that already performed a full
   // reload, skip the redundant preserveCharts refresh on this same tick.
-  refreshTimer = setInterval(async () => {
-    const advanced = await checkForLatestWeekAdvance();
-    if (!advanced) loadMatchups({ preserveCharts: true });
-  }, 30000);
-  // Returning to the tab: background timers are throttled, so refresh now
-  // instead of waiting up to 30s -- any lead that changed while away then
-  // fires its star (see trackLeadChanges).
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) loadMatchups({ preserveCharts: true });
-  });
+  // Perf: no polling while the tab is hidden (nobody's looking, and the
+  // browser throttles background timers anyway). Coming back refreshes
+  // IMMEDIATELY -- not on the next 30s tick -- and any lead that changed
+  // while away then fires its star (see trackLeadChanges). `pollInFlight`
+  // stops a timer tick, a tab-return and a focus event from stacking three
+  // identical refreshes; if one arrives mid-refresh it's queued once.
+  let pollInFlight = false, pollQueued = false;
+  async function pollOnce() {
+    if (pollInFlight) { pollQueued = true; return; }
+    pollInFlight = true;
+    try {
+      const advanced = await checkForLatestWeekAdvance();
+      if (!advanced) await loadMatchups({ preserveCharts: true });
+    } finally {
+      pollInFlight = false;
+      if (pollQueued) { pollQueued = false; if (!document.hidden) pollOnce(); }
+    }
+  }
+  refreshTimer = setInterval(() => { if (!document.hidden) pollOnce(); }, 30000);
+  const wake = () => { if (!document.hidden) pollOnce(); };
+  document.addEventListener('visibilitychange', wake);
+  window.addEventListener('focus', wake);
+  window.addEventListener('pageshow', wake); // back/forward-cache restores
   setInterval(tickKickoffCountdown, 1000); // display-only tick, no network -- see updateKickoffCountdown for when the target itself gets (re)computed
 }
 
