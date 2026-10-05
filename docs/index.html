@@ -313,6 +313,87 @@
   @media (prefers-reduced-motion: reduce) { .champ-beam { animation: none !important; opacity: 0 !important; } }
   html[data-reduce-motion="true"] .champ-beam { animation: none !important; opacity: 0 !important; }
 
+  /* ---- Night-game sky -- see the NIGHT-GAME SKY section in app.js. Only
+     exists during primetime games (html[data-night-sky="true"], set by
+     updateSky); every layer below is invisible otherwise, so the site
+     looks completely ordinary the rest of the week. The person's
+     light/dark choice is never changed: dark mode gets the night sky
+     (stars, moon, haze), light mode only gets a dusk-tinted haze.
+
+     Two kinds of layer. ANCHORED TO THE TOP OF THE PAGE (position:
+     absolute): the moon, the sun glow, and the holiday comet -- they
+     scroll away with the page like real sky objects instead of
+     following the screen. FIXED TO THE VIEWPORT: the star canvas (which
+     drifts very slightly on scroll) and the bottom haze. All of it sits
+     at z-index 0 behind #wrap, never over the leader gradient or cards. ---- */
+  #skyCanvas {
+    position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none;
+    opacity: 0; transition: opacity 1.2s ease;
+  }
+  html[data-night-sky="true"] #skyCanvas { opacity: 1; }
+  .sky-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; transition: opacity 1.2s ease; }
+
+  /* Moon -- dark mode only. Drawn on a canvas (drawSkyMoon in app.js) so
+     the REAL lunar phase can be rendered; the halo's strength scales with
+     how lit it is (--moon-glow, set by that same function). */
+  #moon {
+    position: absolute; top: 7vh; right: 9vw; width: 64px; height: 64px; border-radius: 50%; z-index: 0; pointer-events: none;
+    --moon-glow: 0.5;
+    box-shadow: 0 0 calc(30px * var(--moon-glow)) calc(6px * var(--moon-glow)) rgba(220, 228, 255, calc(0.4 * var(--moon-glow))),
+                0 0 calc(100px * var(--moon-glow)) calc(30px * var(--moon-glow)) rgba(170, 190, 255, calc(0.18 * var(--moon-glow)));
+    opacity: 0; transition: opacity 1.2s ease;
+  }
+  html[data-night-sky="true"][data-theme="dark"] #moon { opacity: 0.95; }
+
+  /* Light mode's only sky: a faint warm wash from the upper left, anchored
+     to the top of the page (no disc, no stars -- they'd vanish on white). */
+  #sunGlow {
+    position: absolute; top: 0; left: 0; right: 0; bottom: auto; inset: 0 0 auto 0; height: 70vh; opacity: 0;
+    background: radial-gradient(ellipse 60% 60% at 10% 0%, rgba(255, 214, 120, 0.42), transparent 70%);
+  }
+  html[data-night-sky="true"][data-theme="light"] #sunGlow { opacity: 0.2; }
+
+  /* Stadium-light haze along the bottom edge ("under the lights"). Dark:
+     cool white-blue glow. Light: soft dusk tint (peach/indigo) so it still
+     reads as evening without leaving light mode. Suppressed during
+     Halloween and Cold Snap -- their own fog/frost already owns the bottom
+     edge and a third glow there would look muddy. */
+  #stadiumHaze { opacity: 0; background: linear-gradient(to top, rgba(190, 210, 255, 0.22), transparent 38%); }
+  html[data-night-sky="true"] #stadiumHaze { opacity: 1; }
+  html[data-night-sky="true"][data-seasonal-theme="halloween"] #stadiumHaze,
+  html[data-night-sky="true"][data-seasonal-theme="coldsnap-pre"] #stadiumHaze,
+  html[data-night-sky="true"][data-seasonal-theme="coldsnap-post"] #stadiumHaze { opacity: 0; }
+  html[data-theme="light"] #stadiumHaze { background: linear-gradient(to top, rgba(120, 110, 190, 0.16), rgba(255, 170, 130, 0.06) 25%, transparent 42%); }
+  #stadiumHaze::before, #stadiumHaze::after {
+    content: ''; position: absolute; bottom: 0; width: 38vw; height: 30vh;
+    background: radial-gradient(ellipse at bottom, rgba(210, 225, 255, 0.28), transparent 70%);
+  }
+  #stadiumHaze::before { left: 0; } #stadiumHaze::after { right: 0; }
+  html[data-theme="light"] #stadiumHaze::before, html[data-theme="light"] #stadiumHaze::after {
+    background: radial-gradient(ellipse at bottom, rgba(150, 130, 210, 0.18), transparent 70%);
+  }
+
+  /* Holiday comet -- a small, STILL comet with the upcoming event's symbol,
+     parked near the top of the page in the week before the event. Anchored
+     to the page (absolute) like the moon, so it scrolls away with it. It
+     does not move. No disc behind the symbol: the glow is the emoji's own,
+     via a colored drop-shadow that follows its shape. Visible in both
+     themes and on any night of the week -- it's a signpost, not ambience. */
+  #comet {
+    position: absolute; top: 6vh; left: 11vw; width: 0; height: 0; z-index: 0; pointer-events: none;
+    --comet-color: #ff9a3c; opacity: 0; transition: opacity 1s ease;
+  }
+  #comet.on { opacity: 1; }
+  #cometTail {
+    position: absolute; right: 0; top: -1.5px; width: 84px; height: 3px; border-radius: 3px;
+    background: linear-gradient(to left, var(--comet-color), transparent);
+    transform-origin: right center; transform: rotate(14deg); opacity: 0.85;
+  }
+  #cometSymbol {
+    position: absolute; left: -9px; top: -11px; font-size: 16px; line-height: 22px;
+    filter: drop-shadow(0 0 5px var(--comet-color)) drop-shadow(0 0 12px var(--comet-color));
+  }
+
   /* Canvases default to display:inline, which reserves a few pixels of
      invisible "descender" space below them (same as an inline image) --
      any small reflow nearby (like percentage text changing width on hover)
@@ -1358,6 +1439,15 @@
      #champSpotlights rule above), which app.js sets alongside the hero
      banner's own visibility. Tinted by --champ-color-a/-b, the same
      custom properties the banner itself reads. -->
+<!-- Night-game sky -- always in the DOM, gated purely by CSS via
+     html[data-night-sky="true"] (see the "Night-game sky" CSS block above),
+     which app.js's updateSky sets from the real NFL schedule. The comet is
+     separate from that gate: it follows the week-before-an-event rule. -->
+<div id="sunGlow" class="sky-layer"></div>
+<div id="stadiumHaze" class="sky-layer"></div>
+<canvas id="skyCanvas"></canvas>
+<div id="moon"><canvas id="moonCanvas" width="64" height="64"></canvas></div>
+<div id="comet"><span id="cometTail"></span><span id="cometSymbol"></span></div>
 <div id="champSpotlights">
   <div class="champ-beam cb1"></div>
   <div class="champ-beam cb2"></div>
