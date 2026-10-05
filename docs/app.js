@@ -1166,6 +1166,296 @@ function kcTick(t) {
 }
 requestAnimationFrame(kcTick);
 
+// ============================== NIGHT-GAME SKY ==============================
+// A night sky that only exists during PRIMETIME games -- Thursday / Sunday /
+// Monday night, whenever an in-progress game kicked off at 6pm Eastern or
+// later (see isPrimetimeNow). There is deliberately no afternoon / "calm"
+// version: the sky being absent the rest of the week is what makes it feel
+// special when it shows up. Everything below is part of that one look:
+//   - stars (dark mode only) that drift very slightly on scroll
+//   - a moon showing the REAL lunar phase, anchored to the top of the page
+//   - a stadium-light haze along the bottom edge (see index.html's CSS)
+//   - rare random shooting stars (dark mode, normal weeks only)
+//   - a brighter, glowing shooting star in the team's color whenever a
+//     team TAKES the lead in a live matchup (both themes)
+// The person's light/dark choice is never changed -- dark gets the night
+// sky, light gets only a dusk-tinted haze (stars can't show on white).
+//
+// Separate from the HOLIDAY COMET below, which is a once-a-week signpost
+// and shows whether or not it's a primetime night.
+let debugNightSky = localStorage.getItem('winProbDebugNightSky') === 'true'; // set on preferences.html
+let debugComet = localStorage.getItem('winProbDebugComet') || 'none'; // set on preferences.html
+let skyActive = false;
+let skyHideAt = 0; // keeps drawing briefly after deactivation so the CSS fade-out isn't cut short by an empty canvas
+
+const skyCanvas = document.getElementById('skyCanvas');
+const skyCtx = skyCanvas ? skyCanvas.getContext('2d') : null;
+let skyStars = [];
+let skyLeads = [];
+let skyShooting = null;
+let lastSkyShoot = performance.now();
+const SKY_STAR_COUNT = 85;
+const SKY_RANDOM_SHOOT_EVERY_MS = 28000;
+
+function resizeSkyCanvas() {
+  if (!skyCanvas) return;
+  skyCanvas.width = window.innerWidth;
+  skyCanvas.height = window.innerHeight;
+  seedSkyStars();
+}
+
+function seedSkyStars() {
+  if (!skyCanvas) return;
+  skyStars = [];
+  for (let i = 0; i < SKY_STAR_COUNT; i++) {
+    skyStars.push({
+      x: seasonalRand(0, skyCanvas.width),
+      // Denser toward the top, thinning toward the horizon.
+      y: Math.pow(Math.random(), 1.6) * skyCanvas.height,
+      r: seasonalRand(0.5, 1.5), base: seasonalRand(0.3, 0.9),
+      phase: seasonalRand(0, Math.PI * 2), speed: seasonalRand(0.4, 1.2),
+      big: Math.random() < 0.08,
+      // Scroll-parallax depth: far stars barely move, near ones a little
+      // more. Max shift is ~8% of the scroll distance -- slight, never dizzying.
+      depth: seasonalRand(0.3, 1.6),
+    });
+  }
+}
+window.addEventListener('resize', resizeSkyCanvas);
+resizeSkyCanvas();
+
+// ---- "Is it a primetime game window right now?" ----
+// From the real NFL schedule (fetchWeekEventDates, the same lookup the
+// seasonal themes use), classified in US-Eastern like everything else on
+// this site -- not the viewer's own clock. A game counts as in progress
+// from kickoff until ~3.5 hours later.
+const SKY_PRIMETIME_START_HOUR_ET = 18;
+const SKY_GAME_WINDOW_MS = 3.5 * 60 * 60 * 1000;
+const skyEasternHourFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23' });
+async function isPrimetimeNow(year, week) {
+  const dates = await fetchWeekEventDates(year, week);
+  if (!dates || !dates.length) return false;
+  const now = Date.now();
+  return dates.some((d) => {
+    const hour = Number(skyEasternHourFmt.format(d));
+    return hour >= SKY_PRIMETIME_START_HOUR_ET && now >= d.getTime() && now < d.getTime() + SKY_GAME_WINDOW_MS;
+  });
+}
+
+// ---- Real moon phase (computed from the date) ----
+const SKY_SYNODIC_DAYS = 29.530588853;
+function moonPhaseFor(date) {
+  const knownNewMoon = Date.UTC(2000, 0, 6, 18, 14);
+  const days = (date.getTime() - knownNewMoon) / 86400000;
+  return (((days / SKY_SYNODIC_DAYS) % 1) + 1) % 1; // 0 = new, 0.5 = full
+}
+function drawSkyMoon() {
+  const mc = document.getElementById('moonCanvas');
+  const moonEl = document.getElementById('moon');
+  if (!mc || !moonEl) return;
+  const c = mc.getContext('2d');
+  const p = moonPhaseFor(new Date());
+  const R = 30, cx = 32, cy = 32;
+  c.clearRect(0, 0, 64, 64);
+  // Unlit side keeps a faint earthshine so the dark part is still barely visible.
+  c.fillStyle = 'rgba(60, 68, 92, 0.55)';
+  c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.fill();
+  const k = Math.cos(2 * Math.PI * p); // 1 at new ... -1 at full
+  c.save();
+  c.translate(cx, cy);
+  if (p >= 0.5) c.scale(-1, 1); // waning = lit on the left, so mirror
+  const lit = c.createRadialGradient(-6, -6, 2, 0, 0, R);
+  lit.addColorStop(0, '#fdfdf6'); lit.addColorStop(0.6, '#e6e8ee'); lit.addColorStop(1, '#c4c9d6');
+  c.fillStyle = lit;
+  c.beginPath();
+  c.arc(0, 0, R, -Math.PI / 2, Math.PI / 2, false); // lit limb
+  c.ellipse(0, 0, Math.max(0.01, R * Math.abs(k)), R, 0, Math.PI / 2, -Math.PI / 2, k > 0); // terminator
+  c.closePath(); c.fill();
+  c.restore();
+  const illum = (1 - Math.cos(2 * Math.PI * p)) / 2;
+  moonEl.style.setProperty('--moon-glow', (0.15 + 0.85 * illum).toFixed(2)); // fuller moon, stronger halo
+}
+drawSkyMoon();
+
+// ---- Lead-change shooting star: brighter, glowier, in the team's color ----
+// The home team (left side of the matchup) crosses left-to-right, the away
+// team right-to-left, echoing which side of the win-probability graph each
+// lives on. Drawn additively on dark, normally on light.
+function makeSkyLead(W, H, color, dir) {
+  const speed = seasonalRand(9, 12);
+  return {
+    x: dir === 1 ? -40 : W + 40, y: seasonalRand(H * 0.08, H * 0.38),
+    vx: dir * speed, vy: seasonalRand(2.0, 3.2), life: 0, max: Math.ceil((W + 120) / speed), color,
+  };
+}
+function skyRgba(hex, a) {
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map((ch) => ch + ch).join('') : h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+function drawSkyLead(c, s) {
+  const dark = theme === 'dark';
+  const tailX = s.x - s.vx * 12, tailY = s.y - s.vy * 12;
+  const fade = Math.min(1, (s.max - s.life) / 14);
+  c.save();
+  c.globalCompositeOperation = dark ? 'lighter' : 'source-over';
+  c.lineCap = 'round';
+  let g = c.createLinearGradient(s.x, s.y, tailX, tailY); // soft wide underlay = the glow
+  g.addColorStop(0, skyRgba(s.color, 0.35 * fade)); g.addColorStop(1, skyRgba(s.color, 0));
+  c.strokeStyle = g; c.lineWidth = 12;
+  c.beginPath(); c.moveTo(s.x, s.y); c.lineTo(tailX, tailY); c.stroke();
+  g = c.createLinearGradient(s.x, s.y, tailX, tailY); // bright core trail
+  g.addColorStop(0, skyRgba(s.color, 0.95 * fade)); g.addColorStop(1, skyRgba(s.color, 0));
+  c.strokeStyle = g; c.lineWidth = 3.2;
+  c.beginPath(); c.moveTo(s.x, s.y); c.lineTo(tailX, tailY); c.stroke();
+  const hg = c.createRadialGradient(s.x, s.y, 0, s.x, s.y, 20); // glowing head
+  hg.addColorStop(0, `rgba(255,255,255,${0.95 * fade})`);
+  hg.addColorStop(0.25, skyRgba(s.color, 0.8 * fade));
+  hg.addColorStop(1, skyRgba(s.color, 0));
+  c.fillStyle = hg;
+  c.beginPath(); c.arc(s.x, s.y, 20, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+// Only fires while the night sky is actually up (primetime, or the debug
+// toggle) -- never in the afternoon, same "shooting stars are a night
+// thing" rule as the random ones. Also callable from the console to preview:
+// fireSkyLeadStar('#3a67df', 1).
+function fireSkyLeadStar(color, dir) {
+  if (!skyCanvas || !skyActive || prefersReducedMotion()) return;
+  skyLeads.push(makeSkyLead(skyCanvas.width, skyCanvas.height, color, dir));
+}
+window.fireSkyLeadStar = fireSkyLeadStar;
+
+// Watches each matchup's win-probability LEADER between polls and fires a
+// lead-change star when it flips. The first time a given league/year/week
+// is seen it only records who's ahead (no star -- nothing "changed" yet),
+// and finished matchups never fire. Several flips in one poll are staggered
+// half a second apart so they read as separate moments.
+let leadSideByMatchup = {};
+let leadTrackKey = null;
+function trackLeadChanges(leagueId, year, week, byMatchup, teamInfo) {
+  const key = `${leagueId}|${year}|${week}`;
+  const fresh = key !== leadTrackKey;
+  if (fresh) { leadTrackKey = key; leadSideByMatchup = {}; }
+  let delay = 0;
+  for (const [matchupId, rows] of Object.entries(byMatchup)) {
+    const homeRow = latestRow(rows, true);
+    const awayRow = latestRow(rows, false);
+    if (!homeRow || !awayRow) continue;
+    const allDone = !!(homeRow.all_starters_done && awayRow.all_starters_done);
+    const pct = latestPct(rows);
+    const side = pct > 50 ? 'home' : pct < 50 ? 'away' : null; // an exact 50 isn't a lead for anyone
+    const prev = leadSideByMatchup[matchupId];
+    if (side) leadSideByMatchup[matchupId] = side;
+    if (!fresh && !allDone && side && prev && prev !== side) {
+      const team = teamInfo[(side === 'home' ? homeRow : awayRow).team_id];
+      if (team) {
+        const dir = side === 'home' ? 1 : -1;
+        setTimeout(() => fireSkyLeadStar(team.color, dir), delay);
+        delay += 500;
+      }
+    }
+  }
+}
+
+function skyTick(t) {
+  if (skyCtx) {
+    skyCtx.clearRect(0, 0, skyCanvas.width, skyCanvas.height);
+    const now = performance.now();
+    if (skyActive || now < skyHideAt || skyLeads.length) {
+      const dark = theme === 'dark';
+      const reduced = prefersReducedMotion();
+      const seasonal = seasonalCssTheme(currentSeasonalTheme);
+      const championship = document.documentElement.getAttribute('data-championship-active') === 'true';
+      if (dark && seasonal !== 'coldsnap') { // Cold Snap's ice crystals ARE the sky that week -- no stars competing
+        // Dimmed behind Thanksgiving leaves / Christmas snow / Halloween bats;
+        // cut to roughly a third during Championship Week so the spotlights lead.
+        const dim = (seasonal === 'thanksgiving' || seasonal === 'christmas' || seasonal === 'halloween') ? 0.4 : 1;
+        const visibleCount = championship ? Math.ceil(skyStars.length / 3) : skyStars.length;
+        const scrollY = reduced ? 0 : window.scrollY;
+        const H = skyCanvas.height;
+        for (let i = 0; i < visibleCount; i++) {
+          const s = skyStars[i];
+          const tw = reduced ? 1 : 0.65 + 0.35 * Math.sin(t * 0.001 * s.speed + s.phase);
+          const yy = (((s.y - scrollY * 0.05 * s.depth) % H) + H) % H; // slight drift, wrapped so the field never empties
+          skyCtx.globalAlpha = Math.min(1, s.base * tw * dim);
+          skyCtx.fillStyle = '#ffffff';
+          if (s.big) { skyCtx.shadowColor = '#bcd0ff'; skyCtx.shadowBlur = 6; }
+          skyCtx.beginPath(); skyCtx.arc(s.x, yy, s.big ? s.r * 1.5 : s.r, 0, Math.PI * 2); skyCtx.fill();
+          skyCtx.shadowBlur = 0;
+        }
+        skyCtx.globalAlpha = 1;
+      }
+      // Rare random shooting star: dark mode, primetime, and only in a
+      // plain week -- a streak crossing falling leaves/snow/bats is noise.
+      if (skyActive && dark && !reduced && seasonal === 'none' && now - lastSkyShoot > SKY_RANDOM_SHOOT_EVERY_MS) {
+        lastSkyShoot = now;
+        skyShooting = { x: seasonalRand(skyCanvas.width * 0.2, skyCanvas.width * 0.9), y: seasonalRand(0, skyCanvas.height * 0.3), vx: -seasonalRand(7, 10), vy: seasonalRand(3.5, 5), life: 0, max: 55 };
+      }
+      if (skyShooting) {
+        skyShooting.x += skyShooting.vx; skyShooting.y += skyShooting.vy; skyShooting.life++;
+        const a = 1 - skyShooting.life / skyShooting.max;
+        const g = skyCtx.createLinearGradient(skyShooting.x, skyShooting.y, skyShooting.x - skyShooting.vx * 7, skyShooting.y - skyShooting.vy * 7);
+        g.addColorStop(0, `rgba(255,255,255,${a})`); g.addColorStop(1, 'rgba(255,255,255,0)');
+        skyCtx.strokeStyle = g; skyCtx.lineWidth = 1.6; skyCtx.lineCap = 'round';
+        skyCtx.beginPath(); skyCtx.moveTo(skyShooting.x, skyShooting.y); skyCtx.lineTo(skyShooting.x - skyShooting.vx * 7, skyShooting.y - skyShooting.vy * 7); skyCtx.stroke();
+        if (skyShooting.life >= skyShooting.max) skyShooting = null;
+      }
+      for (const s of skyLeads) { s.x += s.vx; s.y += s.vy; s.life++; drawSkyLead(skyCtx, s); }
+      skyLeads = skyLeads.filter((s) => s.life < s.max);
+    }
+  }
+  requestAnimationFrame(skyTick);
+}
+requestAnimationFrame(skyTick);
+
+// ---- Holiday comet: a small, STILL comet with the upcoming event's symbol ----
+// Shown only in the week BEFORE the event, parked near the top of the page
+// (a plain absolutely-positioned element, so it scrolls away with the page
+// like the moon). There's no Cold Snap comet on purpose: the Cold Snap
+// "before Christmas" week is itself the week where Christmas is next week,
+// so the Christmas comet already covers it.
+const SKY_COMETS = {
+  halloween:    { emoji: '\u{1F383}', color: '#ff9a3c', label: 'Halloween is next week' },
+  thanksgiving: { emoji: '\u{1F983}', color: '#e0883a', label: 'Thanksgiving is next week' },
+  christmas:    { emoji: '\u{1F384}', color: '#4fd493', label: 'Christmas is next week' },
+  championship: { emoji: '\u{1F3C6}', color: '#f4c430', label: 'Championship Week is next week' },
+};
+async function cometForWeek(year, week) {
+  if (debugComet !== 'none') return SKY_COMETS[debugComet] || null;
+  // Only meaningful on the latest week -- same convention as the kickoff countdown.
+  if (yearSelect.selectedIndex !== 0 || weekSelect.selectedIndex !== 0) return null;
+  if (week + 1 === CHAMPIONSHIP_WEEK) return SKY_COMETS.championship;
+  const nextTheme = await realSeasonalTheme(year, week + 1); // real schedule, never debug-overridden
+  return SKY_COMETS[nextTheme] || null;
+}
+function renderComet(comet) {
+  const el = document.getElementById('comet');
+  if (!el) return;
+  if (comet) {
+    el.style.setProperty('--comet-color', comet.color);
+    const sym = document.getElementById('cometSymbol');
+    if (sym) sym.textContent = comet.emoji;
+    el.title = comet.label;
+  }
+  el.classList.toggle('on', !!comet);
+}
+
+// Called from loadMatchups on every poll. Cheap: the schedule lookups are
+// cached, and everything visible is driven by one attribute + a couple of
+// element toggles.
+async function updateSky(year, week) {
+  let active = debugNightSky;
+  if (!active && yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0) {
+    try { active = await isPrimetimeNow(year, week); } catch { active = false; }
+  }
+  if (skyActive && !active) skyHideAt = performance.now() + 1500;
+  skyActive = active;
+  document.documentElement.setAttribute('data-night-sky', active ? 'true' : 'false');
+  drawSkyMoon();
+  try { renderComet(await cometForWeek(year, week)); } catch { renderComet(null); }
+}
+
 // ---- Card decor: pumpkins/leaf garland (Thanksgiving) or string lights
 // (Christmas), on ESPN and Needle cards only (same scope as the delta
 // popup and tier ribbon). Shared wire-drawing logic for both the
@@ -4596,6 +4886,8 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   updateLeaderBar(byMatchup, teamInfo, championshipWeekActive, championshipTeams);
   renderByeWeekNote(byMatchup, teamInfo);
   updateKickoffCountdown(byMatchup, year, week); // fire-and-forget -- doesn't block matchup rendering
+  trackLeadChanges(leagueId, year, week, byMatchup, teamInfo);
+  updateSky(year, week); // fire-and-forget, same as the countdown above
 
   // Only reseeds the full-page particle field when the theme actually
   // CHANGES (a league/week/league switch, or a debug toggle flipping) --
