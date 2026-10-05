@@ -1258,7 +1258,7 @@ function drawSkyMoon() {
   const R = 30, cx = 32, cy = 32;
   c.clearRect(0, 0, 64, 64);
   // Unlit side keeps a faint earthshine so the dark part is still barely visible.
-  c.fillStyle = 'rgba(60, 68, 92, 0.55)';
+  c.fillStyle = '#2b3043'; // opaque on purpose -- a translucent disc lets stars show through the moon
   c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.fill();
   const k = Math.cos(2 * Math.PI * p); // 1 at new ... -1 at full
   c.save();
