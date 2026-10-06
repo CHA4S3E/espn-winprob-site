@@ -2252,12 +2252,27 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     // ultimately survived.
     const { episodes } = walkUpsetState(homeRowsSorted.map((r) => r.win_prob));
     if (episodes.length) {
-      const topEpisode = episodes.reduce((best, e) => (!best || e.peakFavoritePct > best.peakFavoritePct ? e : best), null);
+      // Which episode represents this game: if the challenger actually won,
+      // use the biggest episode whose challenger is that winner (the upset
+      // that really happened), not just the biggest-peak one -- a game can
+      // have an earlier, bigger scare by the other side. Otherwise fall
+      // back to the biggest peak overall.
+      const pickBest = (list) => list.reduce((best, e) => (!best || e.peakFavoritePct > best.peakFavoritePct ? e : best), null);
+      const winningSide = isTie ? null : (winner === home ? 'home' : 'away');
+      const completed = winningSide ? episodes.filter((e) => e.upsetSide === winningSide) : [];
+      const topEpisode = completed.length ? pickBest(completed) : pickBest(episodes);
       const favoriteTeam = topEpisode.favoriteSide === 'home' ? home : away;
       const upsetTeam = topEpisode.upsetSide === 'home' ? home : away;
       const upsetHappened = !isTie && winner === upsetTeam;
-      if (!biggestUpset || topEpisode.peakFavoritePct > biggestUpset.favoritePeak) {
+      // Across the league, an upset that actually happened always outranks
+      // a threat that was survived (then a tie), regardless of peak -- else
+      // a bigger survived scare in another matchup would show up labelled
+      // "Upset Threat" even though a real upset occurred this week. Peak
+      // only breaks ties within the same rank.
+      const rank = upsetHappened ? 2 : isTie ? 1 : 0;
+      if (!biggestUpset || rank > biggestUpset.rank || (rank === biggestUpset.rank && topEpisode.peakFavoritePct > biggestUpset.favoritePeak)) {
         biggestUpset = {
+          rank,
           favorite: favoriteTeam,
           upsetTeam,
           favoritePeak: topEpisode.peakFavoritePct,
