@@ -276,6 +276,11 @@ async function upsertTeam(leagueId, espnTeam) {
 // practice, hence checking back this far rather than just one week.
 const STAT_CORRECTION_LOOKBACK_WEEKS = 3;
 
+// Mirror the thresholds in migration 009's guard 3 (max_plausible_expected_drop /
+// min_actual_movement_to_explain_jump) -- keep in sync if those change.
+const HOLD_MAX_EXPECTED_DROP = 3;
+const HOLD_MIN_ACTUAL_MOVEMENT = 1;
+
 // Fetches, computes, and (if changed) writes snapshots for exactly ONE
 // week of one league -- shared by both the normal current-week poll and
 // the stat-correction look-back below, which is the same work against a
@@ -325,6 +330,50 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
       } = teamExpected(side.rosterForCurrentScoringPeriod?.entries, nflStatusMap);
       return { side, isHome, expected, allDone, actual, totalCount, doneCount, remainingFractionSum, lineupFingerprint, hasPendingPregamePlayer };
     });
+
+    // Hold a questionable/Out PREGAME starter's projection drop at its last
+    // plotted value, per side -- instead of letting the DB guard (migration
+    // 009, guard 3) reject the WHOLE matchup. That guard exists so a
+    // temporary "Out" designation on a player whose game hasn't kicked off
+    // doesn't crater the chart, but rejecting both teams' rows meant the
+    // OTHER team's live scoring (and the real win-probability movement it
+    // causes) never got plotted for as long as the one side's projection
+    // sat at zero. Here the affected side keeps its previous expected_score
+    // (so its win probability is computed from the held value, not the
+    // zeroed one) while everything else -- the other team's live points,
+    // this team's own actuals -- flows through normally. Same conditions as
+    // the DB guard: same lineup, the side still has a pregame starter,
+    // expected fell by more than the plausible drop, and actual_score
+    // barely moved (a stat correction or real scoring skips the hold). The
+    // moment that player's own game starts, hasPendingPregamePlayer goes
+    // false and the real number is plotted; a lineup change bypasses it
+    // the same way it bypasses the DB guard.
+    if (plottingOpen) {
+      for (const c of computed) {
+        if (!c.hasPendingPregamePlayer) continue;
+        const teamUuid = teamIdByEspnId[c.side.teamId];
+        if (!teamUuid) continue;
+        const { data: prevRows, error: prevErr } = await supabase
+          .from('snapshots')
+          .select('actual_score, expected_score, all_starters_done, lineup_fingerprint')
+          .eq('team_id', teamUuid).eq('league_id', league.id).eq('year', year).eq('week', week)
+          .order('ts', { ascending: false }).limit(1);
+        if (prevErr) throw prevErr;
+        const prev = prevRows && prevRows[0];
+        if (!prev || prev.all_starters_done) continue;
+        const actualMoved = c.actual - prev.actual_score;
+        if (
+          prev.lineup_fingerprint === c.lineupFingerprint &&
+          prev.expected_score - c.expected > HOLD_MAX_EXPECTED_DROP &&
+          actualMoved >= 0 && actualMoved < HOLD_MIN_ACTUAL_MOVEMENT
+        ) {
+          if (process.env.DEBUG_SNAPSHOTS) {
+            console.log(`[${league.slug}] holding expected ${c.expected.toFixed(2)} -> ${Number(prev.expected_score).toFixed(2)} (pregame starter projection drop)`);
+          }
+          c.expected = Number(prev.expected_score);
+        }
+      }
+    }
 
     const totalProjectedBoth = computed.reduce((sum, c) => sum + c.expected, 0);
     const remainingProjectedBoth = computed.reduce(
