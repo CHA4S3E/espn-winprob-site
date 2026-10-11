@@ -103,6 +103,19 @@
     .team-name { font-size: var(--text-base); }
   }
 
+  #projectedLabel {
+    display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm);
+    color: var(--muted); cursor: pointer; user-select: none;
+  }
+  .proj-tag {
+    display: block; font-size: 10px; font-weight: 400; color: var(--muted);
+    font-style: italic; text-transform: uppercase; letter-spacing: .04em; line-height: 1;
+  }
+  .has-proj .col-pf, .has-proj .col-pa { font-style: italic; }
+  .rank-move { display: block; font-size: 9px; font-weight: 600; line-height: 1; margin-top: 1px; }
+  .rank-up { color: var(--win); }
+  .rank-down { color: var(--loss); }
+
   #emptyState, #loadingState {
     text-align: center; color: var(--muted); font-size: var(--text-base); padding: 40px 20px;
   }
@@ -166,6 +179,7 @@
   <div id="controls">
     <select id="leagueSelect"></select>
     <select id="weekSelect"></select>
+    <label id="projectedLabel"><input type="checkbox" id="projectedToggle" checked> Projected</label>
   </div>
 
   <div id="loadingState">Loading standings…</div>
