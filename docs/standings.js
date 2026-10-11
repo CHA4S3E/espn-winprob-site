@@ -57,7 +57,7 @@ let teamInfo = {}; // team_id -> { name, color }
 // points-based tiebreaker, and the "through week X" historical filter)
 // before being wired up to real data here.
 // ============================================================
-function computeStandings(rows, teamInfoMap, throughWeek) {
+function computeStandings(rows, teamInfoMap, throughWeek, includeProjected = false) {
   const latestByKey = new Map();
   for (const r of rows) {
     if (throughWeek != null && r.week > throughWeek) continue;
@@ -75,14 +75,38 @@ function computeStandings(rows, teamInfoMap, throughWeek) {
 
   const records = new Map();
   function getRecord(teamId) {
-    if (!records.has(teamId)) records.set(teamId, { wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgainst: 0, resultsByWeek: [] });
+    if (!records.has(teamId)) records.set(teamId, { wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgainst: 0, projGames: 0, resultsByWeek: [] });
     return records.get(teamId);
   }
+
+  // Projection only ever applies to the NEWEST week in view -- the one
+  // actually in progress (or queued up next). An older week that's still
+  // marked unfinished is stale data, not a game anyone's waiting on, and
+  // counting it as a "projected" result would quietly corrupt the table.
+  let newestWeek = 0;
+  for (const r of latestByKey.values()) if (r.week > newestWeek) newestWeek = r.week;
 
   for (const sides of matchupGroups.values()) {
     if (sides.length !== 2) continue;
     const [a, b] = sides;
-    if (!a.all_starters_done || !b.all_starters_done) continue;
+    if (!a.all_starters_done || !b.all_starters_done) {
+      if (!includeProjected || a.week !== newestWeek) continue;
+      // Live/upcoming matchup: each side's EXPECTED final score stands in
+      // for points (actual-so-far plus what's still projected to come),
+      // and the side the model currently favors takes the projected win.
+      // Exactly 50/50 falls back to expected score, then a projected tie.
+      const projA = a.expected_score != null ? a.expected_score : a.actual_score;
+      const projB = b.expected_score != null ? b.expected_score : b.actual_score;
+      const recA = getRecord(a.team_id), recB = getRecord(b.team_id);
+      recA.pointsFor += projA; recA.pointsAgainst += projB;
+      recB.pointsFor += projB; recB.pointsAgainst += projA;
+      recA.projGames++; recB.projGames++;
+      const edge = a.win_prob !== b.win_prob ? a.win_prob - b.win_prob : projA - projB;
+      if (edge > 0) { recA.wins++; recB.losses++; }
+      else if (edge < 0) { recB.wins++; recA.losses++; }
+      else { recA.ties++; recB.ties++; }
+      continue;
+    }
     const recA = getRecord(a.team_id), recB = getRecord(b.team_id);
     recA.pointsFor += a.actual_score; recA.pointsAgainst += b.actual_score;
     recB.pointsFor += b.actual_score; recB.pointsAgainst += a.actual_score;
@@ -109,7 +133,7 @@ function computeStandings(rows, teamInfoMap, throughWeek) {
     standings.push({
       teamId, team: teamInfoMap[teamId] || { name: 'Unknown', color: '#888' },
       wins: rec.wins, losses: rec.losses, ties: rec.ties, winPct,
-      pointsFor: rec.pointsFor, pointsAgainst: rec.pointsAgainst, streak,
+      pointsFor: rec.pointsFor, pointsAgainst: rec.pointsAgainst, streak, projGames: rec.projGames,
     });
   }
 
@@ -336,10 +360,14 @@ async function loadLeagues() {
   await loadLeagueData(data[0].id);
 }
 
-async function loadLeagueData(leagueId) {
-  loadingState.style.display = 'block';
-  standingsTable.style.display = 'none';
-  emptyState.style.display = 'none';
+async function loadLeagueData(leagueId, { quiet = false } = {}) {
+  // quiet = the background live refresh: no "Loading" flash, no table
+  // teardown, and whatever week the user picked stays picked.
+  if (!quiet) {
+    loadingState.style.display = 'block';
+    standingsTable.style.display = 'none';
+    emptyState.style.display = 'none';
+  }
 
   // Needs BOTH the final (all_starters_done=true) row of every matchup,
   // for the win-loss table, AND each matchup's earliest poll, for Power
@@ -356,11 +384,11 @@ async function loadLeagueData(leagueId) {
       sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId).then(({ data, error }) => { if (error) throw error; return data; }),
       fetchAllRows((from, to) =>
         sb.from('snapshot_summary')
-          .select('year, week, matchup_id, team_id, actual_score, win_prob, all_starters_done, ts, pregame_win_prob')
+          .select('year, week, matchup_id, team_id, actual_score, expected_score, win_prob, all_starters_done, ts, pregame_win_prob')
           .eq('league_id', leagueId).order('ts').range(from, to)
       ),
     ]);
-  } catch (err) { showError('Could not load standings data', err); return; }
+  } catch (err) { if (quiet) { console.warn('Live standings refresh failed:', err); return; } showError('Could not load standings data', err); return; }
   console.log(`Loaded ${teams.length} teams and ${snapshots.length} total snapshot rows for this league.`);
 
   teamInfo = {};
@@ -376,9 +404,11 @@ async function loadLeagueData(leagueId) {
   allRows = snapshots;
 
   const weeks = [...new Set(allRows.map((r) => r.week))].sort((a, b) => a - b);
+  const keepWeek = weekSelect.value;
   weekSelect.innerHTML =
     `<option value="">Full season</option>` +
     weeks.map((w) => `<option value="${w}">Through week ${w}</option>`).join('');
+  if (quiet && keepWeek && weeks.includes(Number(keepWeek))) weekSelect.value = keepWeek;
 
   render();
 }
@@ -471,7 +501,15 @@ function renderTeamIcon(team) {
 function render() {
   loadingState.style.display = 'none';
   const throughWeek = weekSelect.value ? Number(weekSelect.value) : null;
-  const standings = computeStandings(allRows, teamInfo, throughWeek);
+  const projecting = projectedToggle ? projectedToggle.checked : false;
+  const standings = computeStandings(allRows, teamInfo, throughWeek, projecting);
+  // Rank WITHOUT projections, only to show who a live result would move up
+  // or down -- the arrows next to each rank.
+  const baseRank = new Map();
+  if (projecting && standings.some((s) => s.projGames)) {
+    computeStandings(allRows, teamInfo, throughWeek, false).forEach((s, i) => baseRank.set(s.teamId, i + 1));
+  }
+  const liveMatchups = standings.reduce((n, s) => n + s.projGames, 0) / 2;
 
   if (!standings.length) {
     standingsTable.style.display = 'none';
@@ -481,9 +519,12 @@ function render() {
   emptyState.style.display = 'none';
   standingsTable.style.display = 'block';
 
-  subtext.textContent = throughWeek
+  const projNote = projecting && liveMatchups
+    ? ` -- includes projected results for ${liveMatchups} live/upcoming ${liveMatchups === 1 ? 'matchup' : 'matchups'}`
+    : '';
+  subtext.textContent = (throughWeek
     ? `Standings through week ${throughWeek}`
-    : 'Season record, based on completed weeks';
+    : 'Season record, based on completed weeks') + projNote;
 
   const header = `
     <div class="standings-header">
@@ -499,11 +540,17 @@ function render() {
 
   const rows = standings.map((s, i) => {
     const streakClass = s.streak.startsWith('W') ? 'streak-w' : s.streak.startsWith('L') ? 'streak-l' : s.streak.startsWith('T') ? 'streak-t' : '';
+    // Movement vs. the table with no projections: ▲ = this team climbs if
+    // the current live results hold, ▼ = it drops.
+    const was = baseRank.get(s.teamId);
+    const move = was && was !== i + 1
+      ? `<span class="rank-move ${was > i + 1 ? 'rank-up' : 'rank-down'}">${was > i + 1 ? '▲' : '▼'}${Math.abs(was - (i + 1))}</span>`
+      : '';
     return `
-      <div class="standings-row" style="--team-color:${s.team.color}">
-        <div class="col-rank">${i + 1}</div>
+      <div class="standings-row${s.projGames ? ' has-proj' : ''}" style="--team-color:${s.team.color}">
+        <div class="col-rank">${i + 1}${move}</div>
         <div class="col-team"><span class="team-name">${renderTeamIcon(s.team)}${s.team.name}</span></div>
-        <div class="col-record">${s.wins}-${s.losses}${s.ties ? '-' + s.ties : ''}</div>
+        <div class="col-record">${s.wins}-${s.losses}${s.ties ? '-' + s.ties : ''}${s.projGames ? '<span class="proj-tag">proj</span>' : ''}</div>
         <div class="col-pct">${s.winPct.toFixed(3).replace(/^0/, '')}</div>
         <div class="col-pf">${s.pointsFor.toFixed(1)}</div>
         <div class="col-pa">${s.pointsAgainst.toFixed(1)}</div>
@@ -609,5 +656,25 @@ function confidenceLabel(effectiveGamesPlayed) {
 
 leagueSelect.addEventListener('change', () => loadLeagueData(leagueSelect.value));
 weekSelect.addEventListener('change', render);
+
+// Projections toggle (remembered per browser). Defaults ON.
+const projectedToggle = document.getElementById('projectedToggle');
+if (projectedToggle) {
+  try { projectedToggle.checked = localStorage.getItem('winProbStandingsProjected') !== 'false'; } catch { /* storage unavailable -- keep default */ }
+  projectedToggle.addEventListener('change', () => {
+    try { localStorage.setItem('winProbStandingsProjected', String(projectedToggle.checked)); } catch { /* ignore */ }
+    render();
+  });
+}
+
+// Live refresh: projections only mean something if they move, so re-pull
+// every minute while the tab is visible, and immediately on coming back to
+// it (background timers are throttled).
+function liveRefresh() {
+  if (document.hidden || !leagueSelect.value) return;
+  loadLeagueData(leagueSelect.value, { quiet: true });
+}
+setInterval(liveRefresh, 60000);
+document.addEventListener('visibilitychange', liveRefresh);
 
 loadLeagues();
