@@ -257,7 +257,19 @@ async function ensureTeams(leagueId, espnTeams, teamIdByEspnId) {
 // 4 minutes of each half hour, which lands on at least one run per half hour
 // with a 2-minute cron (and any cadence of 4 minutes or faster).
 // FORCE_SLOW_TASKS=1 runs them every time.
-const RUN_SLOW_TASKS = process.env.FORCE_SLOW_TASKS === '1' || (new Date().getMinutes() % 30) < 4;
+const RUN_SLOW_TASKS = process.env.FORCE_SLOW_TASKS === '1' || (new Date().getMinutes() % 30) < 2;
+
+// Idle-run skipping. The cron fires every 2 minutes all week, but nothing
+// can change while no NFL game is in progress or about to start. A run is
+// only "full" when (a) a game is live, (b) the next kickoff is within
+// 45 minutes (or already past -- a delayed start), or (c) it's the
+// once-per-15-minutes catch-up run (minute % 15 < 2), which also picks up
+// final scores shortly after the last game ends, refreshes the Power
+// Rankings cache, and (every other time) does the slow housekeeping above.
+// If the NFL scoreboard can't tell us, the run is never skipped.
+// FORCE_FULL_POLL=1 disables skipping entirely.
+const CATCH_UP_RUN = (new Date().getMinutes() % 15) < 2;
+const PRE_KICKOFF_LEAD_MS = 45 * 60 * 1000;
 
 async function upsertTeam(leagueId, espnTeam) {
   const espnTeamId = espnTeam.id;
@@ -553,7 +565,13 @@ async function pollLeague(league) {
   // pollLeagueWeek() re-fetches NFL game status itself below (a cheap
   // public scoreboard call) since plottingOpen has to already be known
   // before calling it.
-  const { weekStart } = await fetchNflGameStatusMap({ year, week });
+  const { weekStart, anyLive, nextKickoff } = await fetchNflGameStatusMap({ year, week });
+
+  const gameActive = anyLive || (nextKickoff && nextKickoff.getTime() - Date.now() <= PRE_KICKOFF_LEAD_MS);
+  if (process.env.FORCE_FULL_POLL !== '1' && !gameActive && !CATCH_UP_RUN) {
+    console.log(`[${league.slug}] idle -- no game live or starting within 45 min; skipping this run (catch-up run every 15 min)`);
+    return;
+  }
 
   const POWER_PICKS_LEAD_MS = 24 * 60 * 60 * 1000;
   const now = new Date();
@@ -593,7 +611,10 @@ async function pollLeague(league) {
   // to computing it client-side whenever the cache is empty for a
   // league/year, so a failure here (project not migrated yet, a transient
   // error) should never take down the actual snapshot poll above.
-  if (totalInserted > 0) {
+  // Throttled to the 15-minute catch-up run (Power Ratings only change when
+  // a game becomes final, so a few minutes of lag is invisible) instead of
+  // after every run that wrote a row.
+  if (CATCH_UP_RUN || process.env.FORCE_FULL_POLL === '1') {
     try {
       await refreshPowerRatingCache(league, year, Object.values(teamIdByEspnId));
     } catch (err) {
