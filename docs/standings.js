@@ -428,6 +428,7 @@ async function loadLeagueData(leagueId, { quiet = false } = {}) {
     weeks.map((w) => `<option value="${w}">Through week ${w}</option>`).join('');
   if (quiet && keepWeek && weeks.includes(Number(keepWeek))) weekSelect.value = keepWeek;
 
+  animateNextRender = !quiet;
   render();
 }
 
@@ -516,6 +517,11 @@ function renderTeamIcon(team) {
   return '';
 }
 
+// Entrance animation (cards fade/slide in, staggered -- same effect as the
+// Matchups page) only on a real change (first load, league/week switch,
+// toggle), never on the background live refresh.
+let animateNextRender = true;
+
 function render() {
   loadingState.style.display = 'none';
   const throughWeek = weekSelect.value ? Number(weekSelect.value) : null;
@@ -578,8 +584,10 @@ function render() {
   }).join('');
 
   standingsTable.innerHTML = header + rows;
+  if (animateNextRender && window.siteEnter) window.siteEnter(standingsTable, '.standings-row');
 
   renderPowerRankings(standings, throughWeek);
+  animateNextRender = false;
 }
 
 // Only computed/rendered once the win-loss table above has something to
@@ -646,6 +654,7 @@ function renderPowerRankings(standings, throughWeek) {
     `;
   }).join('');
   powerTable.innerHTML = header + rows;
+  if (animateNextRender && window.siteEnter) window.siteEnter(powerTable, '.standings-row');
 }
 
 // "+3.2" in the win color, "-1.8" in the loss color, or a neutral "±0.0"
@@ -673,7 +682,7 @@ function confidenceLabel(effectiveGamesPlayed) {
 }
 
 leagueSelect.addEventListener('change', () => loadLeagueData(leagueSelect.value));
-weekSelect.addEventListener('change', render);
+weekSelect.addEventListener('change', () => { animateNextRender = true; render(); });
 
 // Projections toggle (remembered per browser). Defaults ON.
 const projectedToggle = document.getElementById('projectedToggle');
@@ -681,6 +690,7 @@ if (projectedToggle) {
   try { projectedToggle.checked = localStorage.getItem('winProbStandingsProjected') !== 'false'; } catch { /* storage unavailable -- keep default */ }
   projectedToggle.addEventListener('change', () => {
     try { localStorage.setItem('winProbStandingsProjected', String(projectedToggle.checked)); } catch { /* ignore */ }
+    animateNextRender = true;
     render();
   });
 }
