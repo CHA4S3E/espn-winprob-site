@@ -1742,6 +1742,9 @@ function intensity(y) {
 
 // Session caches so revisiting a tab/week is instant and a routine refresh
 // only downloads rows newer than what's already held.
+// Only the columns the page reads (instead of '*', which also dragged along
+// bookkeeping columns like lineup_fingerprint on every row of every poll).
+const WEEK_SNAPSHOT_COLUMNS = 'id, league_id, year, week, matchup_id, team_id, is_home, ts, actual_score, expected_score, win_prob, all_starters_done';
 let weekRowsCache = { key: null, rows: [], ids: new Set(), lastTs: null };
 const teamsCache = {}; // leagueId -> { at, data }
 const TEAMS_TTL_MS = 5 * 60 * 1000;
@@ -1751,7 +1754,7 @@ async function fetchWeekSnapshots(leagueId, year, week) {
   const c = weekRowsCache;
   if (c.key !== key) {
     const rows = await fetchAllRows((from, to) =>
-      sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
+      sb.from('snapshots').select(WEEK_SNAPSHOT_COLUMNS).eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
     );
     weekRowsCache = { key, rows, ids: new Set(rows.map((r) => r.id)), lastTs: rows.length ? rows[rows.length - 1].ts : null };
     return weekRowsCache.rows;
@@ -1760,13 +1763,13 @@ async function fetchWeekSnapshots(leagueId, year, week) {
   // (>= so equal-ts rows aren't missed; ids dedupe the overlap).
   if (!c.lastTs) {
     const rows = await fetchAllRows((from, to) =>
-      sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
+      sb.from('snapshots').select(WEEK_SNAPSHOT_COLUMNS).eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
     );
     weekRowsCache = { key, rows, ids: new Set(rows.map((r) => r.id)), lastTs: rows.length ? rows[rows.length - 1].ts : null };
     return weekRowsCache.rows;
   }
   const fresh = await fetchAllRows((from, to) =>
-    sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).gte('ts', c.lastTs).order('ts').order('id').range(from, to)
+    sb.from('snapshots').select(WEEK_SNAPSHOT_COLUMNS).eq('league_id', leagueId).eq('year', year).eq('week', week).gte('ts', c.lastTs).order('ts').order('id').range(from, to)
   );
   const added = [];
   for (const r of fresh) {
