@@ -105,3 +105,21 @@ a.back-link:hover, a.back:hover { text-decoration: underline; }
   body { padding: 20px 12px 48px; }
   .page-title { font-size: var(--text-2xl); }
 }
+
+/* ---- Motion: same entrance + page-change feel as the Matchups page --------- */
+@keyframes siteEnter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fx-in { animation: siteEnter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Smooth cross-fade when moving between pages via the nav (supported
+   browsers only; others just navigate normally). */
+@view-transition { navigation: auto; }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 180ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-in { animation: none !important; }
+  @view-transition { navigation: none; }
+}
+html[data-reduce-motion] .fx-in { animation: none !important; }
