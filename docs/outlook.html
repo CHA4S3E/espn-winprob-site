@@ -79,9 +79,10 @@
   .rating small { font-size: 10px; font-weight: 500; }
   .up { color: var(--win); } .down { color: var(--loss); }
   .team { justify-content: flex-start !important; gap: 10px; padding-left: 4px; min-width: 0; }
-  .logo { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; flex: none; overflow: hidden;
-          background: color-mix(in srgb, var(--tc) 28%, var(--card-bg)); border: 2px solid var(--tc); box-shadow: 0 0 12px color-mix(in srgb, var(--tc) 40%, transparent); }
-  .logo img { width: 100%; height: 100%; object-fit: cover; }
+  /* No ring around the logo -- the logo itself glows in the team color. */
+  .logo { width: 36px; height: 36px; display: grid; place-items: center; font-size: 26px; flex: none;
+          filter: drop-shadow(0 0 5px var(--tc)) drop-shadow(0 0 12px color-mix(in srgb, var(--tc) 70%, transparent)); }
+  .logo img { width: 100%; height: 100%; object-fit: contain; }
   .tn { min-width: 0; } .tn b { display: block; font-weight: 500; font-size: var(--text-lg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rec { font-size: var(--text-base) !important; } .rec.proj { color: var(--muted); }
 
