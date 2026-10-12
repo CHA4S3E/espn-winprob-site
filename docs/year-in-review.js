@@ -192,6 +192,76 @@ function buildLegacyFinalRows(legacyMatchups) {
   return rows;
 }
 
+// Tiny IndexedDB key-value store for data that can never change again
+// (finished weeks) -- localStorage is far too small for a week of polls.
+// Every call fails soft: no IndexedDB (private window etc.) just means no
+// caching, never an error.
+const IDB_NAME = 'winProbCache', IDB_STORE = 'kv';
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    try {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    } catch (e) { reject(e); }
+  });
+}
+async function idbGet(key) {
+  try {
+    const db = await idbOpen();
+    return await new Promise((resolve) => {
+      const r = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key);
+      r.onsuccess = () => resolve(r.result ?? null);
+      r.onerror = () => resolve(null);
+    });
+  } catch { return null; }
+}
+async function idbSet(key, value) {
+  try {
+    const db = await idbOpen();
+    await new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = resolve; tx.onerror = resolve; tx.onabort = resolve;
+    });
+  } catch { /* no caching -- fine */ }
+}
+// A week/season counts as "settled" once every game is final AND nothing
+// new has been recorded for 48 hours (so late ESPN stat corrections still
+// get picked up before it's frozen into the cache).
+const SETTLED_AFTER_MS = 48 * 60 * 60 * 1000;
+function rowsAreSettled(rows) {
+  if (!rows || !rows.length) return false;
+  const latest = new Map();
+  let maxTs = 0;
+  for (const r of rows) {
+    const k = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const t = new Date(r.ts).getTime();
+    if (t > maxTs) maxTs = t;
+    const e = latest.get(k);
+    if (!e || t > e.t) latest.set(k, { t, done: r.all_starters_done });
+  }
+  for (const e of latest.values()) if (!e.done) return false;
+  return Date.now() - maxTs > SETTLED_AFTER_MS;
+}
+
+
+// A settled season (all games final, nothing new for 48h) never changes, so
+// its full poll history is saved in this browser after the first download.
+async function fetchSeasonRows(leagueId, year) {
+  const idbKey = `season:v1:${leagueId}|${year}`;
+  const saved = await idbGet(idbKey);
+  if (saved && saved.rows && saved.rows.length) return saved.rows;
+  const rows = await fetchAllRows((from, to) =>
+    sb.from('snapshots')
+      .select('year, week, matchup_id, team_id, is_home, actual_score, expected_score, win_prob, all_starters_done, ts')
+      .eq('league_id', leagueId).eq('year', year).order('ts').range(from, to)
+  );
+  if (rowsAreSettled(rows)) idbSet(idbKey, { rows, savedAt: Date.now() });
+  return rows;
+}
+
 async function loadYear(leagueId, year) {
   loadingState.style.display = 'block';
   content.style.display = 'none';
@@ -208,11 +278,7 @@ async function loadYear(leagueId, year) {
   // than propagated like teamsError below.
   const [{ data: liveTeams, error: teamsError }, allSnapshotRows, { data: seasonResults }, { data: league }, cachedPowerHistoryResult] = await Promise.all([
     sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId),
-    fetchAllRows((from, to) =>
-      sb.from('snapshots')
-        .select('year, week, matchup_id, team_id, is_home, actual_score, expected_score, win_prob, all_starters_done, ts')
-        .eq('league_id', leagueId).eq('year', year).order('ts').range(from, to)
-    ),
+    fetchSeasonRows(leagueId, year),
     sb.from('season_results').select('place, legacy_team_id, live_team_id').eq('league_id', leagueId).eq('year', year),
     sb.from('leagues').select('playoff_spots').eq('id', leagueId).single(),
     sb.from('power_rating_history')
