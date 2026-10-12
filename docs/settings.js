@@ -219,7 +219,7 @@ async function loadSeasonResultsPanel() {
   // Merge years from both snapshots AND legacy_matchups -- a legacy-only
   // year like 2024 has zero snapshot rows but still needs standings set.
   const [{ data: snapYears }, { data: legacyYears }] = await Promise.all([
-    sb.from('snapshots').select('year').eq('league_id', leagueId),
+    sb.from('snapshot_summary').select('year').eq('league_id', leagueId),
     sb.from('legacy_matchups').select('year').eq('league_id', leagueId),
   ]);
   const distinctYears = [...new Set([...(snapYears || []), ...(legacyYears || [])].map((r) => r.year))].sort((a, b) => b - a);
@@ -238,9 +238,9 @@ async function loadSeasonResultsPanel() {
 // tracked year); if there are none, falls back to legacy_matchups, whose
 // two sides can each be either a live or a defunct team.
 async function getParticipantsForYear(leagueId, year) {
-  const { data: snapRows } = await sb.from('snapshots').select('team_id').eq('league_id', leagueId).eq('year', year).limit(1);
+  const { data: snapRows } = await sb.from('snapshot_summary').select('team_id').eq('league_id', leagueId).eq('year', year).limit(1);
   if (snapRows && snapRows.length) {
-    const { data: allSnapRows } = await sb.from('snapshots').select('team_id').eq('league_id', leagueId).eq('year', year);
+    const { data: allSnapRows } = await sb.from('snapshot_summary').select('team_id').eq('league_id', leagueId).eq('year', year);
     const teamIds = [...new Set((allSnapRows || []).map((r) => r.team_id))];
     const { data: teams } = await sb.from('teams').select('id, espn_team_name, team_settings(display_name)').in('id', teamIds);
     return (teams || []).map((t) => ({ id: t.id, name: (t.team_settings && t.team_settings.display_name) || t.espn_team_name, source: 'live' }));
