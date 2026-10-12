@@ -39,6 +39,8 @@ async function fetchLeagueWeek({ espnLeagueId, espnS2, swid, year, week }) {
 //                 diagnosed from).
 //   weekStart  -- Date of that week's EARLIEST kickoff (whatever day that
 //                 actually falls on), or null if no events were found.
+//   anyLive    -- true if any game is currently in progress.
+//   nextKickoff -- Date of the earliest game still 'pre', or null.
 async function fetchNflGameStatusMap({ year, week }) {
   const url = `${NFL_SCOREBOARD}?year=${year}&week=${week}&seasontype=2`;
   const res = await fetch(url, { headers: { Accept: 'application/json' } });
@@ -63,9 +65,18 @@ async function fetchNflGameStatusMap({ year, week }) {
 
   const statusMap = {};
   let weekStart = null;
+  // Additive (nothing existing reads these): lets the poller tell whether
+  // any game is live or about to start, so it can skip idle polls.
+  let anyLive = false;
+  let nextKickoff = null; // earliest kickoff among games still in state 'pre' (may already be in the past = delayed start)
 
   for (const event of data.events) {
     const state = event.status?.type?.state; // 'pre' | 'in' | 'post'
+    if (state === 'in') anyLive = true;
+    if (state === 'pre' && event.date) {
+      const d = new Date(event.date);
+      if (!isNaN(d) && (!nextKickoff || d < nextKickoff)) nextKickoff = d;
+    }
     const remainingFraction = estimateRemainingFraction(state, event.status?.period, event.status?.displayClock);
 
     for (const competitor of event.competitions?.[0]?.competitors || []) {
@@ -81,7 +92,7 @@ async function fetchNflGameStatusMap({ year, week }) {
     }
   }
 
-  return { statusMap, weekStart };
+  return { statusMap, weekStart, anyLive, nextKickoff };
 }
 
 // NFL regulation is 4 x 15-minute quarters (900s each) = 3600s total.
