@@ -2,61 +2,19 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Standings — Fantasy Win Probability Tracker</title>
 <meta name="theme-color" content="#ffffff" id="themeColorMeta">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%F0%9F%8F%88</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="site.js?v=1"></script>
+<link rel="stylesheet" href="site.css?v=1">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-  const initialTheme =
-    localStorage.getItem('winProbTheme') ||
-    (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  document.documentElement.setAttribute('data-theme', initialTheme);
-  document.getElementById('themeColorMeta').setAttribute('content', initialTheme === 'dark' ? '#14161a' : '#ffffff');
-</script>
 <style>
-  html { scrollbar-gutter: stable; overflow-y: scroll; background: var(--bg); }
 
-  :root {
-    --bg: #ffffff; --fg: #222222; --muted: #888888; --border: #eeeeee;
-    --card-bg: #ffffff; --input-bg: #fafafa; --input-border: #cccccc;
-    --btn-border: #dddddd; --btn-hover: #f5f5f5; --accent: #1a3fa0;
-    --win: #2e8b57; --loss: #c0392b; --tie: #888888;
-    --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
-    --font-body: 'Inter', -apple-system, Arial, sans-serif;
-    --text-xs: 11px; --text-sm: 12px; --text-base: 14px; --text-lg: 16px;
-    --text-xl: 20px; --text-2xl: 26px; --text-3xl: 34px;
-  }
-  html[data-theme="dark"] {
-    --bg: #14161a; --fg: #e8e8e8; --muted: #9aa0a6; --border: #2a2d33;
-    --card-bg: #1c1f24; --input-bg: #20232a; --input-border: #3a3d44;
-    --btn-border: #3a3d44; --btn-hover: #262a31; --accent: #3a67df;
-    --win: #4fbd82; --loss: #e0574a; --tie: #9aa0a6;
-  }
-  ::selection { background: var(--accent); color: #fff; }
-
-  * { box-sizing: border-box; }
-  body {
-    font-family: var(--font-body); background: var(--bg); color: var(--fg);
-    margin: 0; padding: 30px 20px 60px; -webkit-font-smoothing: antialiased;
-  }
-  #wrap { max-width: 720px; margin: 0 auto; }
-
-  h1 {
-    font-family: var(--font-display); font-weight: 400; font-size: var(--text-3xl);
-    text-align: center; margin: 0 0 4px;
-  }
-  .sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 24px; }
-
-  #controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 28px; }
-  select {
-    padding: 7px 12px; font-size: var(--text-base); font-family: var(--font-body);
-    border-radius: 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--fg);
-  }
-
-  #standingsTable, #powerRankingsTable { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+  #standingsTable, #powerRankingsTable { border-radius: var(--r-lg); overflow: hidden; border: 1px solid var(--border); }
   .standings-header, .standings-row {
     display: grid;
     grid-template-columns: 40px 1fr 74px 56px 64px 64px 52px;
@@ -116,16 +74,6 @@
   .rank-up { color: var(--win); }
   .rank-down { color: var(--loss); }
 
-  #emptyState, #loadingState {
-    text-align: center; color: var(--muted); font-size: var(--text-base); padding: 40px 20px;
-  }
-
-  .section-title {
-    font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl);
-    text-align: center; margin: 36px 0 2px;
-  }
-  .section-sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 16px; }
-
   /* Power Rankings reuses the exact same .standings-row/.standings-header
      grid as the win-loss table above, just with its own column set --
      see the power-header/power-row overrides narrowing the grid down to
@@ -151,32 +99,22 @@
   .power-delta-down { color: var(--loss); }
   .power-delta-flat, .power-delta-new { color: var(--muted); font-weight: 400; }
 
-  /* ---- Top nav -- same pill-tab treatment duplicated across every page
-     on the site (see index.html's own comment on this), replacing what
-     used to be a stacked list of links at the very bottom of the page. */
-  .top-nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
-  .top-nav-link {
-    font-size: var(--text-sm); text-decoration: none; color: var(--accent);
-    padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border);
-    background: var(--card-bg);
-  }
-  .top-nav-link:hover { background: var(--btn-hover); }
-  .top-nav-link.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <h1>Standings</h1>
-  <div class="sub" id="subtext">Season record, based on completed weeks</div>
+<div id="wrap" class="site-wrap">
+  <h1 class="page-title">Standings</h1>
+  <div class="page-sub" id="subtext">Season record, based on completed weeks</div>
 
   <nav class="top-nav">
     <a class="top-nav-link" href="index.html">Matchups</a>
     <a class="top-nav-link is-active" href="standings.html">Standings</a>
     <a class="top-nav-link" href="outlook.html">Outlook</a>
     <a class="top-nav-link" href="preferences.html">Display</a>
+    <button class="top-nav-link" id="themeToggle" type="button"></button>
   </nav>
 
-  <div id="controls">
+  <div id="controls" class="site-controls">
     <select id="leagueSelect"></select>
     <select id="weekSelect"></select>
     <label id="projectedLabel"><input type="checkbox" id="projectedToggle" checked> Projected</label>
@@ -193,6 +131,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="standings.js"></script>
+<script src="standings.js?v=2"></script>
 </body>
 </html>
