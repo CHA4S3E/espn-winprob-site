@@ -1637,14 +1637,10 @@ function applySeasonalUpsetState(card, theme, upsetActive) {
 // when enabled, regardless of what week the season is actually on.
 async function checkYearInReviewAvailability(leagueId) {
   if (!yearInReviewLink) return;
-  if (localStorage.getItem('winProbYearInReviewEarly') === 'true') {
-    yearInReviewLink.hidden = false;
-    return;
-  }
   const latestYear = Number(yearSelect.value);
   if (!leagueId || !latestYear) { yearInReviewLink.hidden = true; return; }
   const { data, error } = await sb
-    .from('snapshots')
+    .from('snapshot_summary')
     .select('matchup_id, team_id, all_starters_done, ts')
     .eq('league_id', leagueId)
     .eq('year', latestYear)
@@ -1657,7 +1653,8 @@ async function loadYearsWeeks(leagueId) {
   let data;
   try {
     data = await fetchAllRows((from, to) =>
-      sb.from('snapshots').select('year, week').eq('league_id', leagueId).order('id').range(from, to)
+      // snapshot_summary: one row per matchup-team, not every poll ever recorded.
+      sb.from('snapshot_summary').select('year, week').eq('league_id', leagueId).order('year').order('week').range(from, to)
     );
   } catch (err) {
     data = [];
@@ -1702,20 +1699,21 @@ async function checkForLatestWeekAdvance() {
   const leagueId = leagueSelect.value;
   if (!leagueId) return false;
 
-  let data;
+  // Just the single newest (year, week) -- one tiny row -- instead of
+  // downloading the league's whole poll history every 30 seconds.
+  let latest;
   try {
-    data = await fetchAllRows((from, to) =>
-      sb.from('snapshots').select('year, week').eq('league_id', leagueId).order('id').range(from, to)
-    );
+    const res = await sb.from('snapshot_summary').select('year, week').eq('league_id', leagueId)
+      .order('year', { ascending: false }).order('week', { ascending: false }).limit(1);
+    if (res.error) throw res.error;
+    latest = (res.data || [])[0];
   } catch {
     return false; // transient error -- try again next cycle
   }
-  if (!data.length) return false;
+  if (!latest) return false;
 
-  const years = [...new Set(data.map((d) => d.year))].sort((a, b) => b - a);
-  const latestYear = years[0];
-  const weeksForLatestYear = [...new Set(data.filter((d) => d.year === latestYear).map((d) => d.week))].sort((a, b) => b - a);
-  const latestWeek = weeksForLatestYear[0];
+  const latestYear = latest.year;
+  const latestWeek = latest.week;
 
   const currentYear = Number(yearSelect.value);
   const currentWeek = Number(weekSelect.value);
