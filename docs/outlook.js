@@ -566,6 +566,7 @@ async function loadLeagueData(leagueId) {
   emptyState.style.display = 'none';
   contentEl.style.display = 'block';
   render(true);
+  if (window.siteEnter) window.siteEnter(boardEl, '.item'); // staggered entrance, same as Matchups cards
 }
 
 // ---------- odds engine ----------
