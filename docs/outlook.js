@@ -439,20 +439,65 @@ async function loadLeagueData(leagueId) {
   currentLeague = leaguesById[leagueId];
   outlookCache.clear();
 
+  // Outlook only changes when a week FINISHES, so the heavy download (the
+  // whole season's game summary + schedule) is cached in this browser and
+  // only repeated once the next week is completely final. Between those
+  // moments a visit costs one tiny check (a dozen rows) plus the team list.
+  const CACHE_KEY = `winProbOutlookCache:v1:${leagueId}`;
+  const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // self-heal: never trust a cache older than a week
+  const SUMMARY_COLS = 'year, week, matchup_id, team_id, is_home, actual_score, all_starters_done, ts, pregame_win_prob, pregame_expected_score';
+  let cache = null;
+  try { cache = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch { cache = null; }
+  if (cache && !(cache.rows && cache.rows.length && cache.year && cache.cw != null && Date.now() - cache.savedAt < CACHE_MAX_AGE_MS)) cache = null;
+  // No saved schedule yet (migration pending / poller hasn't filled it) --
+  // keep re-checking rather than freezing the "approximated" state.
+  if (cache && !(cache.schedule && cache.schedule.length)) cache = null;
+
+  const teamsPromise = sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId).then(({ data, error }) => { if (error) throw error; return data; });
+
   let teams, snapshots, schedule;
+  let usedCache = false;
   try {
-    [teams, snapshots, schedule] = await Promise.all([
-      sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId).then(({ data, error }) => { if (error) throw error; return data; }),
-      fetchAllRows((from, to) =>
-        sb.from('snapshot_summary')
-          .select('year, week, matchup_id, team_id, is_home, actual_score, all_starters_done, ts, pregame_win_prob, pregame_expected_score')
-          .eq('league_id', leagueId).order('ts').range(from, to)
-      ),
-      // Missing table (migration not run yet) or no rows yet is fine -- the
-      // page falls back to approximating, and says so.
-      fetchAllRows((from, to) => sb.from('schedule').select('year, week, home_team_id, away_team_id').eq('league_id', leagueId).range(from, to))
-        .catch((err) => { console.warn('schedule table not available yet:', err.message || err); return []; }),
-    ]);
+    if (cache) {
+      // Has the NEXT week finished since we cached? Only that week's rows (~12) are looked at.
+      const { data: nextRows, error: nextErr } = await sb.from('snapshot_summary')
+        .select('matchup_id, team_id, all_starters_done, ts')
+        .eq('league_id', leagueId).eq('year', cache.year).eq('week', cache.cw + 1);
+      if (!nextErr) {
+        const latest = new Map();
+        for (const r of nextRows || []) {
+          const k = `${r.matchup_id}|${r.team_id}`;
+          if (!latest.has(k) || r.ts > latest.get(k).ts) latest.set(k, r);
+        }
+        const nextWeekFinal = latest.size > 0 && [...latest.values()].every((r) => r.all_starters_done);
+        // Also catches a brand-new season (cache.year no longer the newest).
+        const { data: newest } = await sb.from('snapshot_summary').select('year').eq('league_id', leagueId).order('year', { ascending: false }).limit(1);
+        const newerYear = newest && newest[0] && newest[0].year > cache.year;
+        if (!nextWeekFinal && !newerYear) {
+          teams = await teamsPromise;
+          snapshots = cache.rows;
+          schedule = cache.schedule;
+          usedCache = true;
+        }
+      }
+    }
+    if (!usedCache) {
+      // Newest season only: older seasons are never used on this page.
+      const { data: yr, error: yrErr } = await sb.from('snapshot_summary').select('year').eq('league_id', leagueId).order('year', { ascending: false }).limit(1);
+      if (yrErr) throw yrErr;
+      const newestYear = yr && yr[0] ? yr[0].year : null;
+      [teams, snapshots, schedule] = await Promise.all([
+        teamsPromise,
+        newestYear == null ? Promise.resolve([]) : fetchAllRows((from, to) =>
+          sb.from('snapshot_summary').select(SUMMARY_COLS)
+            .eq('league_id', leagueId).eq('year', newestYear).order('ts').range(from, to)
+        ),
+        // Missing table (migration not run yet) or no rows yet is fine -- the
+        // page falls back to approximating, and says so.
+        fetchAllRows((from, to) => sb.from('schedule').select('year, week, home_team_id, away_team_id').eq('league_id', leagueId).eq('year', newestYear ?? 0).range(from, to))
+          .catch((err) => { console.warn('schedule table not available yet:', err.message || err); return []; }),
+      ]);
+    }
   } catch (err) { showError('Could not load outlook data', err); return; }
 
   teamInfo = {};
@@ -471,6 +516,11 @@ async function loadLeagueData(leagueId) {
   const teamIds = Object.keys(teamInfo);
   const cw = lastCompletedWeek(allRows);
   if (!cw || !teamIds.length) { loadingState.style.display = 'none'; emptyState.style.display = 'block'; return; }
+  if (!usedCache && allRows.length) {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ year: latestYear, cw, savedAt: Date.now(), rows: allRows, schedule: scheduleRows }));
+    } catch { /* storage full/unavailable -- just means no caching */ }
+  }
 
   const rawSpots = currentLeague && currentLeague.playoff_spots;
   const playoffSpots = rawSpots == null ? Math.max(1, Math.floor(teamIds.length / 2)) : rawSpots;
