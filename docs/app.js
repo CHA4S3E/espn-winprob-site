@@ -340,6 +340,60 @@ function setTheme(next) {
 // hard you refreshed -- it wasn't a caching issue, the query itself never
 // asked for more than page 1. This pages through .range() until a page
 // comes back with fewer than PAGE_SIZE rows (i.e. we've reached the end).
+// Tiny IndexedDB key-value store for data that can never change again
+// (finished weeks) -- localStorage is far too small for a week of polls.
+// Every call fails soft: no IndexedDB (private window etc.) just means no
+// caching, never an error.
+const IDB_NAME = 'winProbCache', IDB_STORE = 'kv';
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    try {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    } catch (e) { reject(e); }
+  });
+}
+async function idbGet(key) {
+  try {
+    const db = await idbOpen();
+    return await new Promise((resolve) => {
+      const r = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key);
+      r.onsuccess = () => resolve(r.result ?? null);
+      r.onerror = () => resolve(null);
+    });
+  } catch { return null; }
+}
+async function idbSet(key, value) {
+  try {
+    const db = await idbOpen();
+    await new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = resolve; tx.onerror = resolve; tx.onabort = resolve;
+    });
+  } catch { /* no caching -- fine */ }
+}
+// A week/season counts as "settled" once every game is final AND nothing
+// new has been recorded for 48 hours (so late ESPN stat corrections still
+// get picked up before it's frozen into the cache).
+const SETTLED_AFTER_MS = 48 * 60 * 60 * 1000;
+function rowsAreSettled(rows) {
+  if (!rows || !rows.length) return false;
+  const latest = new Map();
+  let maxTs = 0;
+  for (const r of rows) {
+    const k = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    const t = new Date(r.ts).getTime();
+    if (t > maxTs) maxTs = t;
+    const e = latest.get(k);
+    if (!e || t > e.t) latest.set(k, { t, done: r.all_starters_done });
+  }
+  for (const e of latest.values()) if (!e.done) return false;
+  return Date.now() - maxTs > SETTLED_AFTER_MS;
+}
+
 const PAGE_SIZE = 1000;
 async function fetchAllRows(buildQuery) {
   // First page alone (most queries fit in it), then further pages fetched
@@ -540,7 +594,7 @@ async function getPlayoffTiers(leagueId, year, byMatchup) {
     let rows;
     try {
       rows = await fetchAllRows((from, to) =>
-        sb.from('snapshots')
+        sb.from('snapshot_summary')
           .select('week, matchup_id, team_id, actual_score, all_starters_done, ts')
           .eq('league_id', leagueId).eq('year', year).lt('week', CHAMPIONSHIP_WEEK).eq('all_starters_done', true)
           .range(from, to)
@@ -1743,6 +1797,10 @@ function intensity(y) {
 // Only the columns the page reads (instead of '*', which also dragged along
 // bookkeeping columns like lineup_fingerprint on every row of every poll).
 const WEEK_SNAPSHOT_COLUMNS = 'id, league_id, year, week, matchup_id, team_id, is_home, ts, actual_score, expected_score, win_prob, all_starters_done';
+// True when every matchup on screen is final -- the auto-refresh then backs
+// off to IDLE_REFRESH_MS instead of the normal 30s.
+let weekIsIdle = false;
+const IDLE_REFRESH_MS = 5 * 60 * 1000;
 let weekRowsCache = { key: null, rows: [], ids: new Set(), lastTs: null };
 const teamsCache = {}; // leagueId -> { at, data }
 const TEAMS_TTL_MS = 5 * 60 * 1000;
@@ -1751,10 +1809,19 @@ async function fetchWeekSnapshots(leagueId, year, week) {
   const key = `${leagueId}|${year}|${week}`;
   const c = weekRowsCache;
   if (c.key !== key) {
+    // A finished, settled week never changes -- serve it from this
+    // browser's saved copy instead of downloading it again.
+    const idbKey = `week:v1:${key}`;
+    const saved = await idbGet(idbKey);
+    if (saved && saved.rows && saved.rows.length) {
+      weekRowsCache = { key, rows: saved.rows, ids: new Set(saved.rows.map((r) => r.id)), lastTs: saved.rows[saved.rows.length - 1].ts };
+      return weekRowsCache.rows;
+    }
     const rows = await fetchAllRows((from, to) =>
       sb.from('snapshots').select(WEEK_SNAPSHOT_COLUMNS).eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
     );
     weekRowsCache = { key, rows, ids: new Set(rows.map((r) => r.id)), lastTs: rows.length ? rows[rows.length - 1].ts : null };
+    if (rowsAreSettled(rows)) idbSet(idbKey, { rows, savedAt: Date.now() });
     return weekRowsCache.rows;
   }
   // Same week as last time: only rows at/after the newest ts we hold
@@ -4972,6 +5039,15 @@ async function loadMatchups({ preserveCharts = false } = {}) {
 
   renderRecapBanner(byMatchup, teamInfo);
 
+  {
+    const ids = Object.keys(byMatchup);
+    weekIsIdle = ids.length > 0 && ids.every((id) => {
+      const rows = byMatchup[id];
+      const h = latestRow(rows, true), a = latestRow(rows, false);
+      return !!(h && a && h.all_starters_done && a.all_starters_done);
+    });
+  }
+
   // Computed here (rather than further down, where this used to live)
   // because updateLeaderBar, right below, needs it too now -- during
   // championship week the leader bar switches from "whoever has the most
@@ -5309,7 +5385,14 @@ async function init() {
   // position. Checks for a newly-arrived week first (see
   // checkForLatestWeekAdvance) -- if that already performed a full
   // reload, skip the redundant preserveCharts refresh on this same tick.
+  // Pauses while the tab is hidden (the visibilitychange handler below
+  // refreshes the moment you come back), and slows to every 5 minutes when
+  // every game on screen is already final -- nothing is changing then.
+  let lastRefreshAt = Date.now();
   refreshTimer = setInterval(async () => {
+    if (document.hidden) return;
+    if (weekIsIdle && Date.now() - lastRefreshAt < IDLE_REFRESH_MS - 1000) return;
+    lastRefreshAt = Date.now();
     const advanced = await checkForLatestWeekAdvance();
     if (!advanced) loadMatchups({ preserveCharts: true });
   }, 30000);
@@ -5317,7 +5400,7 @@ async function init() {
   // instead of waiting up to 30s -- any lead that changed while away then
   // fires its star (see trackLeadChanges).
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) loadMatchups({ preserveCharts: true });
+    if (!document.hidden) { lastRefreshAt = Date.now(); loadMatchups({ preserveCharts: true }); }
   });
   setInterval(tickKickoffCountdown, 1000); // display-only tick, no network -- see updateKickoffCountdown for when the target itself gets (re)computed
 }
