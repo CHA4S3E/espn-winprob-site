@@ -96,6 +96,7 @@ async function loadTeams() {
       </div>
     `;
   }).join('');
+  if (window.siteEnter) window.siteEnter(teamList, '.team-row'); // staggered entrance, same as Matchups cards
 
   teamList.querySelectorAll('.team-row').forEach((row) => {
     const teamId = row.dataset.teamId;
