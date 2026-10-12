@@ -2,39 +2,19 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Display Settings — Fantasy Win Probability</title>
-<script>
-  document.documentElement.setAttribute(
-    'data-theme',
-    localStorage.getItem('winProbTheme') ||
-      (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-  );
-</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Display Settings — Fantasy Win Probability Tracker</title>
+<meta name="theme-color" content="#ffffff" id="themeColorMeta">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%E2%9A%99%EF%B8%8F</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="site.js?v=1"></script>
+<link rel="stylesheet" href="site.css?v=1">
 <style>
-  :root {
-    --bg: #ffffff;
-    --fg: #222222;
-    --muted: #888888;
-    --border: #eeeeee;
-    --card-bg: #ffffff;
-    --accent: #1a3fa0;
-  }
-  html[data-theme="dark"] {
-    --bg: #14161a;
-    --fg: #e8e8e8;
-    --muted: #9aa0a6;
-    --border: #2a2d33;
-    --card-bg: #1c1f24;
-    --accent: #3a67df;
-  }
-
-  body { font-family: -apple-system, Arial, sans-serif; background: var(--bg); margin: 0; padding: 30px; color: var(--fg); }
-  #wrap { max-width: 480px; margin: 0 auto; }
-  h2 { margin-bottom: 4px; }
-  .sub { color: var(--muted); font-size: 13px; margin-bottom: 26px; }
 
   .setting-group {
-    border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; background: var(--card-bg);
+    border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px 18px; background: var(--card-bg);
     margin-bottom: 16px;
   }
   .setting-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
@@ -47,37 +27,28 @@
   .option-label { font-size: 13px; }
   .option-example { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
-  a.back-link { display: inline-block; margin-top: 8px; font-size: 13px; color: var(--accent); text-decoration: none; }
-  a.back-link:hover { text-decoration: underline; }
-
   /* Visually separated from the ordinary preferences above -- these
      toggles bypass a real condition rather than just adjusting how
      something looks, so they get their own labeled section and a dashed
      border to read as distinct rather than blending into the list. */
-  .debug-heading { margin: 30px 0 4px; font-size: 15px; }
+  .debug-heading { margin: 30px 0 4px; font-size: var(--text-lg); font-family: var(--font-display); font-weight: 400; }
+  .setting-group { box-shadow: none; }
   .setting-group-debug { border-style: dashed; }
 
-  /* ---- Top nav -- same pill-tab treatment duplicated across every page
-     on the site (see index.html's own comment on this). */
-  .top-nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
-  .top-nav-link {
-    font-size: 13px; text-decoration: none; color: var(--accent);
-    padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-bg);
-  }
-  .top-nav-link.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 </style>
 </head>
 <body>
-<div id="wrap">
+<div id="wrap" class="site-wrap">
   <nav class="top-nav">
     <a class="top-nav-link" href="index.html">Matchups</a>
     <a class="top-nav-link" href="standings.html">Standings</a>
     <a class="top-nav-link" href="outlook.html">Outlook</a>
     <a class="top-nav-link is-active" href="preferences.html">Display</a>
+    <button class="top-nav-link" id="themeToggle" type="button"></button>
   </nav>
 
-  <h2>Display Settings</h2>
-  <div class="sub">These are saved on this device and apply next time you load the main page.</div>
+  <h1 class="page-title">Display Settings</h1>
+  <div class="page-sub">These are saved on this device and apply next time you load the main page.</div>
 
   <div class="setting-group">
     <div class="setting-title">Upset Watch history</div>
@@ -144,8 +115,8 @@
     </label>
   </div>
 
-  <h2 class="debug-heading">Debug</h2>
-  <div class="sub">These bypass the normal condition each feature waits for, purely so the look can be previewed on demand -- not meant to be left on once you're done looking.</div>
+  <h2 class="section-title">Debug</h2>
+  <div class="section-sub">These bypass the normal condition each feature waits for, purely so the look can be previewed on demand -- not meant to be left on once you're done looking.</div>
 
   <div class="setting-group setting-group-debug">
     <div class="setting-title">Championship Week</div>
