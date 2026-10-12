@@ -9,46 +9,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="site.js?v=1"></script>
+<link rel="stylesheet" href="site.css?v=1">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-  const initialTheme =
-    localStorage.getItem('winProbTheme') ||
-    (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  document.documentElement.setAttribute('data-theme', initialTheme);
-  document.getElementById('themeColorMeta').setAttribute('content', initialTheme === 'dark' ? '#14161a' : '#ffffff');
-</script>
 <style>
-  html { scrollbar-gutter: stable; overflow-y: scroll; background: var(--bg); }
-  :root {
-    --bg: #ffffff; --fg: #222222; --muted: #888888; --border: #eeeeee;
-    --card-bg: #ffffff; --input-bg: #fafafa; --input-border: #cccccc;
-    --btn-border: #dddddd; --btn-hover: #f5f5f5; --accent: #1a3fa0;
-    --win: #2e8b57; --loss: #c0392b; --tie: #888888; --panel-bg: #f6f7fa;
-    --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
-    --font-body: 'Inter', -apple-system, Arial, sans-serif;
-    --text-xs: 11px; --text-sm: 12px; --text-base: 14px; --text-lg: 16px;
-    --text-xl: 20px; --text-2xl: 26px; --text-3xl: 34px;
-  }
-  html[data-theme="dark"] {
-    --bg: #14161a; --fg: #e8e8e8; --muted: #9aa0a6; --border: #2a2d33;
-    --card-bg: #1c1f24; --input-bg: #20232a; --input-border: #3a3d44;
-    --btn-border: #3a3d44; --btn-hover: #262a31; --accent: #3a67df;
-    --win: #4fbd82; --loss: #e0574a; --tie: #9aa0a6; --panel-bg: #232733;
-  }
-  ::selection { background: var(--accent); color: #fff; }
-  * { box-sizing: border-box; }
-  body { font-family: var(--font-body); background: var(--bg); color: var(--fg); margin: 0; padding: 30px 16px 60px; -webkit-font-smoothing: antialiased; }
-  #wrap { max-width: 1040px; margin: 0 auto; }
-  h1 { font-family: var(--font-display); font-weight: 400; font-size: var(--text-3xl); text-align: center; margin: 0 0 4px; }
-  .sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 24px; }
 
-  .top-nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
-  .top-nav-link { font-size: var(--text-sm); text-decoration: none; color: var(--accent); padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-bg); }
-  .top-nav-link:hover { background: var(--btn-hover); }
-  .top-nav-link.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
-
-  #controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
-  select, input[type="number"] { padding: 7px 12px; font-size: var(--text-base); font-family: var(--font-body); border-radius: 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--fg); }
   input[type="number"] { width: 64px; }
   .control-label { font-size: var(--text-sm); color: var(--muted); display: flex; align-items: center; gap: 6px; }
   .pill { background: var(--card-bg); border: 1px solid var(--border); color: var(--fg); border-radius: 999px; padding: 7px 14px; font-size: var(--text-base); cursor: pointer; font-family: inherit; }
@@ -58,9 +23,7 @@
   .scrub .wk { font-variant-numeric: tabular-nums; min-width: 96px; font-size: var(--text-base); }
   .legend { display: flex; justify-content: center; gap: 18px; color: var(--muted); font-size: var(--text-sm); margin: 4px 0 10px; flex-wrap: wrap; }
 
-  #emptyState, #loadingState { text-align: center; color: var(--muted); font-size: var(--text-base); padding: 40px 20px; }
-
-  .board { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+  .board { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; }
   .row, .head { display: grid; align-items: stretch; }
   .head { background: var(--panel-bg); border-bottom: 1px solid var(--border); font-size: var(--text-sm); color: var(--muted); }
   .head > div { padding: 12px 6px; display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.2; cursor: pointer; user-select: none; }
@@ -126,18 +89,19 @@
 </style>
 </head>
 <body>
-<div id="wrap">
-  <h1>Season Outlook</h1>
-  <div class="sub" id="subtext">Odds for every remaining game, rolled up into playoff and title chances</div>
+<div id="wrap" class="site-wrap wide">
+  <h1 class="page-title">Season Outlook</h1>
+  <div class="page-sub" id="subtext">Odds for every remaining game, rolled up into playoff and title chances</div>
 
   <nav class="top-nav">
     <a class="top-nav-link" href="index.html">Matchups</a>
     <a class="top-nav-link" href="standings.html">Standings</a>
     <a class="top-nav-link is-active" href="outlook.html">Outlook</a>
     <a class="top-nav-link" href="preferences.html">Display</a>
+    <button class="top-nav-link" id="themeToggle" type="button"></button>
   </nav>
 
-  <div id="controls">
+  <div id="controls" class="site-controls">
     <select id="leagueSelect"></select>
     <div class="scrub">
       <button class="pill" id="playBtn" type="button" title="Watch the odds evolve week by week">▶ Play</button>
@@ -166,6 +130,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="outlook.js"></script>
+<script src="outlook.js?v=2"></script>
 </body>
 </html>
