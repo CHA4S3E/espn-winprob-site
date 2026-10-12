@@ -233,6 +233,32 @@ async function refreshPowerRatingCache(league, year, teamIds) {
   if (error) throw error;
 }
 
+// Every Supabase request is a log line (and Log Ingestion is metered), so
+// the team rows are NOT re-upserted on every poll for every week: one read
+// of the league's teams, and a write only for a team that's new or whose
+// name changed. Already-resolved teams (earlier week in this same run) are skipped.
+async function ensureTeams(leagueId, espnTeams, teamIdByEspnId) {
+  const missing = espnTeams.filter((t) => teamIdByEspnId[t.id] == null);
+  if (!missing.length) return;
+  const { data: existing, error } = await supabase
+    .from('teams').select('id, espn_team_id, espn_team_name').eq('league_id', leagueId);
+  if (error) throw error;
+  const byEspn = new Map((existing || []).map((r) => [String(r.espn_team_id), r]));
+  for (const t of missing) {
+    const name = `${t.location || ''} ${t.nickname || ''}`.trim() || `Team ${t.id}`;
+    const row = byEspn.get(String(t.id));
+    if (row && row.espn_team_name === name) { teamIdByEspnId[t.id] = row.id; continue; }
+    teamIdByEspnId[t.id] = await upsertTeam(leagueId, t);
+  }
+}
+
+// "Slow" housekeeping (stat-correction look-back weeks, the full-season
+// schedule save) doesn't need to run on every 5-minute poll -- it's done in
+// the first 10 minutes of each half hour, which still lands at least once
+// per half hour whatever the external cron cadence is. FORCE_SLOW_TASKS=1
+// runs them every time.
+const RUN_SLOW_TASKS = process.env.FORCE_SLOW_TASKS === '1' || (new Date().getMinutes() % 30) < 10;
+
 async function upsertTeam(leagueId, espnTeam) {
   const espnTeamId = espnTeam.id;
   const name = `${espnTeam.location || ''} ${espnTeam.nickname || ''}`.trim() || `Team ${espnTeamId}`;
@@ -316,9 +342,7 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
 
   const { statusMap: nflStatusMap } = nflGameData;
 
-  for (const t of leagueData.teams || []) {
-    teamIdByEspnId[t.id] = await upsertTeam(league.id, t);
-  }
+  await ensureTeams(league.id, leagueData.teams || [], teamIdByEspnId);
 
   if (saveSchedule) await saveFullSchedule(league, year, leagueData, teamIdByEspnId);
 
@@ -545,10 +569,10 @@ async function pollLeague(league) {
   const teamIdByEspnId = {};
   let totalInserted = 0;
 
-  const current = await pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen, saveSchedule: true });
+  const current = await pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen, saveSchedule: RUN_SLOW_TASKS });
   totalInserted += current.insertedCount;
 
-  for (let back = 1; back <= STAT_CORRECTION_LOOKBACK_WEEKS; back++) {
+  for (let back = 1; RUN_SLOW_TASKS && back <= STAT_CORRECTION_LOOKBACK_WEEKS; back++) {
     const lookbackWeek = week - back;
     if (lookbackWeek < 1) break;
     const result = await pollLeagueWeek(league, year, lookbackWeek, teamIdByEspnId, { quiet: true });
