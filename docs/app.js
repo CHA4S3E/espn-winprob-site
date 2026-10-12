@@ -342,15 +342,30 @@ function setTheme(next) {
 // comes back with fewer than PAGE_SIZE rows (i.e. we've reached the end).
 const PAGE_SIZE = 1000;
 async function fetchAllRows(buildQuery) {
-  let all = [];
-  let from = 0;
+  // First page alone (most queries fit in it), then further pages fetched
+  // in parallel batches rather than one round trip at a time.
+  const first = await buildQuery(0, PAGE_SIZE - 1);
+  if (first.error) throw first.error;
+  let all = first.data || [];
+  if (all.length < PAGE_SIZE) return all;
+  const BATCH = 4;
+  let page = 1;
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const { data, error } = await buildQuery(from, from + PAGE_SIZE - 1);
-    if (error) throw error;
-    all = all.concat(data || []);
-    if (!data || data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
+    const results = await Promise.all(
+      Array.from({ length: BATCH }, (_, i) => {
+        const from = (page + i) * PAGE_SIZE;
+        return buildQuery(from, from + PAGE_SIZE - 1);
+      })
+    );
+    let done = false;
+    for (const { data, error } of results) {
+      if (error) throw error;
+      all = all.concat(data || []);
+      if (!data || data.length < PAGE_SIZE) { done = true; break; }
+    }
+    if (done) break;
+    page += BATCH;
   }
   return all;
 }
@@ -1725,12 +1740,59 @@ function intensity(y) {
   return Math.min(Math.abs(y - 50) / 50, 1);
 }
 
+// Session caches so revisiting a tab/week is instant and a routine refresh
+// only downloads rows newer than what's already held.
+let weekRowsCache = { key: null, rows: [], ids: new Set(), lastTs: null };
+const teamsCache = {}; // leagueId -> { at, data }
+const TEAMS_TTL_MS = 5 * 60 * 1000;
+
+async function fetchWeekSnapshots(leagueId, year, week) {
+  const key = `${leagueId}|${year}|${week}`;
+  const c = weekRowsCache;
+  if (c.key !== key) {
+    const rows = await fetchAllRows((from, to) =>
+      sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
+    );
+    weekRowsCache = { key, rows, ids: new Set(rows.map((r) => r.id)), lastTs: rows.length ? rows[rows.length - 1].ts : null };
+    return weekRowsCache.rows;
+  }
+  // Same week as last time: only rows at/after the newest ts we hold
+  // (>= so equal-ts rows aren't missed; ids dedupe the overlap).
+  if (!c.lastTs) {
+    const rows = await fetchAllRows((from, to) =>
+      sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
+    );
+    weekRowsCache = { key, rows, ids: new Set(rows.map((r) => r.id)), lastTs: rows.length ? rows[rows.length - 1].ts : null };
+    return weekRowsCache.rows;
+  }
+  const fresh = await fetchAllRows((from, to) =>
+    sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).gte('ts', c.lastTs).order('ts').order('id').range(from, to)
+  );
+  const added = [];
+  for (const r of fresh) {
+    if (r.id != null && c.ids.has(r.id)) continue;
+    if (r.id != null) c.ids.add(r.id);
+    added.push(r);
+  }
+  if (added.length) {
+    c.rows = c.rows.concat(added);
+    c.lastTs = c.rows[c.rows.length - 1].ts;
+  }
+  return c.rows;
+}
+
+async function fetchTeamsCached(leagueId) {
+  const hit = teamsCache[leagueId];
+  if (hit && Date.now() - hit.at < TEAMS_TTL_MS) return { data: hit.data, error: null };
+  const res = await sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId);
+  if (!res.error) teamsCache[leagueId] = { at: Date.now(), data: res.data };
+  return res;
+}
+
 async function fetchMatchupData(leagueId, year, week) {
   const [snaps, { data: teams, error: teamErr }] = await Promise.all([
-    fetchAllRows((from, to) =>
-      sb.from('snapshots').select('*').eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').range(from, to)
-    ),
-    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId),
+    fetchWeekSnapshots(leagueId, year, week),
+    fetchTeamsCached(leagueId),
   ]);
   if (teamErr) throw teamErr;
 
@@ -4124,14 +4186,22 @@ const VIEW_RENDERERS = {
 const powerPicksHistoryCache = {}; // `${leagueId}-${year}` -> snapshot rows, reused across polls this session
 async function fetchPowerPicksHistory(leagueId, year) {
   const cacheKey = `${leagueId}-${year}`;
-  if (powerPicksHistoryCache[cacheKey]) return powerPicksHistoryCache[cacheKey];
-  const rows = await fetchAllRows((from, to) =>
-    sb.from('snapshots')
-      .select('year, week, matchup_id, team_id, actual_score, expected_score, win_prob, all_starters_done, ts')
+  const hit = powerPicksHistoryCache[cacheKey];
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.rows;
+  if (hit && hit.pending) return hit.pending;
+  // snapshot_summary = one row per matchup-team (latest state + pregame
+  // columns) instead of every 1-5 minute poll -- a few hundred rows rather
+  // than tens of thousands for a full season.
+  const pending = fetchAllRows((from, to) =>
+    sb.from('snapshot_summary')
+      .select('year, week, matchup_id, team_id, actual_score, expected_score, win_prob, all_starters_done, ts, pregame_win_prob, pregame_expected_score')
       .eq('league_id', leagueId).eq('year', year).order('ts').range(from, to)
-  );
-  powerPicksHistoryCache[cacheKey] = rows;
-  return rows;
+  ).then((rows) => {
+    powerPicksHistoryCache[cacheKey] = { at: Date.now(), rows };
+    return rows;
+  }).catch((err) => { delete powerPicksHistoryCache[cacheKey]; throw err; });
+  powerPicksHistoryCache[cacheKey] = { at: 0, rows: null, pending };
+  return pending;
 }
 
 // Earliest recorded win_prob per (week, matchup_id, team_id) -- the
@@ -4141,6 +4211,11 @@ async function fetchPowerPicksHistory(leagueId, year) {
 function extractPregameWinProb(rows) {
   const earliest = new Map();
   for (const r of rows) {
+    if (r.pregame_win_prob != null) {
+      // snapshot_summary already carries the earliest win_prob per game.
+      earliest.set(`${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`, { ts: '', win_prob: r.pregame_win_prob });
+      continue;
+    }
     if (r.win_prob == null) continue;
     const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
     const existing = earliest.get(key);
@@ -4323,6 +4398,10 @@ async function computePowerProjection(leagueId, year, week, byMatchup, teamInfo)
   // team's real pregame win_prob recorded from when this week's plotting
   // window opened, same number the real Power Rankings would eventually
   // use once this week actually finishes.
+  const pregameExpByKey = new Map();
+  for (const r of history) {
+    if (r.pregame_expected_score != null) pregameExpByKey.set(`${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`, r.pregame_expected_score);
+  }
   const projectedRows = history.slice();
   const bumpedTs = new Date(Date.now() + 1000).toISOString();
   for (const rows of Object.values(byMatchup)) {
@@ -4332,7 +4411,8 @@ async function computePowerProjection(leagueId, year, week, byMatchup, teamInfo)
     for (const row of [homeRow, awayRow]) {
       projectedRows.push({
         year, week, matchup_id: row.matchup_id, team_id: row.team_id,
-        actual_score: row.expected_score, all_starters_done: true, ts: bumpedTs,
+        actual_score: row.expected_score, expected_score: row.expected_score,
+        pregame_expected_score: pregameExpByKey.get(`${year}|${week}|${row.matchup_id}|${row.team_id}`) ?? null, all_starters_done: true, ts: bumpedTs,
       });
     }
   }
@@ -5018,11 +5098,19 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   // that it tracks each team's live expected_score as the week plays out,
   // same as the win-probability numbers it sits next to on the card.
   if (viewMode === 'needle') {
-    try {
-      powerProjectionByTeam = await computePowerProjection(leagueId, year, week, byMatchup, teamInfo);
-    } catch (err) {
-      console.warn('Forecast: could not compute Power Score projection (non-fatal):', err.message);
-      powerProjectionByTeam = null;
+    // Never blocks the cards: the season data is cached after the first
+    // fetch (instant afterwards). On a cold start the cards draw right away
+    // and the Power Score rows fill in as soon as the data lands.
+    const warm = !!powerPicksHistoryCache[`${leagueId}-${year}`]?.rows;
+    const compute = computePowerProjection(leagueId, year, week, byMatchup, teamInfo);
+    if (warm) {
+      try { powerProjectionByTeam = await compute; }
+      catch (err) { console.warn('Forecast: could not compute Power Score projection (non-fatal):', err.message); }
+    } else {
+      compute.then((res) => {
+        powerProjectionByTeam = res;
+        if (viewMode === 'needle' && Object.keys(charts).length) loadMatchups({ preserveCharts: true });
+      }).catch((err) => console.warn('Forecast: could not compute Power Score projection (non-fatal):', err.message));
     }
   } else {
     powerProjectionByTeam = null;
