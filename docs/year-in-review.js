@@ -3,15 +3,29 @@ const sb = window.supabase.createClient(url, anonKey);
 
 const PAGE_SIZE = 1000;
 async function fetchAllRows(buildQuery) {
-  let all = [];
-  let from = 0;
+  // First page alone, then further pages in parallel batches.
+  const first = await buildQuery(0, PAGE_SIZE - 1);
+  if (first.error) throw first.error;
+  let all = first.data || [];
+  if (all.length < PAGE_SIZE) return all;
+  const BATCH = 4;
+  let page = 1;
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const { data, error } = await buildQuery(from, from + PAGE_SIZE - 1);
-    if (error) throw error;
-    all = all.concat(data || []);
-    if (!data || data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
+    const results = await Promise.all(
+      Array.from({ length: BATCH }, (_, i) => {
+        const from = (page + i) * PAGE_SIZE;
+        return buildQuery(from, from + PAGE_SIZE - 1);
+      })
+    );
+    let done = false;
+    for (const { data, error } of results) {
+      if (error) throw error;
+      all = all.concat(data || []);
+      if (!data || data.length < PAGE_SIZE) { done = true; break; }
+    }
+    if (done) break;
+    page += BATCH;
   }
   return all;
 }
@@ -111,6 +125,8 @@ const loadingState = document.getElementById('loadingState');
 const emptyState = document.getElementById('emptyState');
 const content = document.getElementById('content');
 
+const YEAR_IN_REVIEW_WEEK = 17; // the last week of the season, same as app.js
+
 async function loadLeagues() {
   const { data, error } = await sb.from('leagues').select('id, name').order('name');
   if (error) { showEmpty('Could not load leagues -- check the console.'); console.error(error); return; }
@@ -126,12 +142,28 @@ async function loadYearsForLeague(leagueId) {
   // data (2024, 2025) still needs to show up as a selectable option even
   // though it has zero snapshot rows.
   const [{ data: snapYears, error: snapError }, { data: legacyYears, error: legacyError }] = await Promise.all([
-    sb.from('snapshots').select('year').eq('league_id', leagueId),
+    // snapshot_summary (one row per matchup-team) instead of every raw poll.
+    sb.from('snapshot_summary').select('year').eq('league_id', leagueId).eq('week', YEAR_IN_REVIEW_WEEK),
     sb.from('legacy_matchups').select('year').eq('league_id', leagueId),
   ]);
   if (snapError && legacyError) { showEmpty('Could not load season data -- check the console.'); console.error(snapError, legacyError); return; }
-  const years = [...new Set([...(snapYears || []), ...(legacyYears || [])].map((r) => r.year))].sort((a, b) => b - a);
-  if (!years.length) { showEmpty('No completed seasons yet for this league.'); return; }
+  // A tracked season only gets a Year in Review once its championship week
+  // (week 17) is completely final -- no early access. Seasons that aren't
+  // there yet are simply not offered, and nothing heavy is loaded for them.
+  let snapYearList = [...new Set((snapYears || []).map((r) => r.year))];
+  const finishedSnapYears = [];
+  for (const y of snapYearList) {
+    const { data: wk } = await sb.from('snapshot_summary').select('matchup_id, team_id, all_starters_done, ts')
+      .eq('league_id', leagueId).eq('year', y).eq('week', YEAR_IN_REVIEW_WEEK);
+    const latest = new Map();
+    for (const r of wk || []) {
+      const k = `${r.matchup_id}|${r.team_id}`;
+      if (!latest.has(k) || r.ts > latest.get(k).ts) latest.set(k, r);
+    }
+    if (latest.size && [...latest.values()].every((r) => r.all_starters_done)) finishedSnapYears.push(y);
+  }
+  const years = [...new Set([...finishedSnapYears, ...(legacyYears || []).map((r) => r.year)])].sort((a, b) => b - a);
+  if (!years.length) { showEmpty('Year in Review unlocks once the championship week (week 17) is final. Check back after the season finishes!'); return; }
   yearSelect.innerHTML = years.map((y) => `<option value="${y}">${y}</option>`).join('');
   yearSelect.onchange = () => loadYear(leagueId, Number(yearSelect.value));
   await loadYear(leagueId, years[0]);
