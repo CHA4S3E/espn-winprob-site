@@ -1,0 +1,107 @@
+/* ==========================================================================
+   Shared base for every page except the main Matchups page (which has its
+   own much larger stylesheet). One place for: color tokens (light + dark),
+   type scale, radii, page width, page header (title + subtitle), the pill
+   nav, form controls, cards, tables and status messages -- so Standings,
+   Outlook, Year in Review, Display Settings and Team Colors all look like
+   the same site. Page-specific styles stay in each page's own <style>.
+   ========================================================================== */
+
+html { scrollbar-gutter: stable; overflow-y: scroll; background: var(--bg); }
+
+:root {
+  --bg: #ffffff; --fg: #222222; --muted: #888888; --border: #eeeeee;
+  --card-bg: #ffffff; --input-bg: #fafafa; --input-border: #cccccc;
+  --btn-border: #dddddd; --btn-hover: #f5f5f5; --accent: #1a3fa0;
+  --panel-bg: #f6f7fa;
+  --win: #2e8b57; --loss: #c0392b; --tie: #888888;
+  --warn: #a04000; --warn-bg: #fff6ec; --warn-border: #ffe0b2; --warn-hover: #fff0e0;
+
+  --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
+  --font-body: 'Inter', -apple-system, Arial, sans-serif;
+  --text-xs: 11px; --text-sm: 12px; --text-base: 14px; --text-lg: 16px;
+  --text-xl: 20px; --text-2xl: 26px; --text-3xl: 34px;
+
+  /* One radius scale instead of ten different values. */
+  --r-sm: 6px;    /* small inputs, tags */
+  --r-md: 10px;   /* selects, buttons, small cards */
+  --r-lg: 14px;   /* cards, tables, panels */
+  --r-pill: 999px;
+
+  --page-narrow: 720px;
+  --page-wide: 1040px;
+}
+html[data-theme="dark"] {
+  --bg: #14161a; --fg: #e8e8e8; --muted: #9aa0a6; --border: #2a2d33;
+  --card-bg: #1c1f24; --input-bg: #20232a; --input-border: #3a3d44;
+  --btn-border: #3a3d44; --btn-hover: #262a31; --accent: #3a67df;
+  --panel-bg: #232733;
+  --win: #4fbd82; --loss: #e0574a; --tie: #9aa0a6;
+  --warn: #ff9d57; --warn-bg: #3a2a1a; --warn-border: #5a3f20; --warn-hover: #44301c;
+}
+
+::selection { background: var(--accent); color: #fff; }
+* { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-body); background: var(--bg); color: var(--fg);
+  margin: 0; padding: 30px 16px 60px; -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Page container + header ------------------------------------------ */
+.site-wrap { max-width: var(--page-narrow); margin: 0 auto; }
+.site-wrap.wide { max-width: var(--page-wide); }
+
+.page-title {
+  font-family: var(--font-display); font-weight: 400; font-size: var(--text-3xl);
+  text-align: center; margin: 0 0 4px;
+}
+.page-sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin: 0 0 24px; }
+
+/* ---- Top nav (pill tabs) ------------------------------------------------ */
+.top-nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+.top-nav-link {
+  font-family: var(--font-body); font-size: var(--text-sm); text-decoration: none; color: var(--accent);
+  padding: 6px 14px; border-radius: var(--r-pill); border: 1px solid var(--border);
+  background: var(--card-bg); cursor: pointer; line-height: 1.4;
+}
+.top-nav-link:hover { background: var(--btn-hover); }
+.top-nav-link.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ---- Controls ------------------------------------------------------------ */
+.site-controls { display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap; margin: 0 0 24px; }
+select, input[type="number"], input[type="text"] {
+  padding: 7px 12px; font-size: var(--text-base); font-family: var(--font-body);
+  border-radius: var(--r-md); border: 1px solid var(--input-border);
+  background: var(--input-bg); color: var(--fg);
+}
+.pill-btn {
+  background: var(--card-bg); border: 1px solid var(--border); color: var(--fg);
+  border-radius: var(--r-pill); padding: 7px 14px; font-size: var(--text-base);
+  font-family: var(--font-body); cursor: pointer;
+}
+.pill-btn:hover { border-color: var(--accent); }
+
+/* ---- Cards, section headings, status text ------------------------------- */
+.site-card {
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 16px 18px;
+}
+.section-title {
+  font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl);
+  text-align: center; margin: 36px 0 2px;
+}
+.section-sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin: 0 0 16px; }
+#emptyState, #loadingState {
+  text-align: center; color: var(--muted); font-size: var(--text-base); padding: 40px 20px;
+}
+a.back-link, a.back {
+  display: block; text-align: center; margin-top: 30px; font-size: var(--text-base);
+  color: var(--accent); text-decoration: none;
+}
+a.back-link:hover, a.back:hover { text-decoration: underline; }
+
+@media (max-width: 480px) {
+  body { padding: 20px 12px 48px; }
+  .page-title { font-size: var(--text-2xl); }
+}
