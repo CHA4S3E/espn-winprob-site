@@ -15,15 +15,29 @@ const sb = window.supabase.createClient(url, anonKey);
 
 const PAGE_SIZE = 1000;
 async function fetchAllRows(buildQuery) {
-  let all = [];
-  let from = 0;
+  // First page alone, then further pages in parallel batches.
+  const first = await buildQuery(0, PAGE_SIZE - 1);
+  if (first.error) throw first.error;
+  let all = first.data || [];
+  if (all.length < PAGE_SIZE) return all;
+  const BATCH = 4;
+  let page = 1;
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const { data, error } = await buildQuery(from, from + PAGE_SIZE - 1);
-    if (error) throw error;
-    all = all.concat(data || []);
-    if (!data || data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
+    const results = await Promise.all(
+      Array.from({ length: BATCH }, (_, i) => {
+        const from = (page + i) * PAGE_SIZE;
+        return buildQuery(from, from + PAGE_SIZE - 1);
+      })
+    );
+    let done = false;
+    for (const { data, error } of results) {
+      if (error) throw error;
+      all = all.concat(data || []);
+      if (!data || data.length < PAGE_SIZE) { done = true; break; }
+    }
+    if (done) break;
+    page += BATCH;
   }
   return all;
 }
