@@ -1,7 +1,24 @@
+// If config.js failed to load (wrong path, 404, etc.), SUPABASE_CONFIG
+// won't exist -- destructuring it directly would throw immediately and
+// halt this entire script before anything else runs, which is its own
+// silent-failure trap (the page would just sit on its default "Loading"
+// text forever with nothing in the console explaining why).
+if (!window.SUPABASE_CONFIG) {
+  document.getElementById('loadingState').textContent =
+    'Could not find Supabase configuration (config.js). Check that config.js is deployed alongside this page.';
+  throw new Error('window.SUPABASE_CONFIG is missing -- config.js did not load or ran after this script');
+}
 const { url, anonKey } = window.SUPABASE_CONFIG;
 const sb = window.supabase.createClient(url, anonKey);
 
+// Supabase's default 1000-row cap on unpaginated queries -- ported from
+// year-in-review.js, which solved this same problem first. Needed here now
+// that Power Rankings' luck-adjustment term requires each matchup's EARLY
+// (pregame) win_prob polls, not just the final all_starters_done=true row
+// the win-loss table alone would need -- so the query below can no longer
+// filter down to just-the-finals server-side.
 const PAGE_SIZE = 1000;
+const lastLoad = { leagueId: null, rows: null, teams: null, maxTs: null }; // for incremental live refreshes
 async function fetchAllRows(buildQuery) {
   // First page alone, then further pages in parallel batches.
   const first = await buildQuery(0, PAGE_SIZE - 1);
@@ -30,532 +47,32 @@ async function fetchAllRows(buildQuery) {
   return all;
 }
 
-// Logo if uploaded, else the older emoji field, else nothing -- same
-// fallback order as the main matchup page and standings.
-// Same color-adjustment logic app.js already applies to the ESPN view --
-// ported here rather than shared, since this is a separate, standalone
-// script file. Without this, a team color dark enough to work fine on a
-// light background (which is genuinely most colors -- this only
-// intervenes on ones close to true black) would stay exactly that dark,
-// unreadable value even when this page is in dark mode, since nothing
-// here was otherwise theme-aware about team colors at all.
-const yirTheme = document.documentElement.getAttribute('data-theme') || 'light';
-function yirHexToRgb(hex) {
-  const h = hex.replace('#', '');
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
-  const num = parseInt(full, 16);
-  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
-}
-function yirRgbToHex(r, g, b) {
-  return '#' + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
-}
-function yirRgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h, s, l = (max + min) / 2;
-  if (max === min) { h = s = 0; }
-  else {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-      case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
-    }
-    h /= 6;
-  }
-  return { h, s, l };
-}
-function yirHslToRgb(h, s, l) {
-  let r, g, b;
-  if (s === 0) { r = g = b = l; }
-  else {
-    const hue2rgb = (p, q, t) => {
-      if (t < 0) t += 1;
-      if (t > 1) t -= 1;
-      if (t < 1 / 6) return p + (q - p) * 6 * t;
-      if (t < 1 / 2) return q;
-      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-      return p;
-    };
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    const p = 2 * l - q;
-    r = hue2rgb(p, q, h + 1 / 3);
-    g = hue2rgb(p, q, h);
-    b = hue2rgb(p, q, h - 1 / 3);
-  }
-  return { r: r * 255, g: g * 255, b: b * 255 };
-}
-const YIR_MIN_LIGHTNESS = 0.20;
-const YIR_TARGET_LIGHTNESS = 0.50;
-function yirIsTooCloseToBlack(hex) {
-  try {
-    const { r, g, b } = yirHexToRgb(hex);
-    return yirRgbToHsl(r, g, b).l < YIR_MIN_LIGHTNESS;
-  } catch {
-    return false;
-  }
-}
-function themedColor(hex) {
-  if (yirTheme !== 'dark' || !yirIsTooCloseToBlack(hex)) return hex;
-  try {
-    const { r, g, b } = yirHexToRgb(hex);
-    const { h, s } = yirRgbToHsl(r, g, b);
-    const { r: nr, g: ng, b: nb } = yirHslToRgb(h, s, YIR_TARGET_LIGHTNESS);
-    return yirRgbToHex(nr, ng, nb);
-  } catch {
-    return hex; // malformed color -- don't crash the page over it
-  }
-}
-
-function renderTeamIcon(team) {
-  if (!team) return '';
-  if (team.logoUrl) return `<img class="team-icon-img" src="${team.logoUrl}" alt="">`;
-  if (team.emoji) return team.emoji;
-  return '';
-}
-function teamNameHtml(team) {
-  if (!team) return 'Unknown';
-  return `${renderTeamIcon(team)}<span style="color:${team.color}">${team.name}</span>`;
+function showError(headline, detail) {
+  console.error(headline, detail);
+  const loadingEl = document.getElementById('loadingState');
+  loadingEl.style.display = 'block';
+  loadingEl.textContent = `${headline} -- check the browser console for details.`;
+  document.getElementById('standingsTable').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'none';
 }
 
 const leagueSelect = document.getElementById('leagueSelect');
-const yearSelect = document.getElementById('yearSelect');
+const weekSelect = document.getElementById('weekSelect');
 const loadingState = document.getElementById('loadingState');
+const standingsTable = document.getElementById('standingsTable');
 const emptyState = document.getElementById('emptyState');
-const content = document.getElementById('content');
+const subtext = document.getElementById('subtext');
 
-async function loadLeagues() {
-  const { data, error } = await sb.from('leagues').select('id, name').order('name');
-  if (error) { showEmpty('Could not load leagues -- check the console.'); console.error(error); return; }
-  if (!data.length) { showEmpty('No leagues found.'); return; }
-  leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
-  leagueSelect.onchange = () => loadYearsForLeague(leagueSelect.value);
-  await loadYearsForLeague(data[0].id);
-}
-
-async function loadYearsForLeague(leagueId) {
-  // Merge years from BOTH the real tracker (snapshots) and manually-
-  // entered legacy seasons (legacy_matchups) -- a year with only legacy
-  // data (2024, 2025) still needs to show up as a selectable option even
-  // though it has zero snapshot rows.
-  const [{ data: snapYears, error: snapError }, { data: legacyYears, error: legacyError }] = await Promise.all([
-    sb.from('snapshots').select('year').eq('league_id', leagueId),
-    sb.from('legacy_matchups').select('year').eq('league_id', leagueId),
-  ]);
-  if (snapError && legacyError) { showEmpty('Could not load season data -- check the console.'); console.error(snapError, legacyError); return; }
-  const years = [...new Set([...(snapYears || []), ...(legacyYears || [])].map((r) => r.year))].sort((a, b) => b - a);
-  if (!years.length) { showEmpty('No completed seasons yet for this league.'); return; }
-  yearSelect.innerHTML = years.map((y) => `<option value="${y}">${y}</option>`).join('');
-  yearSelect.onchange = () => loadYear(leagueId, Number(yearSelect.value));
-  await loadYear(leagueId, years[0]);
-}
-
-function showEmpty(message) {
-  loadingState.style.display = 'none';
-  content.style.display = 'none';
-  emptyState.style.display = 'block';
-  emptyState.textContent = message;
-}
-
-// Converts legacy_matchups rows (one row per matchup, both scores
-// together) into the same finalRows shape buildFinalRows produces from
-// real snapshot data (one row PER TEAM per matchup) -- so every existing
-// stat function can consume either source identically without knowing
-// which one it's looking at. No win_prob or expected_score fields exist
-// here, since that data was never tracked for these seasons -- callers
-// must not run the projection- or win_prob-dependent stats against this.
-function buildLegacyFinalRows(legacyMatchups) {
-  const rows = [];
-  for (const m of legacyMatchups) {
-    rows.push({ year: m.year, week: m.week, matchup_id: m.id, team_id: m.home_team_id, actual_score: m.home_score, all_starters_done: true, ts: `${m.year}-${String(m.week).padStart(2, '0')}-1` });
-    rows.push({ year: m.year, week: m.week, matchup_id: m.id, team_id: m.away_team_id, actual_score: m.away_score, all_starters_done: true, ts: `${m.year}-${String(m.week).padStart(2, '0')}-2` });
-  }
-  return rows;
-}
-
-async function loadYear(leagueId, year) {
-  loadingState.style.display = 'block';
-  content.style.display = 'none';
-  emptyState.style.display = 'none';
-
-  // power_rating_history (see 017_performance_latest_snapshots_and_power_cache.sql)
-  // is the poller's own precomputed Power Score per week, refreshed once
-  // per poll cycle rather than re-solved by every visitor's browser on
-  // every page load -- see the cache-first check in renderEverything
-  // below. Queried best-effort alongside everything else: a missing table
-  // (not yet migrated) or an empty result (a season the poller hasn't
-  // caught up on since this cache was added) both just mean "no cache
-  // yet," not a page load failure, so errors here are swallowed rather
-  // than propagated like teamsError below.
-  const [{ data: liveTeams, error: teamsError }, allSnapshotRows, { data: seasonResults }, { data: league }, cachedPowerHistoryResult] = await Promise.all([
-    sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId),
-    fetchAllRows((from, to) =>
-      sb.from('snapshots')
-        .select('year, week, matchup_id, team_id, is_home, actual_score, expected_score, win_prob, all_starters_done, ts')
-        .eq('league_id', leagueId).eq('year', year).order('ts').range(from, to)
-    ),
-    sb.from('season_results').select('place, legacy_team_id, live_team_id').eq('league_id', leagueId).eq('year', year),
-    sb.from('leagues').select('playoff_spots').eq('id', leagueId).single(),
-    sb.from('power_rating_history')
-      .select('week, team_id, score, games_played')
-      .eq('league_id', leagueId).eq('year', year).order('week')
-      .then((r) => r, () => ({ data: null, error: true })),
-  ]);
-  if (teamsError) { showEmpty('Could not load team info -- check the console.'); console.error(teamsError); return; }
-  const cachedPowerHistory = cachedPowerHistoryResult && !cachedPowerHistoryResult.error ? cachedPowerHistoryResult.data : null;
-
-  let finalRows, matchupTimeSeries, teamInfoSource, isLite;
-
-  if (allSnapshotRows.length) {
-    // The normal, fully-tracked path.
-    isLite = false;
-    finalRows = buildFinalRows(allSnapshotRows);
-    matchupTimeSeries = buildMatchupTimeSeries(allSnapshotRows);
-    teamInfoSource = {};
-    for (const t of liveTeams) {
-      const settings = t.team_settings || {};
-      teamInfoSource[t.id] = {
-        name: settings.display_name || t.espn_team_name,
-        color: themedColor(settings.color || '#888888'),
-        emoji: settings.emoji || '',
-        logoUrl: settings.logo_url || '',
-      };
-    }
-  } else {
-    // No real tracking data for this year at all -- fall back to
-    // manually-entered legacy results, if any exist. Each side of a
-    // legacy matchup can be EITHER a still-active team (home_live_team_id,
-    // pointing at the same `teams` table already queried above) or a
-    // defunct one (home_legacy_team_id) -- coalesced into a single
-    // team_id per side right here, so buildLegacyFinalRows and
-    // everything downstream never needs to know or care which table a
-    // given team actually came from.
-    const [{ data: legacyMatchups, error: legacyMatchupsError }, { data: legacyTeams, error: legacyTeamsError }] = await Promise.all([
-      sb.from('legacy_matchups')
-        .select('id, week, home_legacy_team_id, away_legacy_team_id, home_live_team_id, away_live_team_id, home_score, away_score')
-        .eq('league_id', leagueId).eq('year', year),
-      sb.from('legacy_teams').select('id, name, color, logo_url, emoji').eq('league_id', leagueId),
-    ]);
-    if (legacyMatchupsError || legacyTeamsError) { showEmpty('Could not load historical season data -- check the console.'); console.error(legacyMatchupsError, legacyTeamsError); return; }
-    if (!legacyMatchups || !legacyMatchups.length) { showEmpty(`No data yet for ${year} -- check back once games have been played.`); return; }
-
-    isLite = true;
-    const coalescedMatchups = legacyMatchups.map((m) => ({
-      id: m.id, year, week: m.week,
-      home_team_id: m.home_legacy_team_id || m.home_live_team_id,
-      away_team_id: m.away_legacy_team_id || m.away_live_team_id,
-      home_score: m.home_score, away_score: m.away_score,
-    }));
-    finalRows = buildLegacyFinalRows(coalescedMatchups);
-    matchupTimeSeries = []; // no poll history exists for legacy years -- win_prob-dependent stats correctly find nothing and skip themselves
-
-    // Merge BOTH sources into one lookup -- a legacy matchup can reference
-    // either, so team info needs to resolve regardless of which table the
-    // id actually lives in. liveTeams was already fetched above for the
-    // normal path; reused here rather than queried a second time.
-    teamInfoSource = {};
-    for (const t of liveTeams) {
-      const settings = t.team_settings || {};
-      teamInfoSource[t.id] = {
-        name: settings.display_name || t.espn_team_name,
-        color: themedColor(settings.color || '#888888'),
-        emoji: settings.emoji || '',
-        logoUrl: settings.logo_url || '',
-      };
-    }
-    for (const t of legacyTeams || []) {
-      teamInfoSource[t.id] = { name: t.name, color: themedColor(t.color || '#888888'), emoji: t.emoji || '', logoUrl: t.logo_url || '' };
-    }
-  }
-
-  const standings = computeStandings(finalRows, teamInfoSource);
-  if (!standings.length) { showEmpty(`No completed matchups yet for ${year}.`); return; }
-
-  // null for legacy years (no poll history was ever recorded, so there's
-  // no pregame win_prob to look up) -- computePowerRatings' luck term
-  // already handles a null map by contributing 0 for every team, same
-  // graceful-degrade convention as matchupTimeSeries above.
-  const pregameWinProbByKey = allSnapshotRows.length ? extractPregameWinProb(allSnapshotRows) : null;
-  // Same idea, for computeProjectionStats -- see extractPregameExpectedScore's
-  // own comment for why a final row's own expected_score can't be used
-  // for this (it's converged to equal actual_score by the time a matchup
-  // is done, not the original projection).
-  const pregameExpectedByKey = allSnapshotRows.length ? extractPregameExpectedScore(allSnapshotRows) : null;
-
-  // Only pass through teams that actually appear in THIS year's
-  // standings -- otherwise the logo banner (and anywhere else teamInfo
-  // feeds) would show every team ever registered for the league,
-  // including ones that didn't exist yet or had already left by this
-  // particular year. Applies to both the live and legacy paths, since
-  // it's the same correctness issue either way, just far more visible
-  // for legacy years where team rosters commonly differ year to year.
-  const teamInfo = {};
-  for (const s of standings) teamInfo[s.teamId] = teamInfoSource[s.teamId];
-
-  const maxWeek = Math.max(...finalRows.map((r) => r.week));
-
-  renderEverything({
-    year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, isLite, pregameWinProbByKey, pregameExpectedByKey, cachedPowerHistory,
-    // Coalesced here so renderPodium never needs to know which table a
-    // given result's team id actually came from -- same pattern as the
-    // legacy_matchups fix.
-    podiumResults: (seasonResults || []).map((r) => ({ place: r.place, team_id: r.legacy_team_id || r.live_team_id })),
-    playoffSpots: league ? league.playoff_spots : null,
-  });
-
-  loadingState.style.display = 'none';
-  content.style.display = 'block';
-}
-
-function initials(name) { return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase(); }
-
-function renderLogoBanner(teamInfo) {
-  const teams = Object.values(teamInfo);
-  if (!teams.length) return;
-  // No background on a real logo -- lets an uploaded PNG's own
-  // transparency actually show through to the page behind it, rather
-  // than covering it with a flat team-color square regardless. The
-  // fallback (a team with no logo yet) still needs a colored background,
-  // since plain initials with no fill would be unreadable.
-  const chipHtml = (t) => t.logoUrl
-    ? `<div class="logo-chip"><img src="${t.logoUrl}" alt=""></div>`
-    : `<div class="logo-chip" style="background:${t.color}">${initials(t.name)}</div>`;
-  // Each row cycles through ALL teams repeatedly (not a one-time split)
-  // so a row always has enough chips to look full and dense, even with
-  // only a handful of teams in the league -- a strict no-repeat split
-  // would leave a short league's rows sparse with big gaps. Each row
-  // starts at a different offset into the team list so the three rows
-  // don't all show the identical sequence, then each row's full chip
-  // list is duplicated once for the CSS loop (translateX 0 to -50%) to
-  // have no visible seam.
-  const CHIPS_PER_ROW = Math.max(10, teams.length);
-  const rows = [[], [], []];
-  for (let rowIdx = 0; rowIdx < 3; rowIdx++) {
-    for (let i = 0; i < CHIPS_PER_ROW; i++) {
-      rows[rowIdx].push(teams[(i + rowIdx) % teams.length]);
-    }
-  }
-  rows.forEach((rowTeams, i) => {
-    const el = document.getElementById(`logoRow${i + 1}`);
-    if (!rowTeams.length) { el.innerHTML = ''; return; }
-    const html = rowTeams.map(chipHtml).join('');
-    el.innerHTML = html + html;
-  });
-}
-
-function renderPodium(standings, teamInfo, podiumResults) {
-  const placeClass = { 1: 'gold', 2: 'silver', 3: 'bronze' };
-  const placeTrophy = { 1: '🥇', 2: '🥈', 3: '🥉' };
-  const byPlace = {};
-  for (const r of podiumResults) byPlace[r.place] = r.team_id;
-
-  document.getElementById('podium').innerHTML = [2, 1, 3].map((place) => {
-    const teamId = byPlace[place];
-    const team = teamId ? teamInfo[teamId] : null;
-    const standingsEntry = teamId ? standings.find((s) => s.teamId === teamId) : null;
-    const record = standingsEntry ? `${standingsEntry.wins}-${standingsEntry.losses}${standingsEntry.ties ? '-' + standingsEntry.ties : ''}` : '';
-    return `
-      <div class="podium-slot ${placeClass[place]}">
-        <div class="podium-team-name">${team ? teamNameHtml(team) : '<span class="podium-unset">?</span>'}</div>
-        <div class="podium-record">${record}</div>
-        <div class="podium-block"><span class="podium-trophy">${team ? placeTrophy[place] : '?'}</span></div>
-      </div>
-    `;
-  }).join('');
-}
-
-function renderPeoplesChampion(champion, teamInfo, standings) {
-  const el = document.getElementById('peoplesChampionAward');
-  if (!champion) { el.innerHTML = ''; return; }
-  const team = teamInfo[champion.teamId];
-  const finishText = champion.actualRank === null
-    ? "didn't finish on the podium at all"
-    : `finished ${ordinal(champion.actualRank)}, not 1st`;
-  el.innerHTML = `
-    <div class="award-card" style="--accent-color:#e0b23d">
-      <div class="award-label">👑 The People's Champion</div>
-      <div class="award-headline">${teamNameHtml(team)}</div>
-      <div class="award-detail">Scored more total points than anyone in the league this season (${champion.totalPoints.toFixed(1)}) -- but ${finishText}. Standings are win-loss, not points. This is who actually had the best team.</div>
-    </div>
-  `;
-}
-
-function ordinal(n) {
-  const s = ['th', 'st', 'nd', 'rd'];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
-}
-
-function drawRaceChart(raceData, teamInfo, maxWeek) {
-  const svg = document.getElementById('raceSvg');
-  const teamIds = Object.keys(raceData);
-  if (!teamIds.length) { svg.innerHTML = ''; document.getElementById('raceLegend').innerHTML = ''; return; }
-  const numTeams = teamIds.length;
-  const W = 800, H = 280, padL = 24, padR = 10, padT = 10, padB = 24;
-  const x = (week) => padL + ((week - 1) / Math.max(1, maxWeek - 1)) * (W - padL - padR);
-  const y = (rank) => padT + ((rank - 1) / Math.max(1, numTeams - 1)) * (H - padT - padB);
-
-  let svgHtml = '';
-  for (let r = 1; r <= numTeams; r++) {
-    svgHtml += `<line x1="${padL}" y1="${y(r)}" x2="${W - padR}" y2="${y(r)}" class="yir-race-gridline" stroke-width="1"/>`;
-    svgHtml += `<text x="4" y="${y(r) + 4}" font-size="10" class="yir-race-tick">${r}</text>`;
-  }
-  for (const teamId of teamIds) {
-    const team = teamInfo[teamId];
-    if (!team || !raceData[teamId].length) continue;
-    const points = raceData[teamId].map((p) => `${x(p.week).toFixed(1)},${y(p.rank).toFixed(1)}`).join(' ');
-    svgHtml += `<polyline points="${points}" fill="none" stroke="${team.color}" stroke-width="2.5" opacity="0.9"/>`;
-  }
-  svg.innerHTML = svgHtml;
-
-  document.getElementById('raceLegend').innerHTML = teamIds.filter((id) => teamInfo[id]).map((id) => {
-    const t = teamInfo[id];
-    return `<div class="race-legend-item"><span class="race-legend-swatch" style="background:${t.color}"></span>${renderTeamIcon(t)}${t.name}</div>`;
-  }).join('');
-}
-
-// Same overall approach as drawRaceChart, but the y-axis is a FIXED 0-100
-// scale (every team's Power Score is already normalized to that range)
-// rather than a scale that depends on how many teams are in the league --
-// gridlines sit at fixed round numbers (0/25/50/75/100) instead of one per
-// team/rank.
-function drawPowerRatingChart(powerHistory, teamInfo, maxWeek) {
-  const svg = document.getElementById('powerSvg');
-  if (!svg) return;
-  const teamIds = Object.keys(powerHistory);
-  if (!teamIds.length) { svg.innerHTML = ''; document.getElementById('powerLegend').innerHTML = ''; return; }
-  const W = 800, H = 280, padL = 28, padR = 10, padT = 10, padB = 24;
-  const x = (week) => padL + ((week - 1) / Math.max(1, maxWeek - 1)) * (W - padL - padR);
-  const y = (score) => padT + ((100 - score) / 100) * (H - padT - padB);
-
-  let svgHtml = '';
-  for (const tick of [0, 25, 50, 75, 100]) {
-    svgHtml += `<line x1="${padL}" y1="${y(tick)}" x2="${W - padR}" y2="${y(tick)}" class="yir-race-gridline" stroke-width="1"/>`;
-    svgHtml += `<text x="2" y="${y(tick) + 4}" font-size="10" class="yir-race-tick">${tick}</text>`;
-  }
-  for (const teamId of teamIds) {
-    const team = teamInfo[teamId];
-    if (!team || !powerHistory[teamId].length) continue;
-    const points = powerHistory[teamId].map((p) => `${x(p.week).toFixed(1)},${y(p.score).toFixed(1)}`).join(' ');
-    svgHtml += `<polyline points="${points}" fill="none" stroke="${team.color}" stroke-width="2.5" opacity="0.9"/>`;
-  }
-  svg.innerHTML = svgHtml;
-
-  document.getElementById('powerLegend').innerHTML = teamIds.filter((id) => teamInfo[id]).map((id) => {
-    const t = teamInfo[id];
-    return `<div class="race-legend-item"><span class="race-legend-swatch" style="background:${t.color}"></span>${renderTeamIcon(t)}${t.name}</div>`;
-  }).join('');
-}
-
-// Crops the win_prob graph to the window where the upset actually
-// happened -- a few polls before the peak through a few polls after the
-// trigger -- rather than the whole game, so the moment is legible
-// without needing to read a multi-hour axis.
-// Crops the win_prob graph to the drama window -- a couple polls before
-// the peak through to the ACTUAL END of the game, not just a few polls
-// past the trigger, so the resolution is visible, not cut off right as
-// the collapse starts. Styled to match the real ESPN card's chart:
-// segment-colored by whichever side is actually ahead at each point
-// (home color above the 50% line, away color below), with a gradient
-// fill down to that same 50% line, rather than one flat-colored line
-// for the whole thing.
-function buildUpsetCropChart(homeWinProbs, episode) {
-  const favoritePcts = homeWinProbs.map((v) => (episode.favoriteSide === 'home' ? v : 100 - v));
-  const peakIdx = favoritePcts.indexOf(episode.peakFavoritePct);
-  const triggerFloor = episode.peakFavoritePct - 25;
-  let triggerIdx = favoritePcts.findIndex((v, i) => i > peakIdx && v < triggerFloor);
-  if (triggerIdx === -1) triggerIdx = favoritePcts.length - 1;
-
-  const startIdx = Math.max(0, peakIdx - 2);
-  const endIdx = homeWinProbs.length - 1; // always run to the actual end of the game, not just past the trigger
-  const croppedHome = homeWinProbs.slice(startIdx, endIdx + 1);
-  const localPeakIdx = peakIdx - startIdx;
-  const localTriggerIdx = triggerIdx - startIdx;
-  const localFinalIdx = croppedHome.length - 1;
-
-  const W = 500, H = 140, padL = 28, padR = 10, padT = 16, padB = 20;
-  const xPos = (i) => padL + (croppedHome.length > 1 ? (i / (croppedHome.length - 1)) * (W - padL - padR) : (W - padL - padR) / 2);
-  const yPos = (v) => padT + ((100 - v) / 100) * (H - padT - padB);
-  const y50 = yPos(50);
-
-  const homeColor = episode.homeColor, awayColor = episode.awayColor;
-  const gradId = `yirGrad${Math.random().toString(36).slice(2, 8)}`; // unique per chart so multiple crops on one page don't share/clobber defs
-
-  // Split into segments colored by whichever side is actually ahead,
-  // interpolating the exact crossing point whenever a segment straddles
-  // the 50% line -- same convention the real ESPN chart uses.
-  const segments = [];
-  for (let i = 0; i < croppedHome.length - 1; i++) {
-    const v1 = croppedHome[i], v2 = croppedHome[i + 1];
-    const side1 = v1 >= 50 ? 'home' : 'away';
-    const side2 = v2 >= 50 ? 'home' : 'away';
-    if (side1 === side2) {
-      segments.push({ x1: i, y1: v1, x2: i + 1, y2: v2, side: side1 });
-    } else {
-      const t = (50 - v1) / (v2 - v1);
-      const crossX = i + t;
-      segments.push({ x1: i, y1: v1, x2: crossX, y2: 50, side: side1 });
-      segments.push({ x1: crossX, y1: 50, x2: i + 1, y2: v2, side: side2 });
-    }
-  }
-
-  const fillPolys = segments.map((s) => {
-    const x1 = xPos(s.x1), y1 = yPos(s.y1), x2 = xPos(s.x2), y2 = yPos(s.y2);
-    const fillId = s.side === 'home' ? `${gradId}Home` : `${gradId}Away`;
-    return `<polygon points="${x1.toFixed(1)},${y1.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y50.toFixed(1)} ${x1.toFixed(1)},${y50.toFixed(1)}" fill="url(#${fillId})"/>`;
-  }).join('');
-
-  const lines = segments.map((s) => {
-    const color = s.side === 'home' ? homeColor : awayColor;
-    return `<line x1="${xPos(s.x1).toFixed(1)}" y1="${yPos(s.y1).toFixed(1)}" x2="${xPos(s.x2).toFixed(1)}" y2="${yPos(s.y2).toFixed(1)}" stroke="${color}" stroke-width="2.5"/>`;
-  }).join('');
-
-  let html = `
-    <defs>
-      <linearGradient id="${gradId}Home" x1="0" y1="${padT}" x2="0" y2="${y50}" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="${homeColor}" stop-opacity="0.35"/>
-        <stop offset="100%" stop-color="${homeColor}" stop-opacity="0"/>
-      </linearGradient>
-      <linearGradient id="${gradId}Away" x1="0" y1="${H - padB}" x2="0" y2="${y50}" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="${awayColor}" stop-opacity="0.35"/>
-        <stop offset="100%" stop-color="${awayColor}" stop-opacity="0"/>
-      </linearGradient>
-    </defs>
-    ${fillPolys}
-    <line x1="${padL}" y1="${y50}" x2="${W - padR}" y2="${y50}" class="yir-chart-baseline" stroke-width="1" stroke-dasharray="3,3"/>
-    ${lines}
-  `;
-
-  if (localPeakIdx >= 0 && localPeakIdx < croppedHome.length) {
-    const peakColor = episode.favoriteSide === 'home' ? homeColor : awayColor;
-    html += `
-      <circle cx="${xPos(localPeakIdx)}" cy="${yPos(croppedHome[localPeakIdx])}" r="4" fill="${peakColor}" class="yir-marker-outline" stroke-width="1.5"/>
-      <text x="${xPos(localPeakIdx)}" y="${yPos(croppedHome[localPeakIdx]) - 10}" font-size="10" fill="${peakColor}" text-anchor="middle">Peak ${episode.peakFavoritePct.toFixed(0)}%</text>
-    `;
-  }
-  if (localTriggerIdx >= 0 && localTriggerIdx < croppedHome.length && localTriggerIdx !== localPeakIdx) {
-    const triggerFavoritePct = episode.favoriteSide === 'home' ? croppedHome[localTriggerIdx] : 100 - croppedHome[localTriggerIdx];
-    const triggerActualSide = croppedHome[localTriggerIdx] >= 50 ? 'home' : 'away';
-    const triggerColor = triggerActualSide === 'home' ? homeColor : awayColor;
-    html += `
-      <circle cx="${xPos(localTriggerIdx)}" cy="${yPos(croppedHome[localTriggerIdx])}" r="4" fill="#ff8a3d" class="yir-marker-outline" stroke-width="1.5"/>
-      <text x="${xPos(localTriggerIdx)}" y="${yPos(croppedHome[localTriggerIdx]) + 16}" font-size="10" fill="#ff8a3d" text-anchor="middle">Triggered ${triggerFavoritePct.toFixed(0)}%</text>
-    `;
-  }
-  if (localFinalIdx !== localPeakIdx && localFinalIdx !== localTriggerIdx) {
-    const finalSide = croppedHome[localFinalIdx] >= 50 ? 'home' : 'away';
-    const finalColor = finalSide === 'home' ? homeColor : awayColor;
-    html += `<circle cx="${xPos(localFinalIdx)}" cy="${yPos(croppedHome[localFinalIdx])}" r="4" fill="${finalColor}" class="yir-marker-outline" stroke-width="1.5"/>`;
-  }
-
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:140px;overflow:visible">${html}</svg>`;
-}
+let allRows = []; // every snapshot row for the currently-selected league, all years/weeks
+let teamInfo = {}; // team_id -> { name, color }
 
 // ============================================================
-// computeStandings -- reused verbatim from standings.js
+// Aggregation -- verified separately against six scenarios (a normal
+// season, a bye week, snapshot deduplication, a still-live matchup, a
+// points-based tiebreaker, and the "through week X" historical filter)
+// before being wired up to real data here.
 // ============================================================
-function computeStandings(rows, teamInfoMap, throughWeek) {
+function computeStandings(rows, teamInfoMap, throughWeek, includeProjected = false) {
   const latestByKey = new Map();
   for (const r of rows) {
     if (throughWeek != null && r.week > throughWeek) continue;
@@ -563,21 +80,48 @@ function computeStandings(rows, teamInfoMap, throughWeek) {
     const existing = latestByKey.get(key);
     if (!existing || new Date(r.ts) > new Date(existing.ts)) latestByKey.set(key, r);
   }
+
   const matchupGroups = new Map();
   for (const r of latestByKey.values()) {
     const mKey = `${r.year}|${r.week}|${r.matchup_id}`;
     if (!matchupGroups.has(mKey)) matchupGroups.set(mKey, []);
     matchupGroups.get(mKey).push(r);
   }
+
   const records = new Map();
   function getRecord(teamId) {
-    if (!records.has(teamId)) records.set(teamId, { wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgainst: 0, resultsByWeek: [] });
+    if (!records.has(teamId)) records.set(teamId, { wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgainst: 0, projGames: 0, resultsByWeek: [] });
     return records.get(teamId);
   }
+
+  // Projection only ever applies to the NEWEST week in view -- the one
+  // actually in progress (or queued up next). An older week that's still
+  // marked unfinished is stale data, not a game anyone's waiting on, and
+  // counting it as a "projected" result would quietly corrupt the table.
+  let newestWeek = 0;
+  for (const r of latestByKey.values()) if (r.week > newestWeek) newestWeek = r.week;
+
   for (const sides of matchupGroups.values()) {
     if (sides.length !== 2) continue;
     const [a, b] = sides;
-    if (!a.all_starters_done || !b.all_starters_done) continue;
+    if (!a.all_starters_done || !b.all_starters_done) {
+      if (!includeProjected || a.week !== newestWeek) continue;
+      // Live/upcoming matchup: each side's EXPECTED final score stands in
+      // for points (actual-so-far plus what's still projected to come),
+      // and the side the model currently favors takes the projected win.
+      // Exactly 50/50 falls back to expected score, then a projected tie.
+      const projA = a.expected_score != null ? a.expected_score : a.actual_score;
+      const projB = b.expected_score != null ? b.expected_score : b.actual_score;
+      const recA = getRecord(a.team_id), recB = getRecord(b.team_id);
+      recA.pointsFor += projA; recA.pointsAgainst += projB;
+      recB.pointsFor += projB; recB.pointsAgainst += projA;
+      recA.projGames++; recB.projGames++;
+      const edge = a.win_prob !== b.win_prob ? a.win_prob - b.win_prob : projA - projB;
+      if (edge > 0) { recA.wins++; recB.losses++; }
+      else if (edge < 0) { recB.wins++; recA.losses++; }
+      else { recA.ties++; recB.ties++; }
+      continue;
+    }
     const recA = getRecord(a.team_id), recB = getRecord(b.team_id);
     recA.pointsFor += a.actual_score; recA.pointsAgainst += b.actual_score;
     recB.pointsFor += b.actual_score; recB.pointsAgainst += a.actual_score;
@@ -585,33 +129,76 @@ function computeStandings(rows, teamInfoMap, throughWeek) {
     if (a.actual_score > b.actual_score) { recA.wins++; recB.losses++; resultA = 'W'; resultB = 'L'; }
     else if (b.actual_score > a.actual_score) { recB.wins++; recA.losses++; resultA = 'L'; resultB = 'W'; }
     else { recA.ties++; recB.ties++; resultA = 'T'; resultB = 'T'; }
-    recA.resultsByWeek.push({ week: a.week, result: resultA, opponentId: b.team_id, ownScore: a.actual_score, oppScore: b.actual_score });
-    recB.resultsByWeek.push({ week: b.week, result: resultB, opponentId: a.team_id, ownScore: b.actual_score, oppScore: a.actual_score });
+    recA.resultsByWeek.push({ week: a.week, result: resultA });
+    recB.resultsByWeek.push({ week: b.week, result: resultB });
   }
+
   const standings = [];
   for (const [teamId, rec] of records) {
     const gamesPlayed = rec.wins + rec.losses + rec.ties;
     const winPct = gamesPlayed ? (rec.wins + rec.ties * 0.5) / gamesPlayed : 0;
     rec.resultsByWeek.sort((x, y) => x.week - y.week);
-    standings.push({ teamId, wins: rec.wins, losses: rec.losses, ties: rec.ties, winPct, pointsFor: rec.pointsFor, pointsAgainst: rec.pointsAgainst, resultsByWeek: rec.resultsByWeek });
+    let streak = '';
+    if (rec.resultsByWeek.length) {
+      const lastResult = rec.resultsByWeek[rec.resultsByWeek.length - 1].result;
+      let count = 0;
+      for (let i = rec.resultsByWeek.length - 1; i >= 0 && rec.resultsByWeek[i].result === lastResult; i--) count++;
+      streak = `${lastResult}${count}`;
+    }
+    standings.push({
+      teamId, team: teamInfoMap[teamId] || { name: 'Unknown', color: '#888' },
+      wins: rec.wins, losses: rec.losses, ties: rec.ties, winPct,
+      pointsFor: rec.pointsFor, pointsAgainst: rec.pointsAgainst, streak, projGames: rec.projGames,
+    });
   }
+
+  // Points-for tiebreaker: ESPN's most common default. Actual league
+  // settings (head-to-head, division record, etc.) aren't something the
+  // poller currently reads -- if a league uses a different tiebreaker,
+  // this can misorder two teams tied on record. Worth flagging rather
+  // than silently assuming this is always right.
   standings.sort((x, y) => y.winPct - x.winPct || y.pointsFor - x.pointsFor);
   return standings;
 }
 
 // ============================================================
-// Power Rankings -- see the matching, more heavily-commented copy in
-// standings.js for the full rationale of each layer (weighted SRS
-// regression, recency decay, Bayesian shrinkage, the luck-adjustment term,
-// and the final normalCdf-based 0-100 normalization). Duplicated here
-// rather than shared, same as computeStandings and every other cross-file
-// utility on this standalone page.
+// Power Rankings
 //
-// The one real difference from standings.js: this file needs a WEEK-BY-
-// WEEK HISTORY of each team's score (for the race-style chart), not just
-// a single current snapshot -- see computePowerRatingHistory below, which
-// just calls this once per week with an increasing throughWeek cutoff,
-// the same technique computeSeasonRaceData already uses for team rank.
+// A "Power Score" (0-100) per team, built in layers rather than as one
+// flat formula:
+//   1. Opponent-adjusted scoring power via a weighted Simple Rating
+//      System (SRS) -- each team's rating is solved so that, across every
+//      game played, ratingA - ratingB approximates the actual margin.
+//      Solved iteratively (Gauss-Seidel-style) rather than via a matrix
+//      library: each team's rating converges to the weighted average,
+//      across its own games, of (its margin + its opponent's current
+//      rating), which converges to the same answer a full least-squares
+//      solve would for this problem structure.
+//   2. Recency weighting baked directly into that same regression --
+//      each game's weight decays the older it gets (relative to whatever
+//      week is being viewed), so early-season blowouts don't carry the
+//      same weight forever.
+//   3. Bayesian shrinkage toward the league-average rating, weighted by
+//      each team's EFFECTIVE sample size (the sum of its games' recency
+//      weights, not a raw count) -- keeps a 2-0 start from reading as an
+//      all-time juggernaut before it's earned a real sample.
+//   4. A luck adjustment using the win-prob model this site already runs:
+//      actual wins minus each matchup's PREGAME win_prob (its earliest
+//      recorded poll) -- a team running well ahead of what the model gave
+//      them gets nudged down slightly, and vice versa. This term is
+//      skipped entirely (contributes 0) wherever pregame win_prob isn't
+//      available, same graceful-degrade convention every other win_prob-
+//      dependent stat on this site already follows.
+//   5. Uncertainty that shrinks with effective sample size, and a final
+//      normalization to 0-100 via the exact same normal CDF the win-
+//      probability engine itself uses (see normalCdf in winProb.js) --
+//      so a "Power Score" reads on the same statistical footing as every
+//      percentage already shown elsewhere on this site.
+// ============================================================
+
+// Same corrected Abramowitz & Stegun erf approximation as winProb.js --
+// duplicated rather than shared, same as every other cross-file utility on
+// this standalone page (see themedColor above).
 function normalCdf(z) {
   const sign = z < 0 ? -1 : 1;
   const x = Math.abs(z) / Math.SQRT2;
@@ -625,51 +212,34 @@ function normalCdf(z) {
   return 0.5 * (1 + erf);
 }
 
-// Earliest recorded win_prob per (year, week, matchup_id, team_id) --
-// deliberately null for legacy seasons (no win_prob was ever tracked for
-// those), so computePowerRatings' luck term correctly contributes 0 for
-// every team rather than throwing or silently misbehaving.
+// The closest thing to "what the model thought before this game" --
+// pulled straight off snapshot_summary's own pregame_win_prob column
+// (the earliest recorded win_prob per matchup-team, computed server-side
+// now -- see 017_performance_latest_snapshots_and_power_cache.sql) rather
+// than scanning the full poll history for it client-side. Returns a Map
+// keyed `${year}|${week}|${matchup_id}|${team_id}` -- year matters here
+// the same way it does in computeStandings' own keys above: matchup_id is
+// only unique WITHIN a season, so a league with multiple years of history
+// would otherwise silently merge, say, 2024's week 3 matchup 2 with
+// 2025's week 3 matchup 2 as if they were one game.
 function extractPregameWinProb(rows) {
-  const earliest = new Map();
-  for (const r of rows) {
-    if (r.win_prob == null) continue;
-    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
-    const existing = earliest.get(key);
-    if (!existing || new Date(r.ts) < new Date(existing.ts)) earliest.set(key, r);
-  }
   const result = new Map();
-  for (const [key, r] of earliest) result.set(key, r.win_prob);
+  for (const r of rows) {
+    if (r.pregame_win_prob == null) continue;
+    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
+    result.set(key, r.pregame_win_prob);
+  }
   return result;
 }
 
-// Earliest recorded expected_score per (year, week, matchup_id, team_id) --
-// the real pregame season-long projection, needed by computeProjectionStats
-// below. A FINAL row's own expected_score is NOT usable for this: per
-// playerExpected in winProb.js, once a player's game is over (or they're on
-// bye), their "expected" contribution locks to their actual points --so by
-// the time all_starters_done is true, expected_score has already converged
-// to be EXACTLY EQUAL to actual_score for every team, every week, no
-// exceptions. That's correct and intentional for the live win-prob model
-// (there's genuinely no more uncertainty left once a game ends), but it
-// means computeProjectionStats -- which wants "how far did the real score
-// end up from what was originally projected" -- would otherwise always see
-// a diff of exactly 0 and produce nonsense (the same team/week winning
-// BOTH "biggest overperformer" and "biggest underperformer", since every
-// row ties at 0). Same earliest-per-key technique as extractPregameWinProb
-// above, and same graceful null for legacy seasons with no poll history.
-function extractPregameExpectedScore(rows) {
-  const earliest = new Map();
-  for (const r of rows) {
-    if (r.expected_score == null) continue;
-    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
-    const existing = earliest.get(key);
-    if (!existing || new Date(r.ts) < new Date(existing.ts)) earliest.set(key, r);
-  }
-  const result = new Map();
-  for (const [key, r] of earliest) result.set(key, r.expected_score);
-  return result;
-}
-
+// rows: raw (unfiltered) snapshot rows -- same shape computeStandings
+//   takes; this does its own latest-per-key + all_starters_done filtering.
+// teamIds: every team that should appear in the output, even ones with
+//   zero games so far this season (they'll just sit at the shrunk prior).
+// pregameWinProbByKey: result of extractPregameWinProb, or null/undefined
+//   to skip the luck term entirely (e.g. no win_prob tracked at all).
+// throughWeek: only consider games at or before this week; null = whole
+//   season so far.
 function computePowerRatings(rows, teamIds, pregameWinProbByKey, throughWeek, opts) {
   // ----------------------------------------------------------------------
   // Power Rating v2. Replaces the old opponent-adjusted margin (SRS) +
@@ -778,757 +348,351 @@ function computePowerRatings(rows, teamIds, pregameWinProbByKey, throughWeek, op
   return result;
 }
 
-// Week-by-week history of each team's Power Score, for the chart -- same
-// technique computeSeasonRaceData uses for rank (rerun the computation
-// with an increasing throughWeek cutoff), just producing a continuous
-// 0-100 score per week instead of a discrete rank.
-function computePowerRatingHistory(rows, teamIds, pregameWinProbByKey, maxWeek) {
-  const history = {}; // teamId -> [{week, score}]
-  for (let week = 1; week <= maxWeek; week++) {
-    const ratings = computePowerRatings(rows, teamIds, pregameWinProbByKey, week);
-    for (const id of teamIds) {
-      const r = ratings.get(id);
-      if (!r || !r.gamesPlayed) continue; // not yet played this far -- no point plotting a bare prior
-      if (!history[id]) history[id] = [];
-      history[id].push({ week, score: r.score });
-    }
-  }
-  return history;
+// ============================================================
+// Data loading
+// ============================================================
+async function loadLeagues() {
+  const { data, error } = await sb.from('leagues').select('id, name').order('name');
+  if (error) { showError('Could not load leagues', error); return; }
+  if (!data.length) { showError('No leagues found', 'The leagues table returned zero rows for this Supabase project.'); return; }
+  leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
+  await loadLeagueData(data[0].id);
 }
 
-// Same shape computePowerRatingHistory returns ({teamId: [{week, score}]},
-// skipping weeks a team hadn't played yet), just read straight off the
-// poller's own precomputed rows instead of re-running the regression --
-// see the cache-first check in renderEverything above.
-function buildPowerHistoryFromCache(rows) {
-  const history = {};
-  for (const r of rows) {
-    if (!r.games_played) continue; // not yet played this far -- same "no bare prior" rule as the live computation
-    const id = String(r.team_id);
-    if (!history[id]) history[id] = [];
-    history[id].push({ week: r.week, score: r.score });
-  }
-  for (const id of Object.keys(history)) history[id].sort((a, b) => a.week - b.week);
-  return history;
-}
-
-// ============================================================
-// People's Champion: highest cumulative points, regardless of rank.
-// Returns null if the points leader IS the actual #1 (no mismatch story
-// to tell), rather than showing a redundant "champion out-scored
-// everyone" card that just restates the podium.
-// ============================================================
-// Prefers the ACTUAL champion (from the manually-entered podium, which
-// reflects the real playoff result) over the regular-season standings
-// leader whenever a podium has been set -- these can genuinely differ
-// (regular-season seeding vs. who actually won the bracket), and that
-// difference is the entire reason the manual podium override exists.
-// Falls back to the regular-season leader only when no podium exists yet
-// (a season still in progress, or a legacy year nobody's entered a
-// podium for).
-function computePeoplesChampion(standings, podiumResults) {
-  if (!standings.length) return null;
-  const byPoints = [...standings].sort((a, b) => b.pointsFor - a.pointsFor);
-  const pointsLeader = byPoints[0];
-
-  const podiumFirst = (podiumResults || []).find((r) => r.place === 1);
-  const actualChampionId = podiumFirst ? podiumFirst.team_id : standings[0].teamId;
-  if (pointsLeader.teamId === actualChampionId) return null;
-
-  let actualRank = null; // null means "not shown on the podium at all" when a podium exists
-  if (podiumResults && podiumResults.length) {
-    const theirPodiumEntry = podiumResults.find((r) => r.team_id === pointsLeader.teamId);
-    actualRank = theirPodiumEntry ? theirPodiumEntry.place : null;
-  } else {
-    actualRank = standings.findIndex((s) => s.teamId === pointsLeader.teamId) + 1;
+async function loadLeagueData(leagueId, { quiet = false } = {}) {
+  // quiet = the background live refresh: no "Loading" flash, no table
+  // teardown, and whatever week the user picked stays picked.
+  if (!quiet) {
+    loadingState.style.display = 'block';
+    standingsTable.style.display = 'none';
+    emptyState.style.display = 'none';
   }
 
-  return { teamId: pointsLeader.teamId, totalPoints: pointsLeader.pointsFor, actualRank };
-}
-
-// ============================================================
-// Closest game / biggest blowout of the whole season, from the same
-// resultsByWeek data standings already tracks. Each result appears
-// twice (once per side), so results are deduped by (week, sorted
-// team-pair) before finding the extremes.
-// ============================================================
-function findClosestAndBiggestBlowout(standings) {
-  const seen = new Set();
-  const games = [];
-  for (const s of standings) {
-    for (const r of s.resultsByWeek) {
-      const pairKey = [s.teamId, r.opponentId].sort().join('|') + '|' + r.week;
-      if (seen.has(pairKey)) continue;
-      seen.add(pairKey);
-      games.push({ week: r.week, teamA: s.teamId, teamB: r.opponentId, scoreA: r.ownScore, scoreB: r.oppScore, margin: Math.abs(r.ownScore - r.oppScore) });
-    }
-  }
-  if (!games.length) return { closest: null, blowout: null };
-  const sorted = [...games].sort((a, b) => a.margin - b.margin);
-  return { closest: sorted[0], blowout: sorted[sorted.length - 1] };
-}
-
-// ============================================================
-// Best / worst single-week score, across every team-week.
-// ============================================================
-function findBestWorstWeek(standings) {
-  let best = null, worst = null;
-  for (const s of standings) {
-    for (const r of s.resultsByWeek) {
-      if (!best || r.ownScore > best.score) best = { teamId: s.teamId, week: r.week, score: r.ownScore };
-      if (!worst || r.ownScore < worst.score) worst = { teamId: s.teamId, week: r.week, score: r.ownScore };
-    }
-  }
-  return { best, worst };
-}
-
-// ============================================================
-// Best/worst average margin: avgWinMargin - avgLossMargin, highest is
-// "wins big, loses rare/small", lowest is "wins small, loses huge".
-// ============================================================
-function computeAvgMargins(standings) {
-  const results = standings.map((s) => {
-    const winMargins = s.resultsByWeek.filter(r => r.result === 'W').map(r => r.ownScore - r.oppScore);
-    const lossMargins = s.resultsByWeek.filter(r => r.result === 'L').map(r => r.ownScore - r.oppScore); // negative
-    const avgWinMargin = winMargins.length ? winMargins.reduce((a, b) => a + b, 0) / winMargins.length : 0;
-    const avgLossMargin = lossMargins.length ? lossMargins.reduce((a, b) => a + b, 0) / lossMargins.length : 0;
-    return { teamId: s.teamId, avgWinMargin, avgLossMargin, combined: avgWinMargin + avgLossMargin };
-  }).filter(r => standings.find(s => s.teamId === r.teamId).resultsByWeek.length > 0);
-  if (!results.length) return { winsBig: null, winsSmallLosesHuge: null };
-  const sorted = [...results].sort((a, b) => b.combined - a.combined);
-  return { winsBig: sorted[0], winsSmallLosesHuge: sorted[sorted.length - 1] };
-}
-
-// ============================================================
-// Consistency: population standard deviation of each team's weekly
-// scores. Lowest = Mr. Consistent, highest = Boom or Bust. Teams with
-// fewer than 2 games played are excluded -- stddev of one number is
-// meaningless.
-// ============================================================
-function computeConsistency(standings) {
-  const results = standings.map((s) => {
-    const scores = s.resultsByWeek.map(r => r.ownScore);
-    if (scores.length < 2) return null;
-    const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-    const variance = scores.reduce((sum, v) => sum + (v - mean) ** 2, 0) / scores.length;
-    return { teamId: s.teamId, stddev: Math.sqrt(variance), min: Math.min(...scores), max: Math.max(...scores) };
-  }).filter(Boolean);
-  if (!results.length) return { mostConsistent: null, boomOrBust: null };
-  const sorted = [...results].sort((a, b) => a.stddev - b.stddev);
-  return { mostConsistent: sorted[0], boomOrBust: sorted[sorted.length - 1] };
-}
-
-// ============================================================
-// Nail-biter count: games decided by under a threshold, per team.
-// ============================================================
-function computeNailBiters(standings, threshold = 5) {
-  const counts = standings.map((s) => ({
-    teamId: s.teamId,
-    count: s.resultsByWeek.filter(r => Math.abs(r.ownScore - r.oppScore) < threshold).length,
-  }));
-  if (!counts.length) return null;
-  return [...counts].sort((a, b) => b.count - a.count)[0];
-}
-
-// ============================================================
-// Toughest / luckiest schedule: each team's average OPPONENT score,
-// compared to the league-wide average score across all games.
-// ============================================================
-function computeScheduleLuck(standings) {
-  const allScores = standings.flatMap(s => s.resultsByWeek.map(r => r.ownScore));
-  if (!allScores.length) return { toughest: null, luckiest: null, leagueAvg: 0 };
-  const leagueAvg = allScores.reduce((a, b) => a + b, 0) / allScores.length;
-  const results = standings.map((s) => {
-    const oppScores = s.resultsByWeek.map(r => r.oppScore);
-    if (!oppScores.length) return null;
-    const avgOpp = oppScores.reduce((a, b) => a + b, 0) / oppScores.length;
-    return { teamId: s.teamId, avgOpponentScore: avgOpp, deltaFromLeagueAvg: avgOpp - leagueAvg };
-  }).filter(Boolean);
-  if (!results.length) return { toughest: null, luckiest: null, leagueAvg };
-  const sorted = [...results].sort((a, b) => b.deltaFromLeagueAvg - a.deltaFromLeagueAvg);
-  return { toughest: sorted[0], luckiest: sorted[sorted.length - 1], leagueAvg };
-}
-
-// ============================================================
-// All-play record: each team's score that week compared against EVERY
-// other team's score that same week, not just their actual opponent.
-// ============================================================
-function computeAllPlayRecords(standings) {
-  const weekScores = new Map(); // week -> [{teamId, score}]
-  for (const s of standings) {
-    for (const r of s.resultsByWeek) {
-      if (!weekScores.has(r.week)) weekScores.set(r.week, []);
-      weekScores.get(r.week).push({ teamId: s.teamId, score: r.ownScore });
-    }
-  }
-  const allPlayWins = new Map(), allPlayLosses = new Map();
-  for (const entries of weekScores.values()) {
-    for (const entry of entries) {
-      let w = 0, l = 0;
-      for (const other of entries) {
-        if (other.teamId === entry.teamId) continue;
-        if (entry.score > other.score) w++; else if (entry.score < other.score) l++;
-      }
-      allPlayWins.set(entry.teamId, (allPlayWins.get(entry.teamId) || 0) + w);
-      allPlayLosses.set(entry.teamId, (allPlayLosses.get(entry.teamId) || 0) + l);
-    }
-  }
-  return standings.map((s) => ({
-    teamId: s.teamId,
-    actualWins: s.wins, actualLosses: s.losses,
-    allPlayWins: allPlayWins.get(s.teamId) || 0, allPlayLosses: allPlayLosses.get(s.teamId) || 0,
-  }));
-}
-
-// ============================================================
-// Longest win/lose streak per team, then the max across the league.
-// ============================================================
-function computeLongestStreaks(standings) {
-  let longestWin = null, longestLoss = null;
-  for (const s of standings) {
-    let curType = null, curLen = 0, curStartWeek = null;
-    let bestWin = { len: 0 }, bestLoss = { len: 0 };
-    for (const r of s.resultsByWeek) {
-      if (r.result === curType) { curLen++; }
-      else { curType = r.result; curLen = 1; curStartWeek = r.week; }
-      if (curType === 'W' && curLen > bestWin.len) bestWin = { len: curLen, endWeek: r.week, startWeek: curStartWeek };
-      if (curType === 'L' && curLen > bestLoss.len) bestLoss = { len: curLen, endWeek: r.week, startWeek: curStartWeek };
-    }
-    if (bestWin.len > 0 && (!longestWin || bestWin.len > longestWin.len)) longestWin = { teamId: s.teamId, ...bestWin };
-    if (bestLoss.len > 0 && (!longestLoss || bestLoss.len > longestLoss.len)) longestLoss = { teamId: s.teamId, ...bestLoss };
-  }
-  return { longestWin, longestLoss };
-}
-
-
-const UPSET_ARM = 85; // lowered from 90 -- a team peaking at 85-89% was previously excluded entirely, even from a genuine, dramatic collapse, since arming never happened at all below 90
-const UPSET_ARM_TRIGGER_GAP = 25; // same gap size as the old fixed 90-to-65 pairing, now measured from wherever the armed side ACTUALLY peaked rather than always from a flat 90 -- so a 99% peak needs to fall further to trigger than an 85% peak does, matching how much more dominant it actually was
-const UPSET_CLEAR = 70; // the challenger's OWN threshold reaching this clears the watch -- unchanged, this is about the NEW favorite's own established dominance, unrelated to the original favorite's peak
-const UPSET_CLEAR_HYSTERESIS_BUFFER = 5; // the old system's own implicit 65-to-70 gap. With a FIXED trigger floor this fell out automatically; with a dynamic one it doesn't -- a peak above 95% pushes the dynamic trigger floor (peak-25) ABOVE the flat 70% clear line, which would let the alert clear while still technically below its own trigger threshold and flicker on ordinary noise. This buffer guarantees the gap between trigger and the favorite's own reclaim floor is always at least 5 points, at any peak height.
-
-// sortedHomeWinProbs: home's win_prob values in ascending ts order.
-// Returns the state as of the LAST value (for live card display) plus
-// every distinct triggered episode across the whole sequence (for the
-// weekly recap, which cares about the most dramatic moment of the whole
-// game, not just wherever things ended up).
-//
-// onStep, if given, is called once per input value with the `watch` state
-// and `upsetSide` as of THAT point -- used to build a hover-over-history
-// lookup (see getUpsetWatchHistory) without duplicating this whole state
-// machine.
-function walkUpsetState(sortedHomeWinProbs, onStep) {
-  let armed = null; // 'home' | 'away' | null
-  let peak = null; // the armed side's peak favorite % reached
-  let watch = false;
-  let upsetSide = null; // the side currently threatening the upset, while watch is true
-  let currentEpisode = null;
-  const episodes = [];
-
-  for (const hp of sortedHomeWinProbs) {
-    if (hp >= UPSET_ARM) {
-      if (armed !== 'home') {
-        armed = 'home'; peak = hp;
-        currentEpisode = { favoriteSide: 'home', peakFavoritePct: hp };
-      } else {
-        peak = Math.max(peak, hp);
-        currentEpisode.peakFavoritePct = peak;
-      }
-      watch = false; upsetSide = null;
-    } else if (hp <= 100 - UPSET_ARM) {
-      if (armed !== 'away') {
-        armed = 'away'; peak = 100 - hp;
-        currentEpisode = { favoriteSide: 'away', peakFavoritePct: peak };
-      } else {
-        peak = Math.max(peak, 100 - hp);
-        currentEpisode.peakFavoritePct = peak;
-      }
-      watch = false; upsetSide = null;
+  // Needs BOTH the final (all_starters_done=true) row of every matchup,
+  // for the win-loss table, AND each matchup's earliest poll, for Power
+  // Rankings' luck-adjustment term (see computePowerRatings) -- snapshot_summary
+  // (see 017_performance_latest_snapshots_and_power_cache.sql) already reduces
+  // the raw poll history down to exactly that, one row per matchup-team,
+  // server-side -- instead of this page fetching a league's ENTIRE raw
+  // snapshot history (every 5-minute poll, every season) just to do the
+  // same reduction client-side and throw the rest away. fetchAllRows still
+  // paginates around Supabase's 1000-row cap, just over a much smaller result.
+  let teams, snapshots;
+  try {
+    const SUMMARY_COLS = 'year, week, matchup_id, team_id, actual_score, expected_score, win_prob, all_starters_done, ts, pregame_win_prob, pregame_expected_score';
+    const incremental = quiet && lastLoad.leagueId === leagueId && lastLoad.rows && lastLoad.teams && lastLoad.maxTs;
+    if (incremental) {
+      // Routine live refresh: only rows touched since the last load (with a
+      // 10-minute overlap for safety), merged by game key, and the teams
+      // list reused -- not the whole league history again every minute.
+      const since = new Date(new Date(lastLoad.maxTs).getTime() - 10 * 60 * 1000).toISOString();
+      const fresh = await fetchAllRows((from, to) =>
+        sb.from('snapshot_summary').select(SUMMARY_COLS)
+          .eq('league_id', leagueId).gte('ts', since).order('ts').range(from, to)
+      );
+      for (const r of fresh) lastLoad.rows.set(`${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`, r);
+      teams = lastLoad.teams;
+      snapshots = Array.from(lastLoad.rows.values());
     } else {
-      // Dynamic trigger floor: how far the armed side has to fall from
-      // its OWN peak, not a flat number every team is measured against
-      // regardless of how dominant they actually were.
-      const triggerFloor = peak !== null ? peak - UPSET_ARM_TRIGGER_GAP : null;
-      if (armed === 'home' && !watch && triggerFloor !== null && hp < triggerFloor) {
-        watch = true; upsetSide = 'away';
-        episodes.push({ ...currentEpisode, upsetSide: 'away' });
-      } else if (armed === 'away' && !watch && triggerFloor !== null && (100 - hp) < triggerFloor) {
-        watch = true; upsetSide = 'home';
-        episodes.push({ ...currentEpisode, upsetSide: 'home' });
-      }
-      // Clear: the CHALLENGER'S own threshold (UPSET_CLEAR, flat 70) is
-      // unchanged either way. The FAVORITE'S OWN reclaim floor, though,
-      // has to track its own trigger floor plus the hysteresis buffer
-      // (see UPSET_CLEAR_HYSTERESIS_BUFFER above) rather than also being
-      // a flat 70 -- otherwise a very high peak makes the dynamic trigger
-      // floor exceed 70, and the alert could clear while still below its
-      // own trigger line.
-      //   - If the side that reclaims is the SAME side that was already
-      //     armed, that team already proved it could reach the arm
-      //     threshold earlier in this exact stretch -- surviving a scare
-      //     and climbing back doesn't erase that, so it stays armed with
-      //     its peak intact, only the scare itself (watch) clears. It
-      //     does NOT need to re-earn arming by climbing all the way back.
-      //   - If the side that reclaims is the OTHER side (the one that was
-      //     threatening), that's a genuine changeover -- a different team
-      //     is now in charge, so the old arm status no longer applies and
-      //     that team must earn its own by reaching the arm threshold
-      //     itself.
-      if (watch) {
-        const favoriteReclaimFloor = Math.max(UPSET_CLEAR, triggerFloor + UPSET_CLEAR_HYSTERESIS_BUFFER);
-        const favoritePct = armed === 'home' ? hp : 100 - hp;
-        const favoriteReclaimed = favoritePct >= favoriteReclaimFloor;
-        const challengerReclaimed = (100 - favoritePct) >= UPSET_CLEAR;
-        if (favoriteReclaimed || challengerReclaimed) {
-          const reclaimingSide = favoriteReclaimed ? armed : (armed === 'home' ? 'away' : 'home');
-          watch = false; upsetSide = null;
-          if (reclaimingSide !== armed) {
-            armed = null; peak = null; currentEpisode = null;
-          }
-        }
-      }
+      [teams, snapshots] = await Promise.all([
+        sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', leagueId).then(({ data, error }) => { if (error) throw error; return data; }),
+        fetchAllRows((from, to) =>
+          sb.from('snapshot_summary').select(SUMMARY_COLS)
+            .eq('league_id', leagueId).order('ts').range(from, to)
+        ),
+      ]);
+      lastLoad.rows = new Map(snapshots.map((r) => [`${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`, r]));
     }
-    if (onStep) onStep(watch, upsetSide);
+    lastLoad.leagueId = leagueId;
+    lastLoad.teams = teams;
+    lastLoad.maxTs = snapshots.reduce((m, r) => (m && m > r.ts ? m : r.ts), null);
+  } catch (err) { if (quiet) { console.warn('Live standings refresh failed:', err); return; } showError('Could not load standings data', err); return; }
+  console.log(`Loaded ${teams.length} teams and ${snapshots.length} total snapshot rows for this league.`);
+
+  teamInfo = {};
+  for (const t of teams) {
+    const settings = t.team_settings || {};
+    teamInfo[t.id] = {
+      name: settings.display_name || t.espn_team_name,
+      color: themedColor(settings.color || '#888888'),
+      emoji: settings.emoji || '',
+      logoUrl: settings.logo_url || '',
+    };
   }
+  allRows = snapshots;
 
-  return { armed, peak, watch, upsetSide, episodes };
+  const weeks = [...new Set(allRows.map((r) => r.week))].sort((a, b) => a - b);
+  const keepWeek = weekSelect.value;
+  weekSelect.innerHTML =
+    `<option value="">Full season</option>` +
+    weeks.map((w) => `<option value="${w}">Through week ${w}</option>`).join('');
+  if (quiet && keepWeek && weeks.includes(Number(keepWeek))) weekSelect.value = keepWeek;
+
+  render();
 }
-// ============================================================
-// Functions below need the FULL win_prob time series per matchup (every
-// poll, not just the final all_starters_done=true row), structured as:
-//   matchupTimeSeries = [{ year, week, matchupId, homeTeamId, awayTeamId,
-//                           homeWinProbs: [ordered by ts], winnerTeamId }]
-// ============================================================
 
-// Biggest upset of the whole season: run the real, deployed
-// walkUpsetState on every matchup, take the episode with the single
-// highest peakFavoritePct across all of them.
-function findBiggestUpsetOfSeason(matchupTimeSeries) {
-  let best = null;
-  for (const m of matchupTimeSeries) {
-    if (m.homeWinProbs.length < 2) continue;
-    const { episodes } = walkUpsetState(m.homeWinProbs);
-    for (const ep of episodes) {
-      if (!best || ep.peakFavoritePct > best.episode.peakFavoritePct) {
-        best = { episode: ep, matchup: m };
-      }
+// Logo if uploaded, else the older emoji field, else nothing -- same
+// fallback order as the main matchup page, so a team shows consistently
+// across both places regardless of whether they've uploaded a logo yet.
+// Same color-adjustment logic app.js already applies to the ESPN view --
+// ported here rather than shared, since this is a separate, standalone
+// script file. Without this, a team color dark enough to work fine on a
+// light background (which is genuinely most colors -- this only
+// intervenes on ones close to true black) would stay exactly that dark,
+// unreadable value even when this page is in dark mode, since nothing
+// here was otherwise theme-aware about team colors at all.
+const standingsTheme = document.documentElement.getAttribute('data-theme') || 'light';
+function stHexToRgb(hex) {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const num = parseInt(full, 16);
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+function stRgbToHex(r, g, b) {
+  return '#' + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
+}
+function stRgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) { h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
     }
+    h /= 6;
   }
-  return best;
+  return { h, s, l };
+}
+function stHslToRgb(h, s, l) {
+  let r, g, b;
+  if (s === 0) { r = g = b = l; }
+  else {
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  return { r: r * 255, g: g * 255, b: b * 255 };
+}
+const ST_MIN_LIGHTNESS = 0.20;
+const ST_TARGET_LIGHTNESS = 0.50;
+function stIsTooCloseToBlack(hex) {
+  try {
+    const { r, g, b } = stHexToRgb(hex);
+    return stRgbToHsl(r, g, b).l < ST_MIN_LIGHTNESS;
+  } catch {
+    return false;
+  }
+}
+function themedColor(hex) {
+  if (standingsTheme !== 'dark' || !stIsTooCloseToBlack(hex)) return hex;
+  try {
+    const { r, g, b } = stHexToRgb(hex);
+    const { h, s } = stRgbToHsl(r, g, b);
+    const { r: nr, g: ng, b: nb } = stHslToRgb(h, s, ST_TARGET_LIGHTNESS);
+    return stRgbToHex(nr, ng, nb);
+  } catch {
+    return hex; // malformed color -- don't crash the page over it
+  }
 }
 
-// Grinder (longest time spent behind before winning) and never-trailed
-// count, per team.
-function computeGrinderAndNeverTrailed(matchupTimeSeries) {
-  let grinder = null;
-  const neverTrailedCounts = new Map();
-  for (const m of matchupTimeSeries) {
-    if (!m.winnerTeamId || !m.homeWinProbs.length) continue;
-    const winnerIsHome = m.winnerTeamId === m.homeTeamId;
-    const winnerPcts = winnerIsHome ? m.homeWinProbs : m.homeWinProbs.map(v => 100 - v);
-    const trailingPolls = winnerPcts.filter(v => v < 50).length;
-    if (trailingPolls > 0) {
-      if (!grinder || trailingPolls > grinder.trailingPolls) {
-        grinder = { teamId: m.winnerTeamId, trailingPolls, totalPolls: winnerPcts.length, matchup: m };
-      }
-    }
-    // Never trailed: check BOTH sides of the matchup, not just the winner
-    // -- a team can go the whole game never below 50% and still be
-    // relevant to this stat regardless of whether the loser also had a
-    // moment above 50% at the very start.
-    const homeNeverTrailed = m.homeWinProbs.every(v => v >= 50);
-    const awayNeverTrailed = m.homeWinProbs.every(v => (100 - v) >= 50);
-    if (homeNeverTrailed) neverTrailedCounts.set(m.homeTeamId, (neverTrailedCounts.get(m.homeTeamId) || 0) + 1);
-    if (awayNeverTrailed) neverTrailedCounts.set(m.awayTeamId, (neverTrailedCounts.get(m.awayTeamId) || 0) + 1);
-  }
-  let mostNeverTrailed = null;
-  for (const [teamId, count] of neverTrailedCounts) {
-    if (!mostNeverTrailed || count > mostNeverTrailed.count) mostNeverTrailed = { teamId, count };
-  }
-  return { grinder, mostNeverTrailed };
+function renderTeamIcon(team) {
+  if (team.logoUrl) return `<img class="team-icon-img" src="${team.logoUrl}" alt="">`;
+  if (team.emoji) return `<span>${team.emoji}</span>`;
+  return '';
 }
 
-// Upset Watch season leaderboard: most times armed (favorite in an
-// episode), most comebacks actually completed (was the upsetSide in an
-// episode AND went on to win the game).
-function computeUpsetWatchLeaderboard(matchupTimeSeries) {
-  const armedCounts = new Map(), comebackCounts = new Map();
-  for (const m of matchupTimeSeries) {
-    if (m.homeWinProbs.length < 2) continue;
-    const { episodes } = walkUpsetState(m.homeWinProbs);
-    for (const ep of episodes) {
-      const favoriteTeamId = ep.favoriteSide === 'home' ? m.homeTeamId : m.awayTeamId;
-      const upsetTeamId = ep.upsetSide === 'home' ? m.homeTeamId : m.awayTeamId;
-      armedCounts.set(favoriteTeamId, (armedCounts.get(favoriteTeamId) || 0) + 1);
-      if (m.winnerTeamId === upsetTeamId) {
-        comebackCounts.set(upsetTeamId, (comebackCounts.get(upsetTeamId) || 0) + 1);
-      }
-    }
+function render() {
+  loadingState.style.display = 'none';
+  const throughWeek = weekSelect.value ? Number(weekSelect.value) : null;
+  const projecting = projectedToggle ? projectedToggle.checked : false;
+  const standings = computeStandings(allRows, teamInfo, throughWeek, projecting);
+  // Rank WITHOUT projections, only to show who a live result would move up
+  // or down -- the arrows next to each rank.
+  const baseRank = new Map();
+  if (projecting && standings.some((s) => s.projGames)) {
+    computeStandings(allRows, teamInfo, throughWeek, false).forEach((s, i) => baseRank.set(s.teamId, i + 1));
   }
-  let mostArmed = null, mostComebacks = null;
-  for (const [teamId, count] of armedCounts) if (!mostArmed || count > mostArmed.count) mostArmed = { teamId, count };
-  for (const [teamId, count] of comebackCounts) if (!mostComebacks || count > mostComebacks.count) mostComebacks = { teamId, count };
-  return { mostArmed, mostComebacks };
-}
+  const liveMatchups = standings.reduce((n, s) => n + s.projGames, 0) / 2;
 
-
-// ============================================================
-// Projection stats -- needs (team, week, actual_score, PREGAME
-// expected_score) for every FINAL matchup. Single-week extremes, plus
-// each team's own season-long average gap, then the extremes of THAT.
-//
-// Takes pregameExpectedByKey (see extractPregameExpectedScore above)
-// rather than reading finalRows' own expected_score field -- that field
-// reflects the LAST poll before the matchup went final, which by then has
-// already converged to equal actual_score exactly (every player locked
-// in), not the original pregame projection this stat actually needs.
-// ============================================================
-function computeProjectionStats(finalRows, pregameExpectedByKey) {
-  let bestWeek = null, worstWeek = null;
-  const byTeam = new Map();
-  for (const r of finalRows) {
-    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
-    const pregameExpected = pregameExpectedByKey ? pregameExpectedByKey.get(key) : null;
-    if (pregameExpected == null) continue; // no pregame projection on record -- skip rather than compare against nothing
-    const diff = r.actual_score - pregameExpected;
-    if (!bestWeek || diff > bestWeek.diff) bestWeek = { teamId: r.team_id, week: r.week, actual: r.actual_score, expected: pregameExpected, diff };
-    if (!worstWeek || diff < worstWeek.diff) worstWeek = { teamId: r.team_id, week: r.week, actual: r.actual_score, expected: pregameExpected, diff };
-    if (!byTeam.has(r.team_id)) byTeam.set(r.team_id, []);
-    byTeam.get(r.team_id).push(diff);
+  if (!standings.length) {
+    standingsTable.style.display = 'none';
+    emptyState.style.display = 'block';
+    return;
   }
-  let bestAvg = null, worstAvg = null;
-  for (const [teamId, diffs] of byTeam) {
-    const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
-    if (!bestAvg || avg > bestAvg.avgDiff) bestAvg = { teamId, avgDiff: avg, weeksCounted: diffs.length };
-    if (!worstAvg || avg < worstAvg.avgDiff) worstAvg = { teamId, avgDiff: avg, weeksCounted: diffs.length };
-  }
-  return { bestWeek, worstWeek, bestAvg, worstAvg };
-}
+  emptyState.style.display = 'none';
+  standingsTable.style.display = 'block';
 
-// ============================================================
-// Season race data: each team's RANK (1 = best) at the end of every
-// week, by re-running computeStandings with an increasing throughWeek
-// cutoff. A team with no games yet that week (bye, or season hasn't
-// reached them) simply won't appear in that week's standings snapshot
-// -- callers should treat a missing entry as "not yet ranked" rather
-// than assuming a specific rank.
-// ============================================================
-function computeSeasonRaceData(rows, teamInfoMap, maxWeek) {
-  const raceData = {}; // teamId -> [{week, rank}]
-  for (let week = 1; week <= maxWeek; week++) {
-    const standings = computeStandings(rows, teamInfoMap, week);
-    standings.forEach((s, i) => {
-      if (!raceData[s.teamId]) raceData[s.teamId] = [];
-      raceData[s.teamId].push({ week, rank: i + 1 });
-    });
-  }
-  return raceData;
-}
+  const projNote = projecting && liveMatchups
+    ? ` -- includes projected results for ${liveMatchups} live/upcoming ${liveMatchups === 1 ? 'matchup' : 'matchups'}`
+    : '';
+  subtext.textContent = (throughWeek
+    ? `Standings through week ${throughWeek}`
+    : 'Season record, based on completed weeks') + projNote;
 
-
-// ============================================================
-// Data shaping: from raw, unfiltered snapshot rows (every poll, not just
-// finals) to the two shapes the stat functions above actually need.
-// ============================================================
-
-// Latest snapshot per (year, week, matchup_id, team_id), filtered to
-// only the ones that actually went final -- what computeStandings,
-// computeProjectionStats, and everything score-based needs.
-function buildFinalRows(allRows) {
-  const latestByKey = new Map();
-  for (const r of allRows) {
-    const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
-    const existing = latestByKey.get(key);
-    if (!existing || new Date(r.ts) > new Date(existing.ts)) latestByKey.set(key, r);
-  }
-  return [...latestByKey.values()].filter((r) => r.all_starters_done);
-}
-
-// Full time-ordered home win_prob sequence per matchup, plus the winner
-// -- what walkUpsetState-based stats (biggest upset, grinder, never
-// trailed, Upset Watch leaderboard) need. Only includes matchups that
-// actually finished (so "winner" is well-defined) and have at least 2
-// polls (so a state-machine walk is meaningful at all).
-function buildMatchupTimeSeries(allRows) {
-  const groups = new Map();
-  for (const r of allRows) {
-    const key = `${r.year}|${r.week}|${r.matchup_id}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(r);
-  }
-  const series = [];
-  for (const [key, groupRows] of groups) {
-    const [year, week, matchupId] = key.split('|');
-    const homeRows = groupRows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
-    const awayRows = groupRows.filter((r) => !r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
-    if (!homeRows.length || !awayRows.length) continue;
-    const lastHome = homeRows[homeRows.length - 1], lastAway = awayRows[awayRows.length - 1];
-    if (!lastHome.all_starters_done || !lastAway.all_starters_done) continue; // not final, no well-defined winner
-    let winnerTeamId = null;
-    if (lastHome.actual_score > lastAway.actual_score) winnerTeamId = lastHome.team_id;
-    else if (lastAway.actual_score > lastHome.actual_score) winnerTeamId = lastAway.team_id;
-    // a tie leaves winnerTeamId null -- correctly excluded from
-    // grinder/comeback stats, which require an actual winner
-    series.push({
-      year: Number(year), week: Number(week), matchupId,
-      homeTeamId: lastHome.team_id, awayTeamId: lastAway.team_id,
-      homeWinProbs: homeRows.map((r) => r.win_prob),
-      winnerTeamId,
-    });
-  }
-  return series;
-}
-
-function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSeries, maxWeek, podiumResults, playoffSpots, isLite, pregameWinProbByKey, pregameExpectedByKey, cachedPowerHistory }) {
-  document.getElementById('heroYear').textContent = `${year} Season`;
-  renderLiteNote(isLite);
-  renderLogoBanner(teamInfo);
-  renderPodium(standings, teamInfo, podiumResults);
-  renderPeoplesChampion(computePeoplesChampion(standings, podiumResults), teamInfo, standings);
-
-  const raceData = computeSeasonRaceData(finalRows, teamInfo, maxWeek);
-  drawRaceChart(raceData, teamInfo, maxWeek);
-
-  // Power Rankings history -- same idea as the race chart above, just a
-  // continuous 0-100 score instead of a discrete rank. Works for legacy
-  // years too (pregameWinProbByKey is just null there, so the luck term
-  // contributes 0 for everyone -- the SRS regression + shrinkage still
-  // runs fine on real final scores alone).
-  //
-  // Prefers the poller's own cached history (power_rating_history --
-  // see 017_performance_latest_snapshots_and_power_cache.sql) over
-  // recomputing it here: computePowerRatingHistory re-solves the full
-  // weighted-SRS regression once per week of the season, which is fine
-  // for one page load but adds up when every visitor's browser redoes it
-  // from scratch every time. Falls back to the real client-side
-  // computation whenever the cache has nothing for this league/year yet
-  // (not migrated yet, or the poller hasn't run since this table was
-  // added) -- same graceful-degrade convention as pregameWinProbByKey
-  // being null for legacy years above, not a special case to worry about.
-  const powerHistory = cachedPowerHistory && cachedPowerHistory.length
-    ? buildPowerHistoryFromCache(cachedPowerHistory)
-    : computePowerRatingHistory(finalRows, Object.keys(teamInfo), pregameWinProbByKey, maxWeek);
-  drawPowerRatingChart(powerHistory, teamInfo, maxWeek);
-
-  // matchupTimeSeries is deliberately [] for lite years (no poll history
-  // was ever recorded) -- findBiggestUpsetOfSeason, computeGrinderAndNeverTrailed
-  // and computeUpsetWatchLeaderboard all correctly return null/empty on an
-  // empty series already, so the cards that depend on them just don't
-  // render, with no isLite-specific branching needed here.
-  renderDramaAwards(standings, matchupTimeSeries, teamInfo);
-  renderNumbersAwards(standings, finalRows, teamInfo, isLite, pregameExpectedByKey);
-  renderLuckAwards(standings, teamInfo);
-  renderUpsetLeaderboard(matchupTimeSeries, teamInfo);
-  renderSoClose(standings, teamInfo, playoffSpots);
-}
-
-function renderLiteNote(isLite) {
-  const el = document.getElementById('liteNote');
-  if (!isLite) { el.style.display = 'none'; return; }
-  el.style.display = 'block';
-  el.textContent = 'This season predates the win-probability tracker, so it only has basic matchup results -- upsets, comebacks, and projection-based awards aren\'t available for it.';
-}
-
-function renderDramaAwards(standings, matchupTimeSeries, teamInfo) {
-  const cards = [];
-
-  const biggestUpset = findBiggestUpsetOfSeason(matchupTimeSeries);
-  if (biggestUpset) {
-    const { episode, matchup } = biggestUpset;
-    const favoriteTeam = teamInfo[episode.favoriteSide === 'home' ? matchup.homeTeamId : matchup.awayTeamId];
-    const upsetTeam = teamInfo[episode.upsetSide === 'home' ? matchup.homeTeamId : matchup.awayTeamId];
-    const chartEpisode = { ...episode, homeColor: teamInfo[matchup.homeTeamId] ? teamInfo[matchup.homeTeamId].color : '#888', awayColor: teamInfo[matchup.awayTeamId] ? teamInfo[matchup.awayTeamId].color : '#888' };
-    cards.push(`
-      <div class="award-card" style="--accent-color:#ff8a3d">
-        <div class="award-label">⚠️ Biggest Upset</div>
-        <div class="award-headline">${teamNameHtml(upsetTeam)} over ${teamNameHtml(favoriteTeam)}</div>
-        <div class="award-detail">${favoriteTeam ? favoriteTeam.name : 'The favorite'} peaked at ${episode.peakFavoritePct.toFixed(0)}% win probability in Week ${matchup.week} -- then completely fell apart. Here's the exact window where it happened, not the whole game:</div>
-        <div class="upset-chart-wrap">${buildUpsetCropChart(matchup.homeWinProbs, chartEpisode)}</div>
-      </div>
-    `);
-  }
-
-  const cb = findClosestAndBiggestBlowout(standings);
-  if (cb.closest || cb.blowout) {
-    cards.push(`
-      <div class="award-card" style="--accent-color:#e0574a">
-        <div class="award-pair">
-          ${cb.closest ? `
-          <div>
-            <div class="award-label">😬 Closest Game</div>
-            <div class="award-headline">${teamNameHtml(teamInfo[cb.closest.teamA])} ${cb.closest.scoreA.toFixed(1)} &ndash; ${cb.closest.scoreB.toFixed(1)} ${teamNameHtml(teamInfo[cb.closest.teamB])}</div>
-            <div class="award-detail">Week ${cb.closest.week} &middot; decided by ${cb.closest.margin.toFixed(1)} points</div>
-          </div>` : ''}
-          ${cb.blowout ? `
-          <div>
-            <div class="award-label">💥 Biggest Blowout</div>
-            <div class="award-headline">${teamNameHtml(teamInfo[cb.blowout.teamA])} ${cb.blowout.scoreA.toFixed(1)} &ndash; ${cb.blowout.scoreB.toFixed(1)} ${teamNameHtml(teamInfo[cb.blowout.teamB])}</div>
-            <div class="award-detail">Week ${cb.blowout.week} &middot; decided by ${cb.blowout.margin.toFixed(1)} points</div>
-          </div>` : ''}
-        </div>
-      </div>
-    `);
-  }
-
-  const { grinder, mostNeverTrailed } = computeGrinderAndNeverTrailed(matchupTimeSeries);
-  if (grinder || mostNeverTrailed) {
-    cards.push(`
-      <div class="award-card" style="--accent-color:#4fbd82">
-        <div class="award-pair">
-          ${grinder ? `
-          <div>
-            <div class="award-label">🐢 The Grinder</div>
-            <div class="award-headline">${teamNameHtml(teamInfo[grinder.teamId])}</div>
-            <div class="award-detail">Trailed for ${grinder.trailingPolls} of ${grinder.totalPolls} tracked polls before winning in Week ${grinder.matchup.week} -- the longest come-from-behind win of the season</div>
-          </div>` : ''}
-          ${mostNeverTrailed ? `
-          <div>
-            <div class="award-label">🛡️ Never Trailed</div>
-            <div class="award-headline">${teamNameHtml(teamInfo[mostNeverTrailed.teamId])}</div>
-            <div class="award-detail">Led wire-to-wire in ${mostNeverTrailed.count} game${mostNeverTrailed.count === 1 ? '' : 's'} this season -- never dropped below 50% win probability</div>
-          </div>` : ''}
-        </div>
-      </div>
-    `);
-  }
-
-  const am = computeAvgMargins(standings);
-  if (am.winsBig && am.winsSmallLosesHuge && am.winsBig.teamId !== am.winsSmallLosesHuge.teamId) {
-    cards.push(`
-      <div class="award-card" style="--accent-color:#4d78d6">
-        <div class="award-pair">
-          <div>
-            <div class="award-label">😎 Wins Big, Loses Rare</div>
-            <div class="award-headline">${teamNameHtml(teamInfo[am.winsBig.teamId])}</div>
-            <div class="award-detail">Averaged a ${am.winsBig.avgWinMargin >= 0 ? '+' : ''}${am.winsBig.avgWinMargin.toFixed(1)} point margin in wins this season</div>
-          </div>
-          <div>
-            <div class="award-label">😩 Wins Small, Loses Huge</div>
-            <div class="award-headline">${teamNameHtml(teamInfo[am.winsSmallLosesHuge.teamId])}</div>
-            <div class="award-detail">Averaged ${am.winsSmallLosesHuge.avgWinMargin >= 0 ? '+' : ''}${am.winsSmallLosesHuge.avgWinMargin.toFixed(1)} in wins, but ${am.winsSmallLosesHuge.avgLossMargin.toFixed(1)} in losses</div>
-          </div>
-        </div>
-      </div>
-    `);
-  }
-
-  document.getElementById('dramaAwards').innerHTML = cards.join('');
-  document.getElementById('dramaSection').style.display = cards.length ? '' : 'none';
-}
-
-function renderNumbersAwards(standings, finalRows, teamInfo, isLite, pregameExpectedByKey) {
-  const cards = [];
-  const bw = findBestWorstWeek(standings);
-  if (bw.best) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">🔥 Best Week</div><div class="award-headline">${teamNameHtml(teamInfo[bw.best.teamId])}</div><div class="award-detail">${bw.best.score.toFixed(1)} points, Week ${bw.best.week}</div></div>`);
-  if (bw.worst) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">🥶 Worst Week</div><div class="award-headline">${teamNameHtml(teamInfo[bw.worst.teamId])}</div><div class="award-detail">${bw.worst.score.toFixed(1)} points, Week ${bw.worst.week}</div></div>`);
-
-  // Projection stats need each team's PREGAME expected_score, which legacy
-  // (lite) years never recorded -- skipped entirely rather than computed
-  // against missing data, which would otherwise silently produce NaN.
-  const proj = isLite ? null : computeProjectionStats(finalRows, pregameExpectedByKey);
-  if (proj && proj.bestWeek) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">📈 Biggest Overperformer</div><div class="award-headline">${teamNameHtml(teamInfo[proj.bestWeek.teamId])}</div><div class="award-detail">+${proj.bestWeek.diff.toFixed(1)} over projection, Week ${proj.bestWeek.week} (${proj.bestWeek.expected.toFixed(1)} projected &rarr; ${proj.bestWeek.actual.toFixed(1)} actual)</div></div>`);
-  if (proj && proj.worstWeek) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">📉 Biggest Underperformer</div><div class="award-headline">${teamNameHtml(teamInfo[proj.worstWeek.teamId])}</div><div class="award-detail">${proj.worstWeek.diff.toFixed(1)} under projection, Week ${proj.worstWeek.week} (${proj.worstWeek.expected.toFixed(1)} projected &rarr; ${proj.worstWeek.actual.toFixed(1)} actual)</div></div>`);
-
-  const cons = computeConsistency(standings);
-  if (cons.mostConsistent) cards.push(`<div class="award-card" style="--accent-color:#2ec4c6"><div class="award-label">😌 Mr. Consistent</div><div class="award-headline">${teamNameHtml(teamInfo[cons.mostConsistent.teamId])}</div><div class="award-detail">Every week between ${cons.mostConsistent.min.toFixed(0)} and ${cons.mostConsistent.max.toFixed(0)} points -- the smallest range all season</div></div>`);
-  if (cons.boomOrBust) cards.push(`<div class="award-card" style="--accent-color:#d4a72c"><div class="award-label">🎢 Boom or Bust</div><div class="award-headline">${teamNameHtml(teamInfo[cons.boomOrBust.teamId])}</div><div class="award-detail">${cons.boomOrBust.min.toFixed(0)} to ${cons.boomOrBust.max.toFixed(0)} points -- the widest week-to-week swing all season</div></div>`);
-
-  const streaks = computeLongestStreaks(standings);
-  if (streaks.longestWin) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">🔥 Longest Win Streak</div><div class="award-headline">${teamNameHtml(teamInfo[streaks.longestWin.teamId])}</div><div class="award-detail">${streaks.longestWin.len} straight wins, Weeks ${streaks.longestWin.startWeek} through ${streaks.longestWin.endWeek}</div></div>`);
-  if (streaks.longestLoss) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">❄️ Longest Losing Streak</div><div class="award-headline">${teamNameHtml(teamInfo[streaks.longestLoss.teamId])}</div><div class="award-detail">${streaks.longestLoss.len} straight losses, Weeks ${streaks.longestLoss.startWeek} through ${streaks.longestLoss.endWeek}</div></div>`);
-
-  if (proj && proj.bestAvg) cards.push(`<div class="award-card" style="--accent-color:#4fbd82"><div class="award-label">📊 Best Season-Long vs. Projection</div><div class="award-headline">${teamNameHtml(teamInfo[proj.bestAvg.teamId])}</div><div class="award-detail">Averaged ${proj.bestAvg.avgDiff >= 0 ? '+' : ''}${proj.bestAvg.avgDiff.toFixed(1)} points vs. their own projection across ${proj.bestAvg.weeksCounted} weeks</div></div>`);
-  if (proj && proj.worstAvg) cards.push(`<div class="award-card" style="--accent-color:#e0574a"><div class="award-label">📊 Worst Season-Long vs. Projection</div><div class="award-headline">${teamNameHtml(teamInfo[proj.worstAvg.teamId])}</div><div class="award-detail">Averaged ${proj.worstAvg.avgDiff.toFixed(1)} points vs. their own projection across ${proj.worstAvg.weeksCounted} weeks</div></div>`);
-
-  document.getElementById('numbersAwards').innerHTML = cards.join('');
-  document.getElementById('numbersSection').style.display = cards.length ? '' : 'none';
-}
-
-function allPlayBarHtml(label, wins, losses, color) {
-  const total = wins + losses;
-  const pct = total ? (wins / total) * 100 : 0;
-  return `
-    <div class="allplay-bar-track">
-      <span style="width:90px">${label}</span>
-      <div class="allplay-bar-fill-wrap"><div class="allplay-bar-fill" style="width:${pct}%;background:${color}"></div></div>
-      <span style="width:50px;text-align:right">${wins}-${losses}</span>
+  const header = `
+    <div class="standings-header">
+      <span></span>
+      <span>Team</span>
+      <span style="text-align:right">Record</span>
+      <span class="col-pct" style="text-align:right">Pct</span>
+      <span style="text-align:right">PF</span>
+      <span class="header-pa" style="text-align:right">PA</span>
+      <span style="text-align:right">Streak</span>
     </div>
   `;
-}
 
-function renderLuckAwards(standings, teamInfo) {
-  const cards = [];
-
-  const allPlay = computeAllPlayRecords(standings);
-  const unluckiest = [...allPlay].sort((a, b) => (a.actualWins - a.allPlayWins) - (b.actualWins - b.allPlayWins))[0];
-  const luckiest = [...allPlay].sort((a, b) => (b.actualWins - b.allPlayWins) - (a.actualWins - a.allPlayWins))[0];
-  if (unluckiest && luckiest && unluckiest.teamId !== luckiest.teamId) {
-    cards.push(`
-      <div class="award-card" style="--accent-color:#e0574a">
-        <div class="award-label">🍀 All-Play Record — Actual vs. If You'd Played Everyone Every Week</div>
-        <div class="allplay-row">
-          <div class="allplay-team">${teamNameHtml(teamInfo[unluckiest.teamId])} <span style="color:var(--muted);font-family:var(--font-body);font-size:11px">— the unluckiest team all season</span></div>
-          <div class="allplay-bars">
-            ${allPlayBarHtml('Actual', unluckiest.actualWins, unluckiest.actualLosses, teamInfo[unluckiest.teamId] ? teamInfo[unluckiest.teamId].color : '#888')}
-            ${allPlayBarHtml('All-play', unluckiest.allPlayWins, unluckiest.allPlayLosses, '#6a8fe0')}
-          </div>
-        </div>
-        <div class="allplay-row">
-          <div class="allplay-team">${teamNameHtml(teamInfo[luckiest.teamId])} <span style="color:var(--muted);font-family:var(--font-body);font-size:11px">— the luckiest</span></div>
-          <div class="allplay-bars">
-            ${allPlayBarHtml('Actual', luckiest.actualWins, luckiest.actualLosses, teamInfo[luckiest.teamId] ? teamInfo[luckiest.teamId].color : '#888')}
-            ${allPlayBarHtml('All-play', luckiest.allPlayWins, luckiest.allPlayLosses, '#6a8fe0')}
-          </div>
-        </div>
+  const rows = standings.map((s, i) => {
+    const streakClass = s.streak.startsWith('W') ? 'streak-w' : s.streak.startsWith('L') ? 'streak-l' : s.streak.startsWith('T') ? 'streak-t' : '';
+    // Movement vs. the table with no projections: ▲ = this team climbs if
+    // the current live results hold, ▼ = it drops.
+    const was = baseRank.get(s.teamId);
+    const move = was && was !== i + 1
+      ? `<span class="rank-move ${was > i + 1 ? 'rank-up' : 'rank-down'}">${was > i + 1 ? '▲' : '▼'}${Math.abs(was - (i + 1))}</span>`
+      : '';
+    return `
+      <div class="standings-row${s.projGames ? ' has-proj' : ''}" style="--team-color:${s.team.color}">
+        <div class="col-rank">${i + 1}${move}</div>
+        <div class="col-team"><span class="team-name">${renderTeamIcon(s.team)}${s.team.name}</span></div>
+        <div class="col-record">${s.wins}-${s.losses}${s.ties ? '-' + s.ties : ''}${s.projGames ? '<span class="proj-tag">proj</span>' : ''}</div>
+        <div class="col-pct">${s.winPct.toFixed(3).replace(/^0/, '')}</div>
+        <div class="col-pf">${s.pointsFor.toFixed(1)}</div>
+        <div class="col-pa">${s.pointsAgainst.toFixed(1)}</div>
+        <div class="col-streak ${streakClass}">${s.streak || '—'}</div>
       </div>
-    `);
-  }
+    `;
+  }).join('');
 
-  const sl = computeScheduleLuck(standings);
-  if (sl.toughest && sl.luckiest && sl.toughest.teamId !== sl.luckiest.teamId) {
-    cards.push(`
-      <div class="award-card" style="--accent-color:#d65a9e">
-        <div class="award-pair">
-          <div>
-            <div class="award-label">😤 Toughest Schedule</div>
-            <div class="award-headline">${teamNameHtml(teamInfo[sl.toughest.teamId])}</div>
-            <div class="award-detail">Opponents averaged ${sl.toughest.avgOpponentScore.toFixed(1)} pts/week against them &mdash; league average was ${sl.leagueAvg.toFixed(1)}</div>
-          </div>
-          <div>
-            <div class="award-label">🎯 Luckiest Schedule</div>
-            <div class="award-headline">${teamNameHtml(teamInfo[sl.luckiest.teamId])}</div>
-            <div class="award-detail">Opponents averaged only ${sl.luckiest.avgOpponentScore.toFixed(1)} pts/week &mdash; well under the league average</div>
-          </div>
-        </div>
-      </div>
-    `);
-  }
+  standingsTable.innerHTML = header + rows;
 
-  document.getElementById('luckAwards').innerHTML = cards.join('');
-  document.getElementById('luckSection').style.display = cards.length ? '' : 'none';
+  renderPowerRankings(standings, throughWeek);
 }
 
-function renderUpsetLeaderboard(matchupTimeSeries, teamInfo) {
-  const { mostArmed, mostComebacks } = computeUpsetWatchLeaderboard(matchupTimeSeries);
-  const cards = [];
-  if (mostArmed) cards.push(`<div class="award-card" style="--accent-color:#ff8a3d"><div class="award-label">🚨 Most Times Armed</div><div class="award-headline">${teamNameHtml(teamInfo[mostArmed.teamId])}</div><div class="award-detail">Reached 85%+ win probability ${mostArmed.count} separate time${mostArmed.count === 1 ? '' : 's'} this season</div></div>`);
-  if (mostComebacks) cards.push(`<div class="award-card" style="--accent-color:#b378d1"><div class="award-label">🔄 Most Comebacks Completed</div><div class="award-headline">${teamNameHtml(teamInfo[mostComebacks.teamId])}</div><div class="award-detail">Completed ${mostComebacks.count} separate Upset Watch comeback${mostComebacks.count === 1 ? '' : 's'} this season</div></div>`);
-  document.getElementById('upsetLeaderboard').innerHTML = cards.join('');
-  document.getElementById('upsetLeaderboardSection').style.display = cards.length ? '' : 'none';
-}
+// Only computed/rendered once the win-loss table above has something to
+// show -- render() already returns early (showing emptyState) before this
+// would ever get called with zero completed matchups. Takes the SAME
+// `standings` array just rendered above (rather than every team.js knows
+// about) so a team with no completed games yet -- which the win-loss table
+// above already leaves out entirely, rather than showing an empty 0-0 row
+// -- doesn't show up here either, sitting at an uninformative default
+// "50.0, Low confidence" forever.
+function renderPowerRankings(standings, throughWeek) {
+  const powerTable = document.getElementById('powerRankingsTable');
+  if (!powerTable) return; // standings.html not yet updated with the section -- degrade quietly
+  const teamIds = standings.map((s) => s.teamId);
+  const pregameMap = extractPregameWinProb(allRows);
 
-function renderSoClose(standings, teamInfo, playoffSpots) {
-  const section = document.getElementById('soCloseSection');
-  if (!playoffSpots || playoffSpots >= standings.length) { section.style.display = 'none'; return; }
-  const team = standings[playoffSpots]; // 0-indexed: standings[playoffSpots] is the FIRST team missing the cutoff
-  if (!team) { section.style.display = 'none'; return; }
-  section.style.display = '';
-  document.getElementById('soCloseAward').innerHTML = `
-    <div class="award-card" style="--accent-color:#8a8f98">
-      <div class="award-label">😔 So Close</div>
-      <div class="award-headline">${teamNameHtml(teamInfo[team.teamId])}</div>
-      <div class="award-detail">Finished ${ordinal(playoffSpots + 1)} -- one spot outside the ${playoffSpots}-team playoff cutoff.</div>
+  // "Through week X" already means "as of week X" for the win-loss table
+  // above; Power Rankings' own week-over-week delta needs an actual
+  // number to diff against even when "Full season" is selected (throughWeek
+  // is null there), so this resolves it to the latest week with any data
+  // at all in that case -- same week-only convention (not year-aware)
+  // computeStandings/computePowerRatings already use elsewhere in this
+  // file, so "latest" here means the same thing "Full season" already
+  // means for the table above.
+  const effectiveWeek = throughWeek != null ? throughWeek : allRows.reduce((m, r) => Math.max(m, r.week), 0);
+  const previousWeek = effectiveWeek - 1;
+
+  const ratings = computePowerRatings(allRows, teamIds, pregameMap, throughWeek);
+  // null (not computed at all) when there's no prior week to compare
+  // against -- e.g. viewing week 1 itself, or "through week 1" -- rather
+  // than running a needless computePowerRatings(..., 0) that would just
+  // return every team at the shrunk-to-nothing default anyway.
+  const previousRatings = previousWeek >= 1 ? computePowerRatings(allRows, teamIds, pregameMap, previousWeek) : null;
+
+  const ranked = teamIds
+    .map((id) => ({ teamId: id, team: teamInfo[id], ...ratings.get(id) }))
+    .sort((a, b) => b.score - a.score);
+
+  const header = `
+    <div class="standings-header power-header">
+      <span></span>
+      <span>Team</span>
+      <span style="text-align:right">Power Score</span>
     </div>
   `;
+  const rows = ranked.map((r, i) => {
+    const prev = previousRatings ? previousRatings.get(r.teamId) : null;
+    // No prior week counted, or the team hadn't played a single game as
+    // of it yet -- a delta against the shrunk-to-nothing default score
+    // every unplayed team starts at would read as a meaningless "+11.4"
+    // on a team's very first appearance, so this shows "New" instead.
+    const deltaHtml = (!prev || !prev.gamesPlayed)
+      ? '<span class="power-delta power-delta-new">New</span>'
+      : renderPowerDelta(r.score - prev.score);
+    return `
+      <div class="standings-row power-row" style="--team-color:${r.team.color}">
+        <div class="col-rank">${i + 1}</div>
+        <div class="col-team"><span class="team-name">${renderTeamIcon(r.team)}${r.team.name}</span></div>
+        <div class="col-power">
+          ${r.score.toFixed(1)} ${deltaHtml}
+          <span class="power-confidence">${confidenceLabel(r.gamesPlayed)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+  powerTable.innerHTML = header + rows;
 }
+
+// "+3.2" in the win color, "-1.8" in the loss color, or a neutral "±0.0"
+// for anything close enough to flat to just be rounding noise -- same
+// three-way convention (win/loss/neutral) the streak column above already
+// uses, just applied to a continuous number instead of a W/L/T letter.
+function renderPowerDelta(delta) {
+  if (Math.abs(delta) < 0.05) return '<span class="power-delta power-delta-flat">±0.0</span>';
+  const sign = delta > 0 ? '+' : '−'; // true minus sign, not a hyphen, to match the '+' glyph's weight
+  const cls = delta > 0 ? 'power-delta-up' : 'power-delta-down';
+  return `<span class="power-delta ${cls}">${sign}${Math.abs(delta).toFixed(1)}</span>`;
+}
+
+// A team's rating uncertainty (stdErr, computed alongside the score)
+// shrinks monotonically with effective games played -- rather than
+// showing a raw "±" number in a completely different unit than the 0-100
+// score itself (confusing without real payoff), this reports the same
+// underlying signal as a plain-language confidence label instead, same
+// spirit as the "why is this the number" confidence badges elsewhere on
+// this site.
+function confidenceLabel(effectiveGamesPlayed) {
+  if (effectiveGamesPlayed < 2) return 'Low confidence (early season)';
+  if (effectiveGamesPlayed < 5) return 'Medium confidence';
+  return 'High confidence';
+}
+
+leagueSelect.addEventListener('change', () => loadLeagueData(leagueSelect.value));
+weekSelect.addEventListener('change', render);
+
+// Projections toggle (remembered per browser). Defaults ON.
+const projectedToggle = document.getElementById('projectedToggle');
+if (projectedToggle) {
+  try { projectedToggle.checked = localStorage.getItem('winProbStandingsProjected') !== 'false'; } catch { /* storage unavailable -- keep default */ }
+  projectedToggle.addEventListener('change', () => {
+    try { localStorage.setItem('winProbStandingsProjected', String(projectedToggle.checked)); } catch { /* ignore */ }
+    render();
+  });
+}
+
+// Live refresh: projections only mean something if they move, so re-pull
+// every minute while the tab is visible, and immediately on coming back to
+// it (background timers are throttled).
+function liveRefresh() {
+  if (document.hidden || !leagueSelect.value) return;
+  loadLeagueData(leagueSelect.value, { quiet: true });
+}
+setInterval(liveRefresh, 60000);
+document.addEventListener('visibilitychange', liveRefresh);
 
 loadLeagues();
