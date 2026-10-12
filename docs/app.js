@@ -702,6 +702,7 @@ let debugHalloweenWeek = localStorage.getItem('winProbDebugHalloweenWeek') === '
 let debugColdSnapPreWeek = localStorage.getItem('winProbDebugColdSnapPreWeek') === 'true'; // set on preferences.html
 let debugColdSnapPostWeek = localStorage.getItem('winProbDebugColdSnapPostWeek') === 'true'; // set on preferences.html
 let currentSeasonalTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' | 'halloween' | 'coldsnap-pre' | 'coldsnap-post' -- the CURRENTLY SELECTED week's theme, set once per loadMatchups call, read by the card render/update functions
+let kcHintFestive = false; // true when the hinted 'christmas' week is really Christmas moved a week early for Championship Week -- hint reads "Festive week is ahead!"
 let kcHintTheme = 'none'; // 'none' | 'thanksgiving' | 'christmas' | 'halloween' | 'coldsnap-pre' | 'coldsnap-post' -- the theme of the week the kickoff countdown is counting down TO (see updateKickoffCountdown), independent of currentSeasonalTheme
 
 // Renders a JS Date as its US-Eastern calendar date (YYYY-MM-DD) -- NFL
@@ -773,8 +774,24 @@ async function weekContainsDateKey(year, week, dateKey) {
 async function weekIsThanksgiving(year, week) {
   return weekContainsDateKey(year, week, thanksgivingDateKey(year));
 }
-async function weekIsChristmas(year, week) {
+// Raw calendar answer: does Dec 25 land in this week, regardless of anything else.
+async function weekHasChristmasDate(year, week) {
   return weekContainsDateKey(year, week, christmasDateKey(year));
+}
+// True in the seasons where the real Christmas week IS Championship Week.
+// Championship Week always takes priority over a holiday theme, so in that
+// case Christmas (and Cold Snap with it) slides one week EARLIER instead of
+// disappearing -- see weekIsChristmas / the Cold Snap helpers below.
+async function christmasIsShifted(year) {
+  return weekHasChristmasDate(year, CHAMPIONSHIP_WEEK);
+}
+// "Is this the week that gets the Christmas treatment." Normally the week
+// containing Dec 25. When that's Championship Week, the championship look
+// wins and Christmas moves to the week before it.
+async function weekIsChristmas(year, week) {
+  if (week === CHAMPIONSHIP_WEEK) return false;
+  if (week === CHAMPIONSHIP_WEEK - 1 && await christmasIsShifted(year)) return true;
+  return weekHasChristmasDate(year, week);
 }
 
 // Halloween is NOT reliably an actual NFL game day the way Thanksgiving and
@@ -812,6 +829,10 @@ async function weekIsColdSnapPre(year, week) {
   return weekIsChristmas(year, week + 1);
 }
 async function weekIsColdSnapPost(year, week) {
+  // No "after" week when Christmas was pushed back to make room for
+  // Championship Week -- the week after the shifted Christmas IS
+  // Championship Week, which keeps its own look.
+  if (await christmasIsShifted(year)) return false;
   return weekIsChristmas(year, week - 1);
 }
 
@@ -820,6 +841,10 @@ async function weekIsColdSnapPost(year, week) {
 // a debug toggle is forcing the full look on for a different week.
 async function realSeasonalTheme(year, week) {
   try {
+    // Championship Week outranks every holiday theme that lands on it
+    // (Christmas, if it was the one colliding, has already moved a week
+    // earlier -- see weekIsChristmas).
+    if (week === CHAMPIONSHIP_WEEK) return 'none';
     if (await weekIsHalloween(year, week)) return 'halloween';
     if (await weekIsThanksgiving(year, week)) return 'thanksgiving';
     if (await weekIsChristmas(year, week)) return 'christmas';
@@ -844,6 +869,9 @@ async function determineSeasonalTheme(year, week) {
   return realSeasonalTheme(year, week);
 }
 
+// Shown instead of the 'christmas' hint when Christmas was moved a week early
+// to make room for Championship Week (it isn't literally Christmas week).
+const SEASONAL_HINT_COPY_FESTIVE = '🎄 Festive week is ahead!';
 const SEASONAL_HINT_COPY = {
   thanksgiving: '🦃 Thanksgiving week is almost here',
   christmas: '🎄 Christmas week is almost here',
@@ -2704,7 +2732,7 @@ function tickKickoffCountdown() {
     el.classList.add(`seasonal-${seasonalCssTheme(kcHintTheme)}`);
     if (seasonalHintEl) {
       seasonalHintEl.hidden = false;
-      seasonalHintEl.textContent = SEASONAL_HINT_COPY[kcHintTheme] || '';
+      seasonalHintEl.textContent = (kcHintTheme === 'christmas' && kcHintFestive) ? SEASONAL_HINT_COPY_FESTIVE : (SEASONAL_HINT_COPY[kcHintTheme] || '');
     }
   }
 }
@@ -2743,8 +2771,10 @@ async function updateKickoffCountdown(byMatchup, year, week) {
   // about it here would be redundant at best, confusing at worst.
   try {
     kcHintTheme = await realSeasonalTheme(year, targetWeek);
+    kcHintFestive = kcHintTheme === 'christmas' && await christmasIsShifted(year);
   } catch {
     kcHintTheme = 'none';
+    kcHintFestive = false;
   }
   seedKcParticles();
   tickKickoffCountdown();
@@ -4086,9 +4116,8 @@ const VIEW_RENDERERS = {
 // sits at 0, all_starters_done is false for every row) -- so the normal
 // live-graph views, which all assume a score is trending somewhere, have
 // nothing meaningful to plot. Predictions instead come from the same
-// layered Power Ratings model the Standings page uses (weighted SRS +
-// recency decay + Bayesian shrinkage + luck adjustment + uncertainty,
-// normalized via normalCdf) -- ported here rather than shared, same
+// Power Rating v2 model the Standings page uses (projection/actual blend,
+// recency weighting, shrinkage, 15% resume, uncertainty, normalCdf) -- ported here rather than shared, same
 // cross-file-duplication convention standings.js/year-in-review.js already
 // follow; see standings.js for the fully-commented original.
 
@@ -4098,7 +4127,7 @@ async function fetchPowerPicksHistory(leagueId, year) {
   if (powerPicksHistoryCache[cacheKey]) return powerPicksHistoryCache[cacheKey];
   const rows = await fetchAllRows((from, to) =>
     sb.from('snapshots')
-      .select('year, week, matchup_id, team_id, actual_score, win_prob, all_starters_done, ts')
+      .select('year, week, matchup_id, team_id, actual_score, expected_score, win_prob, all_starters_done, ts')
       .eq('league_id', leagueId).eq('year', year).order('ts').range(from, to)
   );
   powerPicksHistoryCache[cacheKey] = rows;
@@ -4122,120 +4151,114 @@ function extractPregameWinProb(rows) {
   return result;
 }
 
-// Ported from standings.js's computePowerRatings -- same six-layer model.
+// Ported from standings.js's computePowerRatings -- Power Rating v2 (see the
+// long comment on that function in standings.js for what it does and why).
 // Reuses this file's own normalCdf/erf (defined near the top) rather than
 // duplicating those too.
 function computePowerRatings(rows, teamIds, pregameWinProbByKey, throughWeek, opts) {
-  const decay = (opts && opts.decay) ?? 0.85;
-  const priorK = (opts && opts.priorK) ?? 3;
-  const luckLambda = (opts && opts.luckLambda) ?? 0.15;
-  const PP_DEFAULT_STDDEV = 21; // same per-team score stddev winProb.js's model uses
+  // ----------------------------------------------------------------------
+  // Power Rating v2. Replaces the old opponent-adjusted margin (SRS) +
+  // z-score version, which swung ~12 points a week on average. Tested
+  // against thousands of simulated seasons where each team's true strength
+  // was known: this version moves ~2-3 points a week and ranks teams
+  // measurably more accurately. Why the old one was jumpy:
+  //   1. Margins include the OPPONENT's score. In fantasy your score doesn't
+  //      depend on who you face, so adjusting for opponents only imported
+  //      their noise -- roughly doubling the noise per game.
+  //   2. The 0-100 score was a z-score against the league's CURRENT spread.
+  //      Early in a season ratings are tightly bunched, so dividing by that
+  //      tiny spread blew small gaps up into 1-vs-99 scores, and one team's
+  //      week re-scaled everyone. It also silently cancelled the shrinkage
+  //      toward average (shrinking every team equally is undone by
+  //      re-standardizing), so the "prior" never actually calmed anything.
+  // What this does instead:
+  //   * Performance per game blends the ACTUAL score with the team's
+  //     PREGAME PROJECTION (calibrated league-wide to the actual-score
+  //     scale). A projection reflects roster strength and injuries without
+  //     one week's luck, so it's far less noisy than a single score.
+  //   * Each team's rating = recency-weighted average performance minus the
+  //     league average, shrunk toward 0 by n/(n+priorK) -- now meaningful,
+  //     because the score below is on a fixed scale.
+  //   * ~85% of the rating is that predictive strength; ~15% is a
+  //     "resume" term from actual win% (also shrunk), so winning counts a
+  //     little even where the underlying numbers say it shouldn't.
+  //   * Power Score = 100 * normalCdf(rating / scale), a FIXED scale (+12
+  //     points of rating = ~84), so a team's score only moves when ITS
+  //     numbers move, not because the rest of the league shifted.
+  // Same return shape as before: Map teamId -> { score, rating, stdErr, gamesPlayed }.
+  // ----------------------------------------------------------------------
+  const o = opts || {};
+  const decay = o.decay ?? 0.93;        // per-week memory; gentle recency
+  const priorK = o.priorK ?? 5;         // effective games of "prior" pulling toward average
+  const projWeight = o.projWeight ?? 0.6; // share of a game's signal taken from the pregame projection
+  const resumeShare = o.resumeShare ?? 0.15;
+  const resumeK = o.resumeK ?? 4;
+  const resumePts = o.resumePts ?? 30;  // rating points a 100% vs 0% win rate would span
+  const scale = o.scale ?? 12;
+  const SD = 21;                        // per-team weekly score stddev, same as winProb.js
 
-  const latestByKey = new Map();
+  // Latest row per matchup-team (final state) AND earliest row (the
+  // pregame projection), unless the summary view already supplies it.
+  const byKey = new Map();
   for (const r of rows) {
     if (throughWeek != null && r.week > throughWeek) continue;
     const key = `${r.year}|${r.week}|${r.matchup_id}|${r.team_id}`;
-    const existing = latestByKey.get(key);
-    if (!existing || new Date(r.ts) > new Date(existing.ts)) latestByKey.set(key, r);
+    const e = byKey.get(key);
+    if (!e) { byKey.set(key, { latest: r, earliest: r }); continue; }
+    if (new Date(r.ts) > new Date(e.latest.ts)) e.latest = r;
+    if (new Date(r.ts) < new Date(e.earliest.ts)) e.earliest = r;
   }
   const matchupGroups = new Map();
-  for (const r of latestByKey.values()) {
-    const mKey = `${r.year}|${r.week}|${r.matchup_id}`;
+  for (const e of byKey.values()) {
+    const mKey = `${e.latest.year}|${e.latest.week}|${e.latest.matchup_id}`;
     if (!matchupGroups.has(mKey)) matchupGroups.set(mKey, []);
-    matchupGroups.get(mKey).push(r);
+    matchupGroups.get(mKey).push(e);
   }
 
   const maxSeenWeek = throughWeek != null ? throughWeek : rows.reduce((m, r) => Math.max(m, r.week), 0);
-  const games = [];
-  const finishedPairs = [];
-  for (const sides of matchupGroups.values()) {
-    if (sides.length !== 2) continue;
-    const [a, b] = sides;
-    if (!a.all_starters_done || !b.all_starters_done) continue;
-    const age = maxSeenWeek - a.week;
-    const weight = Math.pow(decay, Math.max(0, age));
-    games.push({ teamA: a.team_id, teamB: b.team_id, margin: a.actual_score - b.actual_score, weight });
-    finishedPairs.push([a, b]);
+  const sidesList = []; // one entry per finished team-game
+  for (const group of matchupGroups.values()) {
+    if (group.length !== 2) continue;
+    const [a, b] = group;
+    if (!a.latest.all_starters_done || !b.latest.all_starters_done) continue;
+    const weight = Math.pow(decay, Math.max(0, maxSeenWeek - a.latest.week));
+    for (const [me, opp] of [[a, b], [b, a]]) {
+      const proj = me.latest.pregame_expected_score != null ? me.latest.pregame_expected_score : me.earliest.expected_score;
+      const actual = me.latest.actual_score;
+      const diff = actual - opp.latest.actual_score;
+      sidesList.push({ team: me.latest.team_id, weight, actual, proj: proj != null ? Number(proj) : null, result: diff > 0 ? 1 : diff < 0 ? 0 : 0.5 });
+    }
   }
 
   const result = new Map();
-  if (!games.length) {
-    for (const id of teamIds) result.set(id, { score: 50, rating: 0, stdErr: PP_DEFAULT_STDDEV * Math.SQRT2, gamesPlayed: 0 });
+  if (!sidesList.length) {
+    for (const id of teamIds) result.set(id, { score: 50, rating: 0, stdErr: SD, gamesPlayed: 0 });
     return result;
   }
 
-  const ratings = new Map(teamIds.map((id) => [id, 0]));
-  const gamesByTeam = new Map(teamIds.map((id) => [id, []]));
-  for (const g of games) {
-    if (gamesByTeam.has(g.teamA)) gamesByTeam.get(g.teamA).push({ opp: g.teamB, margin: g.margin, weight: g.weight });
-    if (gamesByTeam.has(g.teamB)) gamesByTeam.get(g.teamB).push({ opp: g.teamA, margin: -g.margin, weight: g.weight });
-  }
-  for (let iter = 0; iter < 100; iter++) {
-    let maxDelta = 0;
-    for (const id of teamIds) {
-      const gs = gamesByTeam.get(id);
-      if (!gs || !gs.length) continue;
-      let num = 0, den = 0;
-      for (const g of gs) { num += g.weight * (g.margin + ratings.get(g.opp)); den += g.weight; }
-      const next = den ? num / den : 0;
-      maxDelta = Math.max(maxDelta, Math.abs(next - ratings.get(id)));
-      ratings.set(id, next);
-    }
-    if (maxDelta < 0.0005) break;
-  }
-  const ratingVals = [...ratings.values()];
-  const meanRating = ratingVals.reduce((s, v) => s + v, 0) / (ratingVals.length || 1);
-  for (const id of teamIds) ratings.set(id, ratings.get(id) - meanRating);
+  // Calibrate projections to the actual-score scale (a league-wide offset).
+  let biasSum = 0, biasN = 0;
+  for (const s of sidesList) if (s.proj != null) { biasSum += s.actual - s.proj; biasN++; }
+  const bias = biasN ? biasSum / biasN : 0;
 
-  const effN = new Map(teamIds.map((id) => [id, 0]));
-  for (const g of games) {
-    if (effN.has(g.teamA)) effN.set(g.teamA, effN.get(g.teamA) + g.weight);
-    if (effN.has(g.teamB)) effN.set(g.teamB, effN.get(g.teamB) + g.weight);
+  const acc = new Map(teamIds.map((id) => [id, { n: 0, x: 0, w: 0 }]));
+  let totN = 0, totX = 0;
+  for (const s of sidesList) {
+    const x = s.proj != null ? projWeight * (s.proj + bias) + (1 - projWeight) * s.actual : s.actual;
+    totN += s.weight; totX += s.weight * x;
+    const e = acc.get(s.team);
+    if (!e) continue;
+    e.n += s.weight; e.x += s.weight * x; e.w += s.weight * s.result;
   }
-  const shrunk = new Map();
-  for (const id of teamIds) {
-    const n = effN.get(id) || 0;
-    shrunk.set(id, (n / (n + priorK)) * ratings.get(id));
-  }
-
-  const luck = new Map(teamIds.map((id) => [id, 0]));
-  if (pregameWinProbByKey) {
-    const winsExpected = new Map(teamIds.map((id) => [id, 0]));
-    const winsActual = new Map(teamIds.map((id) => [id, 0]));
-    for (const [a, b] of finishedPairs) {
-      for (const side of [a, b]) {
-        const pregame = pregameWinProbByKey.get(`${side.year}|${side.week}|${side.matchup_id}|${side.team_id}`);
-        if (pregame != null && winsExpected.has(side.team_id)) {
-          winsExpected.set(side.team_id, winsExpected.get(side.team_id) + pregame / 100);
-        }
-      }
-      if (a.actual_score > b.actual_score) { if (winsActual.has(a.team_id)) winsActual.set(a.team_id, winsActual.get(a.team_id) + 1); }
-      else if (b.actual_score > a.actual_score) { if (winsActual.has(b.team_id)) winsActual.set(b.team_id, winsActual.get(b.team_id) + 1); }
-      else {
-        if (winsActual.has(a.team_id)) winsActual.set(a.team_id, winsActual.get(a.team_id) + 0.5);
-        if (winsActual.has(b.team_id)) winsActual.set(b.team_id, winsActual.get(b.team_id) + 0.5);
-      }
-    }
-    for (const id of teamIds) luck.set(id, luckLambda * ((winsActual.get(id) || 0) - (winsExpected.get(id) || 0)));
-  }
-
-  const adjusted = new Map();
-  for (const id of teamIds) adjusted.set(id, shrunk.get(id) + luck.get(id));
-
-  const stdErr = new Map();
-  for (const id of teamIds) {
-    const n = effN.get(id) || 0;
-    stdErr.set(id, n > 0 ? (PP_DEFAULT_STDDEV * Math.SQRT2) / Math.sqrt(n) : PP_DEFAULT_STDDEV * Math.SQRT2);
-  }
-
-  const adjVals = [...adjusted.values()];
-  const meanAdj = adjVals.reduce((s, v) => s + v, 0) / (adjVals.length || 1);
-  const variance = adjVals.reduce((s, v) => s + (v - meanAdj) ** 2, 0) / (adjVals.length || 1);
-  const stdAdj = Math.sqrt(variance) || 1;
+  const leagueMean = totX / totN;
 
   for (const id of teamIds) {
-    const z = (adjusted.get(id) - meanAdj) / stdAdj;
-    result.set(id, { score: 100 * normalCdf(z), rating: adjusted.get(id), stdErr: stdErr.get(id), gamesPlayed: effN.get(id) || 0 });
+    const e = acc.get(id);
+    const n = e.n;
+    const predictive = n ? (n / (n + priorK)) * (e.x / n - leagueMean) : 0;
+    const resume = n ? (n / (n + resumeK)) * (e.w / n - 0.5) * resumePts : 0;
+    const rating = (1 - resumeShare) * predictive + resumeShare * resume;
+    result.set(id, { score: 100 * normalCdf(rating / scale), rating, stdErr: SD / Math.sqrt(n + priorK), gamesPlayed: n });
   }
   return result;
 }
@@ -4247,8 +4270,14 @@ function computePowerRatings(rows, teamIds, pregameWinProbByKey, throughWeek, op
 // both teams' independent uncertainty (stdErr) the same way two
 // independent normal estimates combine: variances add.
 function powerPickWinProbability(ratingA, ratingB) {
-  const combinedVar = ratingA.stdErr ** 2 + ratingB.stdErr ** 2;
-  if (!combinedVar) return 50;
+  // Power Rating v2's rating is "points per game better than the average
+  // team", so a single game's margin is that gap plus a LOT of week-to-week
+  // scoring noise (each team's weekly score has stddev ~21, so the margin
+  // has ~21*sqrt(2)). The two ratings' own estimation uncertainty (stdErr)
+  // adds on top. The previous version only used the estimation part, which
+  // made a modest rating gap read like a near-lock.
+  const POWER_GAME_SD = 21;
+  const combinedVar = 2 * POWER_GAME_SD ** 2 + ratingA.stdErr ** 2 + ratingB.stdErr ** 2;
   const z = (ratingA.rating - ratingB.rating) / Math.sqrt(combinedVar);
   return 100 * normalCdf(z);
 }
