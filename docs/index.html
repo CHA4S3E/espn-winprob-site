@@ -1164,6 +1164,10 @@
     margin: 2px 0 10px; line-height: 1.5; white-space: pre-line;
   }
 
+  /* Smooth cross-fade when navigating to/from the other pages (supported browsers). */
+  @view-transition { navigation: auto; }
+  ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 180ms; }
+  @media (prefers-reduced-motion: reduce) { @view-transition { navigation: none; } }
   #matchups { transition: opacity 180ms ease; }
   #matchups.view-fading { opacity: 0; }
 
