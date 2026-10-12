@@ -253,11 +253,11 @@ async function ensureTeams(leagueId, espnTeams, teamIdByEspnId) {
 }
 
 // "Slow" housekeeping (stat-correction look-back weeks, the full-season
-// schedule save) doesn't need to run on every 5-minute poll -- it's done in
-// the first 10 minutes of each half hour, which still lands at least once
-// per half hour whatever the external cron cadence is. FORCE_SLOW_TASKS=1
-// runs them every time.
-const RUN_SLOW_TASKS = process.env.FORCE_SLOW_TASKS === '1' || (new Date().getMinutes() % 30) < 10;
+// schedule save) doesn't need to run on every poll -- it's done in the first
+// 4 minutes of each half hour, which lands on at least one run per half hour
+// with a 2-minute cron (and any cadence of 4 minutes or faster).
+// FORCE_SLOW_TASKS=1 runs them every time.
+const RUN_SLOW_TASKS = process.env.FORCE_SLOW_TASKS === '1' || (new Date().getMinutes() % 30) < 4;
 
 async function upsertTeam(leagueId, espnTeam) {
   const espnTeamId = espnTeam.id;
