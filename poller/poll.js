@@ -289,7 +289,27 @@ const HOLD_MIN_ACTUAL_MOVEMENT = 1;
 // existed to hold back an upcoming week's pregame reveal). Returns
 // insertedCount so callers can decide whether it's worth refreshing the
 // Power Rankings cache afterward.
-async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen = true, quiet = false } = {}) {
+// Saves the league's whole-season matchup schedule (see 020_schedule.sql) --
+// ESPN's response already includes every week's pairings, not just this
+// week's. Best-effort on purpose: a failure here (e.g. the migration hasn't
+// been run yet) must never stop the snapshot polling that actually matters.
+async function saveFullSchedule(league, year, leagueData, teamIdByEspnId) {
+  const byKey = new Map();
+  for (const m of leagueData.schedule || []) {
+    if (!m.home || !m.away || !m.matchupPeriodId) continue; // skip byes
+    const home = teamIdByEspnId[m.home.teamId];
+    const away = teamIdByEspnId[m.away.teamId];
+    if (!home || !away) continue;
+    byKey.set(`${m.matchupPeriodId}|${home}`, {
+      league_id: league.id, year, week: m.matchupPeriodId, home_team_id: home, away_team_id: away,
+    });
+  }
+  if (!byKey.size) return;
+  const { error } = await supabase.from('schedule').upsert([...byKey.values()], { onConflict: 'league_id,year,week,home_team_id' });
+  if (error) console.warn(`[${league.slug}] could not save schedule (has 020_schedule.sql been run?): ${error.message}`);
+}
+
+async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen = true, quiet = false, saveSchedule = false } = {}) {
   const [leagueData, nflGameData] = await Promise.all([
     fetchLeagueWeek({
       espnLeagueId: league.espn_league_id,
@@ -306,6 +326,8 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
   for (const t of leagueData.teams || []) {
     teamIdByEspnId[t.id] = await upsertTeam(league.id, t);
   }
+
+  if (saveSchedule) await saveFullSchedule(league, year, leagueData, teamIdByEspnId);
 
   const schedule = (leagueData.schedule || []).filter(
     (m) => m.matchupPeriodId === week && m.away // skip byes
@@ -530,7 +552,7 @@ async function pollLeague(league) {
   const teamIdByEspnId = {};
   let totalInserted = 0;
 
-  const current = await pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen });
+  const current = await pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen, saveSchedule: true });
   totalInserted += current.insertedCount;
 
   for (let back = 1; back <= STAT_CORRECTION_LOOKBACK_WEEKS; back++) {
