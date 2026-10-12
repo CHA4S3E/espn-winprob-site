@@ -390,6 +390,7 @@ async function loadYear(leagueId, year) {
 
   loadingState.style.display = 'none';
   content.style.display = 'block';
+  if (window.siteEnter) { window.siteEnter(document.getElementById('heroContent')?.parentElement, '#heroContent'); window.siteEnter(document.querySelector('.page')); }
 }
 
 function initials(name) { return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase(); }
