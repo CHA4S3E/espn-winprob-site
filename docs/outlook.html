@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outlook — Fantasy Win Probability Tracker</title>
+<meta name="theme-color" content="#ffffff" id="themeColorMeta">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%F0%9F%94%AE</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const initialTheme =
+    localStorage.getItem('winProbTheme') ||
+    (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', initialTheme);
+  document.getElementById('themeColorMeta').setAttribute('content', initialTheme === 'dark' ? '#14161a' : '#ffffff');
+</script>
+<style>
+  html { scrollbar-gutter: stable; overflow-y: scroll; background: var(--bg); }
+  :root {
+    --bg: #ffffff; --fg: #222222; --muted: #888888; --border: #eeeeee;
+    --card-bg: #ffffff; --input-bg: #fafafa; --input-border: #cccccc;
+    --btn-border: #dddddd; --btn-hover: #f5f5f5; --accent: #1a3fa0;
+    --win: #2e8b57; --loss: #c0392b; --tie: #888888; --panel-bg: #f6f7fa;
+    --font-display: 'Doppio One', 'Arial Narrow', sans-serif;
+    --font-body: 'Inter', -apple-system, Arial, sans-serif;
+    --text-xs: 11px; --text-sm: 12px; --text-base: 14px; --text-lg: 16px;
+    --text-xl: 20px; --text-2xl: 26px; --text-3xl: 34px;
+  }
+  html[data-theme="dark"] {
+    --bg: #14161a; --fg: #e8e8e8; --muted: #9aa0a6; --border: #2a2d33;
+    --card-bg: #1c1f24; --input-bg: #20232a; --input-border: #3a3d44;
+    --btn-border: #3a3d44; --btn-hover: #262a31; --accent: #3a67df;
+    --win: #4fbd82; --loss: #e0574a; --tie: #9aa0a6; --panel-bg: #232733;
+  }
+  ::selection { background: var(--accent); color: #fff; }
+  * { box-sizing: border-box; }
+  body { font-family: var(--font-body); background: var(--bg); color: var(--fg); margin: 0; padding: 30px 16px 60px; -webkit-font-smoothing: antialiased; }
+  #wrap { max-width: 1040px; margin: 0 auto; }
+  h1 { font-family: var(--font-display); font-weight: 400; font-size: var(--text-3xl); text-align: center; margin: 0 0 4px; }
+  .sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 24px; }
+
+  .top-nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+  .top-nav-link { font-size: var(--text-sm); text-decoration: none; color: var(--accent); padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-bg); }
+  .top-nav-link:hover { background: var(--btn-hover); }
+  .top-nav-link.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  #controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  select, input[type="number"] { padding: 7px 12px; font-size: var(--text-base); font-family: var(--font-body); border-radius: 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--fg); }
+  input[type="number"] { width: 64px; }
+  .control-label { font-size: var(--text-sm); color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .pill { background: var(--card-bg); border: 1px solid var(--border); color: var(--fg); border-radius: 999px; padding: 7px 14px; font-size: var(--text-base); cursor: pointer; font-family: inherit; }
+  .pill:hover { border-color: var(--accent); }
+  .scrub { display: flex; align-items: center; gap: 10px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 999px; padding: 5px 16px 5px 6px; }
+  .scrub input[type=range] { width: 220px; accent-color: var(--accent); }
+  .scrub .wk { font-variant-numeric: tabular-nums; min-width: 96px; font-size: var(--text-base); }
+  .legend { display: flex; justify-content: center; gap: 18px; color: var(--muted); font-size: var(--text-sm); margin: 4px 0 10px; flex-wrap: wrap; }
+
+  #emptyState, #loadingState { text-align: center; color: var(--muted); font-size: var(--text-base); padding: 40px 20px; }
+
+  .board { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+  .row, .head { display: grid; align-items: stretch; }
+  .head { background: var(--panel-bg); border-bottom: 1px solid var(--border); font-size: var(--text-sm); color: var(--muted); }
+  .head > div { padding: 12px 6px; display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.2; cursor: pointer; user-select: none; }
+  .head > div:hover, .head > .sorted { color: var(--fg); }
+  .head .teamh { justify-content: flex-start; padding-left: 4px; }
+  .head .gap { cursor: default; }
+  .head .cellh { border-left: 1px solid var(--border); }
+  .item { border-bottom: 1px solid var(--border); }
+  .item:last-child { border-bottom: 0; }
+  .row { cursor: pointer; transition: background .15s; min-height: 62px; }
+  .row:hover { background: rgba(127,135,160,.08); }
+  .row > div { display: flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; font-size: var(--text-lg); }
+  .chev { color: var(--muted); transition: transform .2s; font-size: 12px; }
+  .item.open .chev { transform: rotate(90deg); color: var(--fg); }
+  .rating { font-weight: 600; flex-direction: column; gap: 1px; }
+  .rating small { font-size: 10px; font-weight: 500; }
+  .up { color: var(--win); } .down { color: var(--loss); }
+  .team { justify-content: flex-start !important; gap: 10px; padding-left: 4px; min-width: 0; }
+  .logo { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; flex: none; overflow: hidden;
+          background: color-mix(in srgb, var(--tc) 28%, var(--card-bg)); border: 2px solid var(--tc); box-shadow: 0 0 12px color-mix(in srgb, var(--tc) 40%, transparent); }
+  .logo img { width: 100%; height: 100%; object-fit: cover; }
+  .tn { min-width: 0; } .tn b { display: block; font-weight: 500; font-size: var(--text-lg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rec { font-size: var(--text-base) !important; } .rec.proj { color: var(--muted); }
+
+  .cell { position: relative; border-left: 1px solid var(--border); overflow: hidden; }
+  .cell::before { content: ''; position: absolute; inset: 0; background: var(--accent); opacity: var(--heat); transition: opacity .5s; }
+  .cell.hot { box-shadow: inset 0 0 22px color-mix(in srgb, var(--accent) 55%, transparent); }
+  .cell span { position: relative; font-weight: 600; color: var(--fg); }
+  .cell.title::before { background: linear-gradient(135deg, #f4c430, #ff9a3c); }
+  /* Text over a strongly filled cell has to stay readable in light mode. */
+  .cell[style*="--heat:0.9"] span, .cell[style*="--heat:0.8"] span, .cell[style*="--heat:0.7"] span, .cell[style*="--heat:0.6"] span, .cell[style*="--heat:0.5"] span { color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  .cell .d { position: absolute; top: 4px; right: 6px; font-size: 9px; font-weight: 600; font-style: normal; color: var(--fg); opacity: .85; }
+
+  .panel { display: none; padding: 16px 20px 22px 24px; background: var(--panel-bg); border-top: 1px solid var(--border); }
+  .item.open .panel { display: grid; gap: 22px; grid-template-columns: 1.1fr 1fr; animation: drop .25s ease; }
+  @keyframes drop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  .panel h4 { margin: 0 0 8px; font-size: var(--text-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .trend svg { width: 100%; height: 120px; display: block; }
+  .legend2 { font-size: var(--text-xs); color: var(--muted); display: flex; gap: 12px; margin-top: 4px; flex-wrap: wrap; }
+  .legend2 i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .sched { display: grid; gap: 7px; }
+  .g { display: grid; grid-template-columns: 44px 1fr 88px 44px; gap: 8px; align-items: center; font-size: 13px; }
+  .g .w { color: var(--muted); font-size: var(--text-xs); }
+  .g .opp { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .muted { color: var(--muted); }
+  .g .bar { height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--loss) 55%, var(--card-bg)); overflow: hidden; }
+  .g .bar i { display: block; height: 100%; background: var(--win); border-radius: 4px; }
+  .g .p { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .dist { display: flex; align-items: flex-end; gap: 3px; height: 70px; }
+  .dist div { flex: 1; background: color-mix(in srgb, var(--tc) 65%, var(--panel-bg)); border-radius: 3px 3px 0 0; position: relative; min-height: 2px; }
+  .dist div.cur { background: var(--tc); box-shadow: 0 0 10px var(--tc); }
+  .dist div em { position: absolute; bottom: -16px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--muted); font-style: normal; }
+  .distwrap { padding-bottom: 18px; }
+  #note { margin-top: 14px; color: var(--muted); font-size: var(--text-sm); line-height: 1.6; text-align: center; max-width: 760px; margin-left: auto; margin-right: auto; }
+
+  @media (max-width: 780px) {
+    .row, .head { grid-template-columns: 28px 58px minmax(110px,1fr) 52px repeat(3, 54px) !important; }
+    .row > :nth-child(5), .head > :nth-child(5) { display: none; }
+    .row > :nth-child(n+9), .head > :nth-child(n+9) { display: none; }
+    .item.open .panel { grid-template-columns: 1fr; }
+    .scrub input[type=range] { width: 140px; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>Season Outlook</h1>
+  <div class="sub" id="subtext">Odds for every remaining game, rolled up into playoff and title chances</div>
+
+  <nav class="top-nav">
+    <a class="top-nav-link" href="index.html">Matchups</a>
+    <a class="top-nav-link" href="standings.html">Standings</a>
+    <a class="top-nav-link is-active" href="outlook.html">Outlook</a>
+    <a class="top-nav-link" href="preferences.html">Display</a>
+  </nav>
+
+  <div id="controls">
+    <select id="leagueSelect"></select>
+    <div class="scrub">
+      <button class="pill" id="playBtn" type="button" title="Watch the odds evolve week by week">▶ Play</button>
+      <input type="range" id="asOfSlider" min="1" max="1" value="1">
+      <div class="wk" id="asOfLabel">As of week 1</div>
+    </div>
+    <label class="control-label">Reg. season ends wk <input type="number" id="regEndInput" min="1" max="18"></label>
+    <select id="simCountSelect" title="More simulations = steadier numbers, slower">
+      <option value="2000">2,000 sims</option>
+      <option value="3000" selected>3,000 sims</option>
+      <option value="6000">6,000 sims</option>
+    </select>
+  </div>
+
+  <div id="loadingState">Loading outlook…</div>
+  <div id="emptyState" style="display:none">No completed weeks yet this season — check back once week 1 wraps up.</div>
+  <div id="content" style="display:none">
+    <div class="legend">
+      <span><b>▲▼</b> change vs. the previous week</span>
+      <span>Click a team for its schedule, odds history and win distribution</span>
+      <span>Click a column to sort</span>
+    </div>
+    <div class="board" id="board"></div>
+    <div id="note"></div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="outlook.js"></script>
+</body>
+</html>
