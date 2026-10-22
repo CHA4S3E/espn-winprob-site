@@ -393,15 +393,58 @@
     transform: translate(calc((1 - var(--comet-p)) * -8vw), calc((1 - var(--comet-p)) * -4vh));
   }
   #comet.on { opacity: 1; }
+  /* The tail is layered so it reads as moving even though the comet stays
+     put: a soft tapered glow that breathes, a bright core that flickers,
+     and a few small wisps that stream from the head back along the tail and
+     fade. The whole tail also sways a couple of degrees. All of it is
+     paused when the comet is off, and removed for reduced-motion. */
   #cometTail {
-    position: absolute; right: 0; top: -1.5px; height: 3px; border-radius: 3px;
+    position: absolute; right: 0; top: -7px; height: 14px;
     width: calc(16px + var(--comet-p) * 68px);
-    background: linear-gradient(to left, var(--comet-color), transparent);
-    box-shadow: 0 0 calc(var(--comet-p) * 8px) var(--comet-color);
     transform-origin: right center; transform: rotate(14deg);
-    opacity: calc(0.45 + var(--comet-p) * 0.4);
-    transition: width 1.5s ease, opacity 1.5s ease, box-shadow 1.5s ease;
+    opacity: calc(0.55 + var(--comet-p) * 0.4);
+    transition: width 1.5s ease, opacity 1.5s ease;
   }
+  #cometTail i { position: absolute; display: block; pointer-events: none; }
+  #cometTail .ct-glow {
+    inset: 0; filter: blur(2.5px); opacity: 0.6; transform-origin: right center;
+    background: linear-gradient(to left, var(--comet-color), transparent 92%);
+    clip-path: polygon(0 42%, 100% 12%, 100% 88%, 0 58%);
+    -webkit-mask-image: linear-gradient(to left, transparent 0, #000 22%); mask-image: linear-gradient(to left, transparent 0, #000 22%);
+  }
+  #cometTail .ct-core {
+    left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; border-radius: 2px; transform-origin: right center;
+    background: linear-gradient(to left, #fff, var(--comet-color) 35%, transparent);
+  }
+  html[data-theme="light"] #cometTail .ct-core { background: linear-gradient(to left, var(--comet-color), transparent); }
+  #cometTail .ct-w {
+    width: 14px; height: 2px; border-radius: 2px; opacity: 0; left: 100%;
+    background: linear-gradient(to left, var(--comet-color), transparent);
+    filter: blur(0.4px);
+  }
+  #cometTail .ct-w1 { top: 26%; } #cometTail .ct-w2 { top: 46%; } #cometTail .ct-w3 { top: 64%; } #cometTail .ct-w4 { top: 38%; width: 8px; }
+  #cometOrb {
+    position: absolute; border-radius: 50%; pointer-events: none;
+    --orb: calc(5px + var(--comet-p) * 6px);
+    width: var(--orb); height: var(--orb); left: calc(var(--orb) / -2); top: calc(var(--orb) / -2);
+    background: radial-gradient(circle, rgba(255,255,255,0.95) 0 22%, var(--comet-color) 50%, transparent 72%);
+    box-shadow: 0 0 calc(4px + var(--comet-p) * 8px) var(--comet-color);
+    opacity: calc(1 - var(--comet-sym) * 0.6);
+    transition: opacity 1.5s ease, width 1.5s ease, height 1.5s ease;
+  }
+  #comet.on #cometTail { animation: ctSway 4.2s ease-in-out infinite; }
+  #comet.on .ct-glow { animation: ctBreathe 2.6s ease-in-out infinite alternate; }
+  #comet.on .ct-core { animation: ctFlicker 1.6s ease-in-out infinite alternate; }
+  #comet.on .ct-w { animation: ctDrift 2.4s linear infinite; }
+  #comet.on .ct-w2 { animation-delay: -0.6s; animation-duration: 2.9s; }
+  #comet.on .ct-w3 { animation-delay: -1.3s; animation-duration: 2.2s; }
+  #comet.on .ct-w4 { animation-delay: -1.9s; animation-duration: 3.2s; }
+  #comet.on #cometOrb { animation: ctPulse 1.9s ease-in-out infinite alternate; }
+  @keyframes ctSway { 0%,100% { transform: rotate(12deg); } 50% { transform: rotate(16.5deg); } }
+  @keyframes ctBreathe { from { transform: scaleX(0.9) scaleY(0.9); opacity: 0.45; } to { transform: scaleX(1.06) scaleY(1.12); opacity: 0.75; } }
+  @keyframes ctFlicker { from { transform: scaleX(0.82); opacity: 0.7; } to { transform: scaleX(1); opacity: 1; } }
+  @keyframes ctDrift { 0% { left: 96%; opacity: 0; } 12% { opacity: 0.95; } 100% { left: -12%; opacity: 0; } }
+  @keyframes ctPulse { from { transform: scale(0.88); } to { transform: scale(1.12); } }
   #cometSymbol {
     position: absolute; left: -9px; top: -11px; font-size: 16px; line-height: 22px;
     opacity: var(--comet-sym);
@@ -410,7 +453,9 @@
     transition: opacity 1.5s ease, transform 1.5s ease;
   }
   @media (prefers-reduced-motion: reduce) {
-    #comet, #cometTail, #cometSymbol { transition: opacity 0.3s ease; }
+    #comet, #cometTail, #cometSymbol, #cometOrb { transition: opacity 0.3s ease; }
+    #comet.on #cometTail, #comet.on #cometTail i, #comet.on #cometOrb { animation: none; }
+    #cometTail .ct-w { display: none; }
   }
 
   /* Canvases default to display:inline, which reserves a few pixels of
@@ -1470,7 +1515,7 @@
 <div id="stadiumHaze" class="sky-layer"></div>
 <canvas id="skyCanvas"></canvas>
 <div id="moon"><canvas id="moonCanvas" width="64" height="64"></canvas></div>
-<div id="comet"><span id="cometTail"></span><span id="cometSymbol"></span></div>
+<div id="comet"><span id="cometTail"><i class="ct-glow"></i><i class="ct-core"></i><i class="ct-w ct-w1"></i><i class="ct-w ct-w2"></i><i class="ct-w ct-w3"></i><i class="ct-w ct-w4"></i></span><span id="cometOrb"></span><span id="cometSymbol"></span></div>
 <div id="champSpotlights">
   <div class="champ-beam cb1"></div>
   <div class="champ-beam cb2"></div>
