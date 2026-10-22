@@ -1523,22 +1523,53 @@ const SKY_COMETS = {
   christmas:    { emoji: '\u{1F384}', color: '#4fd493', label: 'Christmas is next week' },
   championship: { emoji: '\u{1F3C6}', color: '#f4c430', label: 'Championship Week is next week' },
 };
+// The comet APPROACHES over the week. Early on (Tuesday, when only Power
+// Picks are showing) it's a faint short dash of the event's color, far off
+// toward the corner; as the week goes it grows, brightens and slides closer,
+// and over the weekend the event's emoji fades in as the head. Progress runs
+// from two days before the week's first kickoff (about when Power Picks
+// appear) to five days after it (about when the next week takes over).
+const COMET_LEAD_MS = 2 * 86400000;
+const COMET_SPAN_MS = 7 * 86400000;
+const COMET_SYMBOL_FROM = 0.5;  // emoji starts fading in (about Friday)
+const COMET_SYMBOL_FULL = 0.8;  // emoji fully shown (about Sunday afternoon)
+let debugCometProgress = localStorage.getItem('winProbDebugCometProgress') || 'auto'; // set on preferences.html
+async function cometProgress(year, week) {
+  if (debugCometProgress !== 'auto') {
+    const forced = Number(debugCometProgress);
+    if (Number.isFinite(forced)) return Math.min(Math.max(forced / 100, 0), 1);
+  }
+  if (debugComet !== 'none') return 1; // forcing a comet with no progress choice shows it fully arrived
+  const start = await fetchWeekStart(year, week);
+  if (!start) return 1; // schedule unavailable -> the old fully-visible comet
+  const p = (Date.now() - (start.getTime() - COMET_LEAD_MS)) / COMET_SPAN_MS;
+  return Math.min(Math.max(p, 0), 1);
+}
 async function cometForWeek(year, week) {
-  if (debugComet !== 'none') return SKY_COMETS[debugComet] || null;
-  // Only meaningful on the latest week -- same convention as the kickoff countdown.
-  if (yearSelect.selectedIndex !== 0 || weekSelect.selectedIndex !== 0) return null;
-  if (week + 1 === CHAMPIONSHIP_WEEK) return SKY_COMETS.championship;
-  const nextTheme = await realSeasonalTheme(year, week + 1); // real schedule, never debug-overridden
-  return SKY_COMETS[nextTheme] || null;
+  let base = null;
+  if (debugComet !== 'none') {
+    base = SKY_COMETS[debugComet] || null;
+  } else if (yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0) {
+    // Only meaningful on the latest week -- same convention as the kickoff countdown.
+    if (week + 1 === CHAMPIONSHIP_WEEK) base = SKY_COMETS.championship;
+    else base = SKY_COMETS[await realSeasonalTheme(year, week + 1)] || null; // real schedule, never debug-overridden
+  }
+  if (!base) return null;
+  return { ...base, progress: await cometProgress(year, week) };
 }
 function renderComet(comet) {
   const el = document.getElementById('comet');
   if (!el) return;
   if (comet) {
+    const p = comet.progress ?? 1;
+    const sym = Math.min(Math.max((p - COMET_SYMBOL_FROM) / (COMET_SYMBOL_FULL - COMET_SYMBOL_FROM), 0), 1);
     el.style.setProperty('--comet-color', comet.color);
-    const sym = document.getElementById('cometSymbol');
-    if (sym) sym.textContent = comet.emoji;
-    el.title = comet.label;
+    el.style.setProperty('--comet-p', p.toFixed(3));
+    el.style.setProperty('--comet-sym', sym.toFixed(3));
+    const symEl = document.getElementById('cometSymbol');
+    if (symEl) symEl.textContent = comet.emoji;
+    // Don't give the event away in the tooltip until the emoji is visible.
+    el.title = sym > 0 ? comet.label : '';
   }
   el.classList.toggle('on', !!comet);
 }
