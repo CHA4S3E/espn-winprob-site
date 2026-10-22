@@ -379,19 +379,38 @@
      does not move. No disc behind the symbol: the glow is the emoji's own,
      via a colored drop-shadow that follows its shape. Visible in both
      themes and on any night of the week -- it's a signpost, not ambience. */
+  /* It approaches over the week. app.js sets two 0-1 variables:
+     --comet-p   how far along the week is (0 = Power Picks only, 1 = arrived)
+     --comet-sym how much of the emoji is revealed (0 until late in the week)
+     Early on it's a faint short dash of the event's color, offset toward the
+     top-left corner; it then grows, brightens and slides to its resting spot,
+     and the emoji fades in as the head. Defaults (no JS yet) are the far
+     "dash" state, so nothing spoils the event before the variables arrive. */
   #comet {
     position: absolute; top: 6vh; left: 11vw; width: 0; height: 0; z-index: 0; pointer-events: none;
-    --comet-color: #ff9a3c; opacity: 0; transition: opacity 1s ease;
+    --comet-color: #ff9a3c; --comet-p: 0; --comet-sym: 0;
+    opacity: 0; transition: opacity 1s ease, transform 1.5s ease;
+    transform: translate(calc((1 - var(--comet-p)) * -8vw), calc((1 - var(--comet-p)) * -4vh));
   }
   #comet.on { opacity: 1; }
   #cometTail {
-    position: absolute; right: 0; top: -1.5px; width: 84px; height: 3px; border-radius: 3px;
+    position: absolute; right: 0; top: -1.5px; height: 3px; border-radius: 3px;
+    width: calc(16px + var(--comet-p) * 68px);
     background: linear-gradient(to left, var(--comet-color), transparent);
-    transform-origin: right center; transform: rotate(14deg); opacity: 0.85;
+    box-shadow: 0 0 calc(var(--comet-p) * 8px) var(--comet-color);
+    transform-origin: right center; transform: rotate(14deg);
+    opacity: calc(0.45 + var(--comet-p) * 0.4);
+    transition: width 1.5s ease, opacity 1.5s ease, box-shadow 1.5s ease;
   }
   #cometSymbol {
     position: absolute; left: -9px; top: -11px; font-size: 16px; line-height: 22px;
+    opacity: var(--comet-sym);
+    transform: scale(calc(0.5 + var(--comet-sym) * 0.5));
     filter: drop-shadow(0 0 5px var(--comet-color)) drop-shadow(0 0 12px var(--comet-color));
+    transition: opacity 1.5s ease, transform 1.5s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #comet, #cometTail, #cometSymbol { transition: opacity 0.3s ease; }
   }
 
   /* Canvases default to display:inline, which reserves a few pixels of
@@ -1557,6 +1576,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=30"></script>
+<script src="app.js?v=31"></script>
 </body>
 </html>
