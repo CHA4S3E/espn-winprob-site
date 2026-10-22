@@ -432,19 +432,19 @@
     opacity: calc(1 - var(--comet-sym) * 0.6);
     transition: opacity 1.5s ease, width 1.5s ease, height 1.5s ease;
   }
-  #comet.on #cometTail { animation: ctSway 4.2s ease-in-out infinite; }
-  #comet.on .ct-glow { animation: ctBreathe 2.6s ease-in-out infinite alternate; }
-  #comet.on .ct-core { animation: ctFlicker 1.6s ease-in-out infinite alternate; }
-  #comet.on .ct-w { animation: ctDrift 2.4s linear infinite; }
-  #comet.on .ct-w2 { animation-delay: -0.6s; animation-duration: 2.9s; }
-  #comet.on .ct-w3 { animation-delay: -1.3s; animation-duration: 2.2s; }
-  #comet.on .ct-w4 { animation-delay: -1.9s; animation-duration: 3.2s; }
-  #comet.on #cometOrb { animation: ctPulse 1.9s ease-in-out infinite alternate; }
-  @keyframes ctSway { 0%,100% { transform: rotate(12deg); } 50% { transform: rotate(16.5deg); } }
-  @keyframes ctBreathe { from { transform: scaleX(0.9) scaleY(0.9); opacity: 0.45; } to { transform: scaleX(1.06) scaleY(1.12); opacity: 0.75; } }
-  @keyframes ctFlicker { from { transform: scaleX(0.82); opacity: 0.7; } to { transform: scaleX(1); opacity: 1; } }
-  @keyframes ctDrift { 0% { left: 96%; opacity: 0; } 12% { opacity: 0.95; } 100% { left: -12%; opacity: 0; } }
-  @keyframes ctPulse { from { transform: scale(0.88); } to { transform: scale(1.12); } }
+  #comet.on #cometTail { animation: ctSway 8s ease-in-out infinite; }
+  #comet.on .ct-glow { animation: ctBreathe 5s ease-in-out infinite alternate; }
+  #comet.on .ct-core { animation: ctFlicker 3.4s ease-in-out infinite alternate; }
+  #comet.on .ct-w { animation: ctDrift 4.6s linear infinite; }
+  #comet.on .ct-w2 { animation-delay: -1.4s; animation-duration: 5.4s; }
+  #comet.on .ct-w3 { animation-delay: -2.8s; animation-duration: 4.2s; }
+  #comet.on .ct-w4 { animation-delay: -3.9s; animation-duration: 6s; }
+  #comet.on #cometOrb { animation: ctPulse 3.6s ease-in-out infinite alternate; }
+  @keyframes ctSway { 0%,100% { transform: rotate(13deg); } 50% { transform: rotate(15deg); } }
+  @keyframes ctBreathe { from { transform: scaleX(0.96) scaleY(0.95); opacity: 0.5; } to { transform: scaleX(1.03) scaleY(1.05); opacity: 0.65; } }
+  @keyframes ctFlicker { from { transform: scaleX(0.93); opacity: 0.85; } to { transform: scaleX(1); opacity: 1; } }
+  @keyframes ctDrift { 0% { left: 96%; opacity: 0; } 12% { opacity: 0.5; } 100% { left: -12%; opacity: 0; } }
+  @keyframes ctPulse { from { transform: scale(0.95); } to { transform: scale(1.05); } }
   #cometSymbol {
     position: absolute; left: -9px; top: -11px; font-size: 16px; line-height: 22px;
     opacity: var(--comet-sym);
