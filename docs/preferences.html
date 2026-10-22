@@ -238,6 +238,19 @@
         </select>
       </span>
     </label>
+
+    <label class="option-row">
+      <span>
+        <div class="option-label">Comet progress (default: follow the real week)</div>
+        <select id="debugCometProgress" style="margin-top:6px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--fg);font-size:13px;">
+          <option value="auto">Auto (follows the week)</option>
+          <option value="0">Tuesday: a faint dash</option>
+          <option value="30">Thursday: growing</option>
+          <option value="60">Saturday: emoji fading in</option>
+          <option value="100">Game day: fully arrived</option>
+        </select>
+      </span>
+    </label>
   </div>
 
 </div>
@@ -373,6 +386,13 @@
   cometDebugSelect.value = localStorage.getItem(COMET_DEBUG_KEY) || 'none';
   cometDebugSelect.addEventListener('change', () => {
     localStorage.setItem(COMET_DEBUG_KEY, cometDebugSelect.value);
+  });
+
+  const COMET_PROGRESS_KEY = 'winProbDebugCometProgress';
+  const cometProgressSelect = document.getElementById('debugCometProgress');
+  cometProgressSelect.value = localStorage.getItem(COMET_PROGRESS_KEY) || 'auto';
+  cometProgressSelect.addEventListener('change', () => {
+    localStorage.setItem(COMET_PROGRESS_KEY, cometProgressSelect.value);
   });
 </script>
 </body>
