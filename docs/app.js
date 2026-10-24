@@ -1530,9 +1530,9 @@ const SKY_COMETS = {
 // from two days before the week's first kickoff (about when Power Picks
 // appear) to five days after it (about when the next week takes over).
 const COMET_LEAD_MS = 2 * 86400000;
-const COMET_SPAN_MS = 7 * 86400000;
-const COMET_SYMBOL_FROM = 0.5;  // emoji starts fading in (about Friday)
-const COMET_SYMBOL_FULL = 0.8;  // emoji fully shown (about Sunday afternoon)
+const COMET_SPAN_MS = 5.7 * 86400000; // reaches 1 at about Sunday's 1pm games
+const COMET_SYMBOL_FROM = 0.45; // emoji starts fading in (about Friday morning)
+const COMET_SYMBOL_FULL = 0.8;  // emoji fully shown (about Saturday night)
 let debugCometProgress = localStorage.getItem('winProbDebugCometProgress') || 'auto'; // set on preferences.html
 async function cometProgress(year, week) {
   if (debugCometProgress !== 'auto') {
