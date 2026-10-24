@@ -617,6 +617,18 @@ function simulateOutlook(W, numSims) {
   const stats = new Map(teamIds.map((id) => [id, { playoffs: 0, bye: 0, semis: 0, final: 0, title: 0, winSum: 0, wins: new Map(), gamesLeft: 0 }]));
   const approxWeeks = new Set();
 
+  // Rating uncertainty. A team's rating is an estimate from a handful of
+  // games, not its true strength, so each simulated season first draws every
+  // team's "true" expected score from a normal curve centered on the model's
+  // estimate, with the rating's own standard error (21 / sqrt(games + 5),
+  // from computePowerRatings). Early in a season that's wide, so a hot start
+  // no longer reads as near-certain; late it's narrow and changes little.
+  // The draw is shared by every game inside that simulated season, so a team
+  // that is secretly better (or worse) is so for ALL of its remaining games
+  // and the playoffs -- which is exactly what makes the odds less extreme.
+  const strengthSE = new Map(teamIds.map((id) => [id, ratings.get(id)?.stdErr ?? 0]));
+  let muSim = mu;
+
   function sortRec(rec) {
     return teamIds.slice().sort((x, y) => {
       const a = rec.get(x), b = rec.get(y);
@@ -626,16 +638,18 @@ function simulateOutlook(W, numSims) {
     });
   }
   const game = (a, b, rec) => {
-    const sa = sampleNormalFast(mu.get(a), SCORE_SD), sb2 = sampleNormalFast(mu.get(b), SCORE_SD);
+    const sa = sampleNormalFast(muSim.get(a), SCORE_SD), sb2 = sampleNormalFast(muSim.get(b), SCORE_SD);
     const ra = rec.get(a), rb = rec.get(b);
     ra.pf += sa; rb.pf += sb2;
     if (sa > sb2) { ra.w++; rb.l++; } else if (sb2 > sa) { rb.w++; ra.l++; } else { ra.t++; rb.t++; }
   };
-  const knockout = (a, b) => (sampleNormalFast(mu.get(a), SCORE_SD) >= sampleNormalFast(mu.get(b), SCORE_SD) ? a : b);
+  const knockout = (a, b) => (sampleNormalFast(muSim.get(a), SCORE_SD) >= sampleNormalFast(muSim.get(b), SCORE_SD) ? a : b);
 
   for (let sim = 0; sim < numSims; sim++) {
     const rec = new Map();
     for (const [id, r] of start) rec.set(id, { ...r });
+    muSim = new Map();
+    for (const id of teamIds) muSim.set(id, mu.get(id) + sampleNormalFast(0, strengthSE.get(id)));
     for (let wk = W + 1; wk <= regEnd; wk++) {
       let pairs;
       if (reseedSet.has(wk)) {
