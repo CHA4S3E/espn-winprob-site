@@ -19,7 +19,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%F0%9F%8F%88</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Doppio+One&family=Inter:wght@400;500;600;700&family=Creepster&family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Cinzel+Decorative:wght@700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -1315,6 +1315,72 @@
   .espn-pct { font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl); font-variant-numeric: tabular-nums; margin-left: auto; }
   .espn-chartBox { position: relative; height: 220px; width: 100%; margin: 6px 0; }
 
+  /* ======== Festive weeks (Halloween / Thanksgiving / Christmas) ========
+     Layered ON TOP of the existing seasonal decor (garlands, pumpkin/ghost
+     corners, fog, falling particles), which is untouched. Driven by
+     html[data-seasonal-theme], which app.js sets from the selected week, so
+     browsing an old holiday week shows its holiday look. Team colors on
+     lines, bars and names are never changed. ======== */
+  html[data-seasonal-theme="halloween"] { --fest-font: 'Creepster', var(--font-display); }
+  html[data-theme="dark"][data-seasonal-theme="halloween"] { --fest-bg: radial-gradient(ellipse at 50% -10%, #5b2a86 0%, #2a1240 38%, #120a1c 78%); --fest-vignette: rgba(0,0,0,.5); --fest-frame: #ff8a1f; --fest-glow: rgba(255,138,31,.38); --fest-banner: linear-gradient(90deg,#ff8a1f,#c2410c 55%,#6d28d9); --fest-banner-text: #1a0b00; --accent: #ff8a1f; --accent-glow-a: rgba(255,138,31,0.35); --accent-glow-b: rgba(255,138,31,0.9); }
+  html[data-theme="light"][data-seasonal-theme="halloween"] { --fest-bg: radial-gradient(ellipse at 50% -10%, #ffd9a8 0%, #ffe9d0 40%, #fff6ec 80%); --fest-vignette: rgba(120,60,0,.14); --fest-frame: #e2640a; --fest-glow: rgba(226,100,10,.3); --fest-banner: linear-gradient(90deg,#ff9d3d,#e2640a 55%,#7c3aed); --fest-banner-text: #fff; --accent: #e2640a; --accent-glow-a: rgba(226,100,10,0.3); --accent-glow-b: rgba(226,100,10,0.8); }
+  html[data-seasonal-theme="thanksgiving"] { --fest-font: 'Fraunces', Georgia, serif; }
+  html[data-theme="dark"][data-seasonal-theme="thanksgiving"] { --fest-bg: radial-gradient(ellipse at 50% -10%, #7a3b12 0%, #3b1c0a 40%, #170c05 80%); --fest-vignette: rgba(0,0,0,.5); --fest-frame: #c9772b; --fest-glow: rgba(232,163,61,.34); --fest-banner: linear-gradient(90deg,#e8a33d,#b5441c 60%,#7a2e12); --fest-banner-text: #1b0c02; --accent: #e8a33d; --accent-glow-a: rgba(232,163,61,0.35); --accent-glow-b: rgba(232,163,61,0.9); }
+  html[data-theme="light"][data-seasonal-theme="thanksgiving"] { --fest-bg: radial-gradient(ellipse at 50% -10%, #ffe2b3 0%, #fff0d6 42%, #fff9ee 82%); --fest-vignette: rgba(140,70,10,.12); --fest-frame: #c9772b; --fest-glow: rgba(201,119,43,.3); --fest-banner: linear-gradient(90deg,#e8a33d,#c9772b 55%,#a23a14); --fest-banner-text: #fff; --accent: #c9772b; --accent-glow-a: rgba(201,119,43,0.3); --accent-glow-b: rgba(201,119,43,0.8); }
+  html[data-seasonal-theme="christmas"] { --fest-font: 'Cinzel Decorative', Georgia, serif; }
+  html[data-theme="dark"][data-seasonal-theme="christmas"] { --fest-bg: radial-gradient(ellipse at 50% -10%, #17603a 0%, #0c3321 40%, #07140d 80%); --fest-vignette: rgba(0,0,0,.5); --fest-frame: #ff4d4d; --fest-glow: rgba(255,77,77,.32); --fest-banner: linear-gradient(90deg,#d62828,#0b6b3a 60%,#d62828); --fest-banner-text: #fff; --accent: #ff4d4d; --accent-glow-a: rgba(255,77,77,0.35); --accent-glow-b: rgba(255,77,77,0.9); }
+  html[data-theme="light"][data-seasonal-theme="christmas"] { --fest-bg: radial-gradient(ellipse at 50% -10%, #ffd6d6 0%, #f2fff5 45%, #ffffff 85%); --fest-vignette: rgba(160,20,20,.1); --fest-frame: #d62828; --fest-glow: rgba(214,40,40,.26); --fest-banner: linear-gradient(90deg,#d62828,#0b6b3a 60%,#d62828); --fest-banner-text: #fff; --accent: #d62828; --accent-glow-a: rgba(214,40,40,0.3); --accent-glow-b: rgba(214,40,40,0.8); }
+  html[data-seasonal-theme="halloween"] body,
+  html[data-seasonal-theme="thanksgiving"] body,
+  html[data-seasonal-theme="christmas"] body {
+    background: radial-gradient(ellipse at center, transparent 55%, var(--fest-vignette) 100%), var(--fest-bg), var(--bg);
+    background-attachment: fixed;
+  }
+  /* Festive font: the page title, recap headings and team names only. Numbers
+     (percentages, scores, chart labels) keep the normal font. */
+  html[data-seasonal-theme] .title-row h2, html[data-seasonal-theme] .recap-title, html[data-seasonal-theme] .recap-card-label,
+  html[data-seasonal-theme] .espn-name, html[data-seasonal-theme] .fc-team-name, html[data-seasonal-theme] .pp-name,
+  html[data-seasonal-theme] #festBanner .fest-title { font-family: var(--fest-font, var(--font-display)); }
+  html[data-seasonal-theme="christmas"] .espn-name, html[data-seasonal-theme="christmas"] .fc-team-name, html[data-seasonal-theme="christmas"] .pp-name { font-size: 0.9em; letter-spacing: 0; }
+  html[data-seasonal-theme="christmas"] .recap-card-label { letter-spacing: 0; }
+
+  /* Festive banner */
+  #festBanner {
+    display: flex; align-items: center; gap: 12px; margin: 0 auto 18px; max-width: 560px;
+    padding: 10px 18px; border-radius: 14px; color: var(--fest-banner-text, #fff);
+    background: var(--fest-banner, var(--accent)); box-shadow: 0 6px 22px var(--fest-glow, rgba(0,0,0,.2));
+  }
+  #festBanner[hidden] { display: none; }
+  #festBanner .fest-emoji { font-size: 32px; line-height: 1; }
+  #festBanner .fest-title { font-size: 24px; line-height: 1.1; }
+  #festBanner .fest-sub { font-size: 12px; opacity: 0.85; }
+
+  /* Themed card frames (skipped while Upset Watch is pulsing its own border). */
+  .espn-card.seasonal-halloween:not(.upset-watch), .needle-card.seasonal-halloween:not(.upset-watch) {
+    border-color: var(--fest-frame); box-shadow: 0 0 0 1px color-mix(in srgb, var(--fest-frame) 30%, transparent), 0 8px 28px var(--fest-glow);
+  }
+  .espn-card.seasonal-thanksgiving:not(.upset-watch), .needle-card.seasonal-thanksgiving:not(.upset-watch) {
+    border-color: var(--fest-frame); outline: 1.5px solid color-mix(in srgb, var(--fest-frame) 70%, transparent); outline-offset: 3px;
+    box-shadow: 0 8px 28px var(--fest-glow);
+  }
+  .espn-card.seasonal-christmas:not(.upset-watch), .needle-card.seasonal-christmas:not(.upset-watch) {
+    border-color: transparent; box-shadow: 0 8px 28px var(--fest-glow);
+  }
+  .espn-card.seasonal-christmas:not(.upset-watch)::after, .needle-card.seasonal-christmas:not(.upset-watch)::after {
+    content: ''; position: absolute; inset: -3px; border-radius: 13px; padding: 4px; pointer-events: none;
+    background: repeating-linear-gradient(45deg, #d62828 0 9px, #ffffff 9px 18px, #0b6b3a 18px 27px);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  }
+  .needle-card.seasonal-christmas:not(.upset-watch)::after { border-radius: 17px; }
+
+  /* Bigger corner decorations (bottom corners, plus top for Christmas). */
+  .fest-corner { position: absolute; pointer-events: none; line-height: 1; font-size: 28px; z-index: 2; filter: drop-shadow(0 2px 4px rgba(0,0,0,.4)); }
+  .fest-corner.tl { top: -16px; left: -12px; transform: rotate(-12deg); font-size: 32px; }
+  .fest-corner.tr { top: -16px; right: -12px; transform: rotate(12deg); font-size: 32px; }
+  .fest-corner.bl { bottom: -14px; left: -10px; transform: rotate(10deg); }
+  .fest-corner.br { bottom: -14px; right: -10px; transform: rotate(-10deg); }
+
   /* ---- ESPN view effects ----
      1) Live head: a dot on the newest point of the chart line, in the leading
         team's color, with a soft ripple. app.js positions it and sets --head.
@@ -1589,6 +1655,10 @@
     <a class="top-nav-link" href="preferences.html">Display</a>
   </nav>
 
+  <!-- Festive banner -- shown only in Halloween / Thanksgiving / Christmas weeks
+       (see renderFestBanner in app.js). -->
+  <div id="festBanner" hidden><span class="fest-emoji"></span><div><div class="fest-title"></div><div class="fest-sub"></div></div></div>
+
   <!-- Week 17 hero banner -- hidden entirely outside championship week
        (real or debug-forced, see updateChampionshipStage in app.js).
        data-mode="pregame"/"live" (set by the same function) switches the
@@ -1674,6 +1744,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=37"></script>
+<script src="app.js?v=38"></script>
 </body>
 </html>
