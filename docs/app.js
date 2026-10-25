@@ -1836,7 +1836,7 @@ let weekRowsCache = { key: null, rows: [], ids: new Set(), lastTs: null };
 const teamsCache = {}; // leagueId -> { at, data }
 const TEAMS_TTL_MS = 5 * 60 * 1000;
 
-async function fetchWeekSnapshots(leagueId, year, week) {
+async function fetchWeekSnapshotsInner(leagueId, year, week) {
   const key = `${leagueId}|${year}|${week}`;
   const c = weekRowsCache;
   if (c.key !== key) {
@@ -1878,6 +1878,66 @@ async function fetchWeekSnapshots(leagueId, year, week) {
     c.lastTs = c.rows[c.rows.length - 1].ts;
   }
   return c.rows;
+}
+
+// Lineup changes (migration 023's lineup_changes view): the moments a team's
+// starting lineup changed. Only fetched when a week's data contains a big
+// win-probability jump that nothing yet explains, then kept for the session,
+// so ordinary refreshes make no extra request. If the view doesn't exist yet,
+// lineupViewOk flips off and Upset Watch uses its older idle-time guess.
+let lineupViewOk = true;
+const lineupChangeCache = {}; // `${league}|${year}|${week}` -> { coveredMs, byMatchup: Map(matchup_id -> sorted ms[]) }
+async function ensureLineupChanges(leagueId, year, week, rows) {
+  if (!lineupViewOk || !rows || !rows.length) return;
+  const key = `${leagueId}|${year}|${week}`;
+  const entry = lineupChangeCache[key];
+  const homeByMatchup = new Map();
+  let newestMs = 0;
+  for (const r of rows) {
+    const t = new Date(r.ts).getTime();
+    if (t > newestMs) newestMs = t;
+    if (!r.is_home) continue;
+    if (!homeByMatchup.has(r.matchup_id)) homeByMatchup.set(r.matchup_id, []);
+    homeByMatchup.get(r.matchup_id).push(r);
+  }
+  let needFetch = false;
+  for (const list of homeByMatchup.values()) {
+    list.sort((a, b) => new Date(a.ts) - new Date(b.ts));
+    for (let i = 1; i < list.length && !needFetch; i++) {
+      if (Math.abs(list[i].win_prob - list[i - 1].win_prob) < UPSET_JUMP_MIN) continue;
+      if (!entry || new Date(list[i].ts).getTime() > entry.coveredMs) needFetch = true;
+    }
+    if (needFetch) break;
+  }
+  if (!needFetch) return;
+  const { data, error } = await sb.from('lineup_changes').select('matchup_id, team_id, ts').eq('league_id', leagueId).eq('year', year).eq('week', week);
+  if (error) {
+    // Missing view (migration 023 not run yet) -> stop asking; anything else is retried next refresh.
+    if (error.code === '42P01' || error.code === 'PGRST205' || /lineup_changes/i.test(error.message || '')) lineupViewOk = false;
+    return;
+  }
+  const byMatchup = new Map();
+  for (const c of data || []) {
+    if (!byMatchup.has(c.matchup_id)) byMatchup.set(c.matchup_id, []);
+    byMatchup.get(c.matchup_id).push(new Date(c.ts).getTime());
+  }
+  for (const list of byMatchup.values()) list.sort((a, b) => a - b);
+  lineupChangeCache[key] = { coveredMs: newestMs, byMatchup };
+}
+
+async function fetchWeekSnapshots(leagueId, year, week) {
+  const rows = await fetchWeekSnapshotsInner(leagueId, year, week);
+  await ensureLineupChanges(leagueId, year, week, rows);
+  return rows;
+}
+
+// The lineup-change moments (ms) for one matchup's rows, or null when that
+// information isn't available (view missing / not fetched for this week).
+function lineupChangeTimes(rows) {
+  const r0 = rows && rows[0];
+  if (!r0 || !lineupViewOk) return null;
+  const e = lineupChangeCache[`${r0.league_id}|${r0.year}|${r0.week}`];
+  return e ? (e.byMatchup.get(r0.matchup_id) || []) : null;
 }
 
 async function fetchTeamsCached(leagueId) {
@@ -2024,32 +2084,39 @@ const UPSET_ARM_TRIGGER_GAP = 25; // same gap size as the old fixed 90-to-65 pai
 const UPSET_CLEAR = 70; // the challenger's OWN threshold reaching this clears the watch -- unchanged, this is about the NEW favorite's own established dominance, unrelated to the original favorite's peak
 const UPSET_CLEAR_HYSTERESIS_BUFFER = 5; // the old system's own implicit 65-to-70 gap. With a FIXED trigger floor this fell out automatically; with a dynamic one it doesn't -- a peak above 95% pushes the dynamic trigger floor (peak-25) ABOVE the flat 70% clear line, which would let the alert clear while still technically below its own trigger threshold and flicker on ordinary noise. This buffer guarantees the gap between trigger and the favorite's own reclaim floor is always at least 5 points, at any peak height.
 
-// A big win-probability jump with NO change in either team's actual score
-// can only come from a roster change or projection fix (for example a manager
-// replacing a kicker who had no team, so he was counted as 0, with a real
-// one) -- nothing happened in a game. Without this, that jump looks like a
-// favorite collapsing from its old peak and can leave Upset Watch on for the
-// rest of the game, since the "new" favorite never climbs back to 70%.
-// Returns one boolean per home row (same order) marking such jumps.
-const UPSET_JUMP_MIN = 15; // minimum one-step win-probability change to treat as a lineup jump
-// ...and only when nothing has scored for this long beforehand. During live
-// games scores change every few minutes, so a big jump with no score change
-// then is a real in-game event (a star ruled out mid-game, say) and should
-// still count as a collapse. A lineup fix on Friday comes hours after the
-// last score change.
+// A big win-probability jump that comes from a LINEUP CHANGE (a kicker with no
+// team replaced, an empty slot filled, either team) isn't a collapse in play:
+// the number was only wrong or incomplete before. Without this, such a jump
+// looks like a favorite collapsing from its old peak and can leave Upset
+// Watch on for the rest of the game, since the "new" favorite never climbs
+// back to 70%. Returns one boolean per home row (same order) marking jumps
+// that line up with a recorded lineup change by EITHER team; Upset Watch then
+// forgets any favorite status built before the swap and starts fresh.
+// A jump with no lineup change (a star hurt mid-game, say) is a real event and
+// is left alone.
+const UPSET_JUMP_MIN = 15; // minimum one-step win-probability change to consider
+const UPSET_LINEUP_SLACK_MS = 90 * 1000; // home/away rows can differ by a few seconds
+// Fallback only, when the lineup_changes view isn't available: treat a jump
+// with no score change after 45+ quiet minutes as a lineup fix.
 const UPSET_JUMP_IDLE_MS = 45 * 60 * 1000;
 function upsetResetFlags(rows, homeRows) {
-  const away = rows.filter((r) => !r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const lineupTimes = lineupChangeTimes(rows);
+  const away = lineupTimes ? null : rows.filter((r) => !r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const moved = (x, y) => Math.abs(Number(x) - Number(y)) >= 0.5;
-  let lastScoreChange = -Infinity; // nothing has scored yet
+  let lastScoreChange = -Infinity; // nothing has scored yet (fallback only)
   return homeRows.map((r, i) => {
     if (i === 0) return false;
     const prev = homeRows[i - 1];
-    const a0 = nearestByTs(away, prev.ts), a1 = nearestByTs(away, r.ts);
     const t = new Date(r.ts).getTime();
+    if (lineupTimes) {
+      if (Math.abs(r.win_prob - prev.win_prob) < UPSET_JUMP_MIN) return false;
+      const lo = new Date(prev.ts).getTime(), hi = t + UPSET_LINEUP_SLACK_MS;
+      return lineupTimes.some((c) => c > lo && c <= hi);
+    }
+    const a0 = nearestByTs(away, prev.ts), a1 = nearestByTs(away, r.ts);
     if (moved(r.actual_score, prev.actual_score) || (a0 && a1 && moved(a1.actual_score, a0.actual_score))) {
       lastScoreChange = t;
-      return false; // something happened in a game
+      return false;
     }
     if (Math.abs(r.win_prob - prev.win_prob) < UPSET_JUMP_MIN) return false;
     return t - lastScoreChange >= UPSET_JUMP_IDLE_MS;
