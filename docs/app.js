@@ -2024,6 +2024,28 @@ const UPSET_ARM_TRIGGER_GAP = 25; // same gap size as the old fixed 90-to-65 pai
 const UPSET_CLEAR = 70; // the challenger's OWN threshold reaching this clears the watch -- unchanged, this is about the NEW favorite's own established dominance, unrelated to the original favorite's peak
 const UPSET_CLEAR_HYSTERESIS_BUFFER = 5; // the old system's own implicit 65-to-70 gap. With a FIXED trigger floor this fell out automatically; with a dynamic one it doesn't -- a peak above 95% pushes the dynamic trigger floor (peak-25) ABOVE the flat 70% clear line, which would let the alert clear while still technically below its own trigger threshold and flicker on ordinary noise. This buffer guarantees the gap between trigger and the favorite's own reclaim floor is always at least 5 points, at any peak height.
 
+// A big win-probability jump with NO change in either team's actual score
+// can only come from a roster change or projection fix (for example a manager
+// replacing a kicker who had no team, so he was counted as 0, with a real
+// one) -- nothing happened in a game. Without this, that jump looks like a
+// favorite collapsing from its old peak and can leave Upset Watch on for the
+// rest of the game, since the "new" favorite never climbs back to 70%.
+// Returns one boolean per home row (same order) marking such jumps.
+const UPSET_JUMP_MIN = 15; // minimum one-step win-probability change to treat as a lineup jump
+function upsetResetFlags(rows, homeRows) {
+  const away = rows.filter((r) => !r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const moved = (x, y) => Math.abs(Number(x) - Number(y)) >= 0.5;
+  return homeRows.map((r, i) => {
+    if (i === 0) return false;
+    const prev = homeRows[i - 1];
+    if (Math.abs(r.win_prob - prev.win_prob) < UPSET_JUMP_MIN) return false;
+    if (moved(r.actual_score, prev.actual_score)) return false;
+    const a0 = nearestByTs(away, prev.ts), a1 = nearestByTs(away, r.ts);
+    if (a0 && a1 && moved(a1.actual_score, a0.actual_score)) return false;
+    return true;
+  });
+}
+
 // sortedHomeWinProbs: home's win_prob values in ascending ts order.
 // Returns the state as of the LAST value (for live card display) plus
 // every distinct triggered episode across the whole sequence (for the
@@ -2034,7 +2056,7 @@ const UPSET_CLEAR_HYSTERESIS_BUFFER = 5; // the old system's own implicit 65-to-
 // and `upsetSide` as of THAT point -- used to build a hover-over-history
 // lookup (see getUpsetWatchHistory) without duplicating this whole state
 // machine.
-function walkUpsetState(sortedHomeWinProbs, onStep) {
+function walkUpsetState(sortedHomeWinProbs, onStep, resets) {
   let armed = null; // 'home' | 'away' | null
   let peak = null; // the armed side's peak favorite % reached
   let watch = false;
@@ -2042,7 +2064,12 @@ function walkUpsetState(sortedHomeWinProbs, onStep) {
   let currentEpisode = null;
   const episodes = [];
 
-  for (const hp of sortedHomeWinProbs) {
+  for (let idx = 0; idx < sortedHomeWinProbs.length; idx++) {
+    const hp = sortedHomeWinProbs[idx];
+    // A lineup-driven jump (see upsetResetFlags) isn't a collapse in play, so
+    // forget any arming/watch built on the old baseline and start fresh from
+    // this value. Episodes already recorded are kept.
+    if (resets && resets[idx]) { armed = null; peak = null; watch = false; upsetSide = null; currentEpisode = null; }
     if (hp >= UPSET_ARM) {
       if (armed !== 'home') {
         armed = 'home'; peak = hp;
@@ -2121,7 +2148,7 @@ function getLiveUpsetInfo(rows, home, away, allDone) {
   if (allDone) return null;
   const homeRows = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (homeRows.length < 2) return null;
-  const { watch, armed, peak, upsetSide } = walkUpsetState(homeRows.map((r) => r.win_prob));
+  const { watch, armed, peak, upsetSide } = walkUpsetState(homeRows.map((r) => r.win_prob), undefined, upsetResetFlags(rows, homeRows));
   if (!watch) return null;
   const favorite = armed === 'home' ? home : away;
   const upsetTeam = upsetSide === 'home' ? home : away;
@@ -2155,7 +2182,7 @@ function getUpsetWatchHistory(rows) {
   walkUpsetState(homeRows.map((r) => r.win_prob), (watchNow, upsetSideNow) => {
     history.push({ ts: homeRows[i].ts, watch: watchNow, upsetSide: upsetSideNow });
     i++;
-  });
+  }, upsetResetFlags(rows, homeRows));
   return history;
 }
 
@@ -2439,7 +2466,7 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
     // checked against the real final winner (already computed above) to
     // tell an actual completed upset apart from a threat the favorite
     // ultimately survived.
-    const { episodes } = walkUpsetState(homeRowsSorted.map((r) => r.win_prob));
+    const { episodes } = walkUpsetState(homeRowsSorted.map((r) => r.win_prob), undefined, upsetResetFlags(rows, homeRowsSorted));
     if (episodes.length) {
       // Which episode represents this game: if the challenger actually won,
       // use the biggest episode whose challenger is that winner (the upset
@@ -3392,7 +3419,7 @@ function computeLeadChangeSegments(rows) {
 function computeUpsetProximity(rows) {
   const homeSorted = rows.filter((r) => r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   if (homeSorted.length < 2) return null;
-  const { armed, watch, peak } = walkUpsetState(homeSorted.map((r) => r.win_prob));
+  const { armed, watch, peak } = walkUpsetState(homeSorted.map((r) => r.win_prob), undefined, upsetResetFlags(rows, homeSorted));
   if (!armed || watch || peak === null) return null;
   const currentHomePct = homeSorted[homeSorted.length - 1].win_prob;
   const currentFavoritePct = armed === 'home' ? currentHomePct : 100 - currentHomePct;
@@ -3414,7 +3441,7 @@ function buildForecastSection(rows, home, away, allDone) {
   // elsewhere, scanned across this matchup's full history regardless of
   // live/Final state.
   function buildUpsetNote() {
-    const { episodes } = walkUpsetState(homeRowsSorted.map((r) => r.win_prob));
+    const { episodes } = walkUpsetState(homeRowsSorted.map((r) => r.win_prob), undefined, upsetResetFlags(rows, homeRowsSorted));
     if (!episodes.length) return '';
     const topEpisode = episodes.reduce((best, e) => (!best || e.peakFavoritePct > best.peakFavoritePct ? e : best), null);
     const favoriteTeam = topEpisode.favoriteSide === 'home' ? home : away;
