@@ -2032,17 +2032,27 @@ const UPSET_CLEAR_HYSTERESIS_BUFFER = 5; // the old system's own implicit 65-to-
 // rest of the game, since the "new" favorite never climbs back to 70%.
 // Returns one boolean per home row (same order) marking such jumps.
 const UPSET_JUMP_MIN = 15; // minimum one-step win-probability change to treat as a lineup jump
+// ...and only when nothing has scored for this long beforehand. During live
+// games scores change every few minutes, so a big jump with no score change
+// then is a real in-game event (a star ruled out mid-game, say) and should
+// still count as a collapse. A lineup fix on Friday comes hours after the
+// last score change.
+const UPSET_JUMP_IDLE_MS = 45 * 60 * 1000;
 function upsetResetFlags(rows, homeRows) {
   const away = rows.filter((r) => !r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const moved = (x, y) => Math.abs(Number(x) - Number(y)) >= 0.5;
+  let lastScoreChange = -Infinity; // nothing has scored yet
   return homeRows.map((r, i) => {
     if (i === 0) return false;
     const prev = homeRows[i - 1];
-    if (Math.abs(r.win_prob - prev.win_prob) < UPSET_JUMP_MIN) return false;
-    if (moved(r.actual_score, prev.actual_score)) return false;
     const a0 = nearestByTs(away, prev.ts), a1 = nearestByTs(away, r.ts);
-    if (a0 && a1 && moved(a1.actual_score, a0.actual_score)) return false;
-    return true;
+    const t = new Date(r.ts).getTime();
+    if (moved(r.actual_score, prev.actual_score) || (a0 && a1 && moved(a1.actual_score, a0.actual_score))) {
+      lastScoreChange = t;
+      return false; // something happened in a game
+    }
+    if (Math.abs(r.win_prob - prev.win_prob) < UPSET_JUMP_MIN) return false;
+    return t - lastScoreChange >= UPSET_JUMP_IDLE_MS;
   });
 }
 
