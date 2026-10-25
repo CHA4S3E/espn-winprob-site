@@ -1673,7 +1673,43 @@ function buildSeasonalCobweb(container) {
 // this file. Rebuilding the garland on every upset check would re-roll
 // bulb stagger timing and reset the leaf-sway animation, which reads as a
 // flicker/restart for a completely unrelated reason.
+// Festive page banner (Halloween / Thanksgiving / Christmas weeks only).
+const FEST_BANNERS = {
+  halloween: { emoji: '\u{1F383}', title: 'Happy Halloween!', sub: 'Spooky season is in full swing' },
+  thanksgiving: { emoji: '\u{1F983}', title: 'Happy Thanksgiving!', sub: 'Time to feast on some wins' },
+  christmas: { emoji: '\u{1F384}', title: 'Merry Christmas!', sub: 'Wishing you a week of nice-list scores' },
+};
+function renderFestBanner(theme, week) {
+  const el = document.getElementById('festBanner');
+  if (!el) return;
+  const b = FEST_BANNERS[theme];
+  if (!b) { el.hidden = true; return; }
+  el.querySelector('.fest-emoji').textContent = b.emoji;
+  el.querySelector('.fest-title').textContent = b.title;
+  el.querySelector('.fest-sub').textContent = `Week ${week} \u00B7 ${b.sub}`;
+  el.hidden = false;
+}
+
+// Bigger corner decorations, added ON TOP of the existing garland and the
+// pumpkin/ghost corners (those are untouched): bottom corners for every
+// holiday, plus top corners for Christmas (which had none).
+const FEST_CORNERS = {
+  halloween: { bl: '\u{1F987}', br: '\u{1F383}' },
+  thanksgiving: { bl: '\u{1F33D}', br: '\u{1F967}' },
+  christmas: { tl: '\u{1F384}', tr: '\u{1F385}', bl: '\u{1F381}', br: '\u26C4' },
+};
+
 function decorateSeasonalCard(card, theme, home, away) {
+  card.querySelectorAll('.fest-corner').forEach((n) => n.remove());
+  const corners = FEST_CORNERS[theme];
+  if (corners) {
+    for (const [pos, emoji] of Object.entries(corners)) {
+      const c = document.createElement('div');
+      c.className = `fest-corner ${pos}`;
+      c.textContent = emoji;
+      card.appendChild(c);
+    }
+  }
   card.classList.remove('seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween', 'seasonal-coldsnap', 'upset-active');
   const garland = card.querySelector('.seasonal-garland');
   if (garland) { garland.innerHTML = ''; garland.classList.remove('upset-lights', 'upset-leaves', 'upset-spiders'); }
@@ -2582,7 +2618,34 @@ function computeWeeklyRecap(byMatchup, teamInfo) {
   return { summaries, closestGame, biggestBlowout, biggestUpset, highScore, lowScore, biggestOverperformer, biggestUnderperformer, highestScoringMatchup, lowestScoringMatchup, totalPointsScored };
 }
 
-function renderRecapBanner(byMatchup, teamInfo) {
+// Holiday-week names for every Week Recap stat. Used only when the selected
+// week's theme is Halloween, Thanksgiving or Christmas, so ordinary weeks (and
+// Cold Snap / Championship Week) keep the regular names, and browsing an old
+// holiday week shows that week's holiday names.
+const RECAP_FEST = {
+  halloween: {
+    title: '\u{1F383} Halloween Week Recap', closest: '\u{1F578}\uFE0F Closest Call', blowout: '\u26B0\uFE0F Buried Alive',
+    high: '\u{1F383} Great Pumpkin', low: '\u{1FAA6} Dead on Arrival', hiMatch: '\u{1F9EA} Bubbling Cauldron', loMatch: '\u{1F3DA}\uFE0F Haunted House',
+    over: '\u{1F36C} Treat of the Week', under: '\u{1F480} Trick of the Week', nearUpset: '\u{1F631} Close Encounter',
+    upsetHappened: '\u{1F9DB} Rise From the Grave', threat: '\u{1F47B} Biggest Scare', total: '\u{1F987} Candy Haul',
+  },
+  thanksgiving: {
+    title: '\u{1F983} Thanksgiving Week Recap', closest: '\u{1F967} Last Slice', blowout: '\u{1F37D}\uFE0F Clean Plate',
+    high: '\u{1F967} Biggest Slice', low: '\u{1F983} Turkey of the Week', hiMatch: '\u{1F37D}\uFE0F The Whole Spread', loMatch: '\u{1F963} Thin Gravy',
+    over: '\u{1F33D} Cornucopia', under: '\u{1F525} Overcooked', nearUpset: '\u{1F342} Close Call at the Table',
+    upsetHappened: '\u{1FA91} Table Flip', threat: '\u{1F341} Gravy Scare', total: '\u{1F37D}\uFE0F Total Feast',
+  },
+  christmas: {
+    title: '\u{1F384} Christmas Week Recap', closest: '\u26C4 Snow Day', blowout: '\u{1F328}\uFE0F Blizzard',
+    high: '\u{1F31F} Star on Top', low: '\u{1FAA8} Lump of Coal', hiMatch: '\u{1F381} Gift Exchange', loMatch: '\u{1F9CA} Frozen Over',
+    over: '\u{1F385} Nice List', under: '\u{1F608} Naughty List', nearUpset: '\u{1F514} Almost a Miracle',
+    upsetHappened: '\u{1F381} Santa\u2019s Surprise', threat: '\u2744\uFE0F Winter Scare', total: '\u{1F384} Total Haul',
+  },
+};
+
+function renderRecapBanner(byMatchup, teamInfo, theme) {
+  const fest = RECAP_FEST[theme] || null;
+  const L = (key, dflt) => (fest && fest[key]) || dflt;
   const banner = document.getElementById('recapBanner');
   if (!banner) return;
   const recap = computeWeeklyRecap(byMatchup, teamInfo);
@@ -2612,7 +2675,7 @@ function renderRecapBanner(byMatchup, teamInfo) {
     const g = recap.closestGame;
     highlights.push(`
       <div class="recap-card">
-        <div class="recap-card-label">\ud83c\udfaf Closest Game</div>
+        <div class="recap-card-label">${L('closest', '\ud83c\udfaf Closest Game')}</div>
         ${g.isTie
           ? `<div class="recap-card-value">${g.home.name} &amp; ${g.away.name} tied exactly</div>`
           : `<div class="recap-card-value"><b style="color:${g.winner.color}">${g.winner.name}</b> over ${g.loser.name}</div><div class="recap-card-sub">by ${g.margin.toFixed(1)}</div>`}
@@ -2623,7 +2686,7 @@ function renderRecapBanner(byMatchup, teamInfo) {
     const g = recap.biggestBlowout;
     highlights.push(`
       <div class="recap-card">
-        <div class="recap-card-label">\ud83d\udca5 Biggest Blowout</div>
+        <div class="recap-card-label">${L('blowout', '\ud83d\udca5 Biggest Blowout')}</div>
         <div class="recap-card-value"><b style="color:${g.winner.color}">${g.winner.name}</b> over ${g.loser.name}</div>
         <div class="recap-card-sub">by ${g.margin.toFixed(1)}</div>
       </div>`);
@@ -2632,7 +2695,7 @@ function renderRecapBanner(byMatchup, teamInfo) {
   if (recap.highScore) {
     highlights.push(`
       <div class="recap-card">
-        <div class="recap-card-label">\ud83d\udcc8 Highest Score</div>
+        <div class="recap-card-label">${L('high', '\ud83d\udcc8 Highest Score')}</div>
         <div class="recap-card-value" style="color:${recap.highScore.team.color}"><b>${recap.highScore.team.name}</b></div>
         <div class="recap-card-sub">${recap.highScore.score.toFixed(1)} points</div>
       </div>`);
@@ -2641,7 +2704,7 @@ function renderRecapBanner(byMatchup, teamInfo) {
   if (recap.lowScore) {
     highlights.push(`
       <div class="recap-card">
-        <div class="recap-card-label">\ud83d\udcc9 Lowest Score</div>
+        <div class="recap-card-label">${L('low', '\ud83d\udcc9 Lowest Score')}</div>
         <div class="recap-card-value" style="color:${recap.lowScore.team.color}"><b>${recap.lowScore.team.name}</b></div>
         <div class="recap-card-sub">${recap.lowScore.score.toFixed(1)} points</div>
       </div>`);
@@ -2651,7 +2714,7 @@ function renderRecapBanner(byMatchup, teamInfo) {
     const m = recap.highestScoringMatchup;
     highlights.push(`
       <div class="recap-card">
-        <div class="recap-card-label">\ud83c\udfc8 Highest-Scoring Matchup</div>
+        <div class="recap-card-label">${L('hiMatch', '\ud83c\udfc8 Highest-Scoring Matchup')}</div>
         <div class="recap-card-value"><b style="color:${m.home.color}">${m.home.name}</b> vs ${m.away.name}</div>
         <div class="recap-card-sub">combined for ${m.combined.toFixed(1)} points</div>
       </div>`);
@@ -2661,7 +2724,7 @@ function renderRecapBanner(byMatchup, teamInfo) {
     const m = recap.lowestScoringMatchup;
     highlights.push(`
       <div class="recap-card">
-        <div class="recap-card-label">\ud83d\udee1\ufe0f Lowest-Scoring Matchup</div>
+        <div class="recap-card-label">${L('loMatch', '\ud83d\udee1\ufe0f Lowest-Scoring Matchup')}</div>
         <div class="recap-card-value"><b style="color:${m.home.color}">${m.home.name}</b> vs ${m.away.name}</div>
         <div class="recap-card-sub">combined for just ${m.combined.toFixed(1)} points</div>
       </div>`);
@@ -2671,7 +2734,7 @@ function renderRecapBanner(byMatchup, teamInfo) {
     const o = recap.biggestOverperformer;
     highlights.push(`
       <div class="recap-card">
-        <div class="recap-card-label">\ud83d\ude80 Biggest Overperformer</div>
+        <div class="recap-card-label">${L('over', '\ud83d\ude80 Biggest Overperformer')}</div>
         <div class="recap-card-value" style="color:${o.team.color}"><b>${o.team.name}</b></div>
         <div class="recap-card-sub">beat their pregame projection by ${o.delta.toFixed(1)} (${o.pregame.toFixed(0)} \u2192 ${o.final.toFixed(0)})</div>
       </div>`);
@@ -2681,7 +2744,7 @@ function renderRecapBanner(byMatchup, teamInfo) {
     const u = recap.biggestUnderperformer;
     highlights.push(`
       <div class="recap-card">
-        <div class="recap-card-label">\ud83d\ude2c Biggest Underperformer</div>
+        <div class="recap-card-label">${L('under', '\ud83d\ude2c Biggest Underperformer')}</div>
         <div class="recap-card-value" style="color:${u.team.color}"><b>${u.team.name}</b></div>
         <div class="recap-card-sub">fell short of their pregame projection by ${Math.abs(u.delta).toFixed(1)} (${u.pregame.toFixed(0)} \u2192 ${u.final.toFixed(0)})</div>
       </div>`);
@@ -2701,7 +2764,7 @@ function renderRecapBanner(byMatchup, teamInfo) {
         : `${u.favorite.name} peaked at ${Math.round(u.favoritePeak)}% before the scare`;
     highlights.push(`
       <div class="recap-card recap-card-featured">
-        <div class="recap-card-label">\ud83d\udea8 ${u.isTie ? 'Near-Upset' : u.upsetHappened ? 'Biggest Upset' : 'Upset Threat'}</div>
+        <div class="recap-card-label">${u.isTie ? L('nearUpset', '\ud83d\udea8 Near-Upset') : u.upsetHappened ? L('upsetHappened', '\ud83d\udea8 Biggest Upset') : L('threat', '\ud83d\udea8 Upset Threat')}</div>
         <div class="recap-card-value">${value}</div>
         <div class="recap-card-sub">${sub}</div>
       </div>`);
@@ -2712,14 +2775,14 @@ function renderRecapBanner(byMatchup, teamInfo) {
     // the grid.
     highlights.push(`
       <div class="recap-card recap-card-featured">
-        <div class="recap-card-label">\ud83d\udcca Total Points Scored</div>
+        <div class="recap-card-label">${L('total', '\ud83d\udcca Total Points Scored')}</div>
         <div class="recap-card-value"><b>${recap.totalPointsScored.toFixed(1)}</b> combined across the league</div>
         <div class="recap-card-sub">No Upset Watch alerts this week -- a quiet one.</div>
       </div>`);
   }
 
   banner.innerHTML = `
-    <div class="recap-title">Week Recap</div>
+    <div class="recap-title">${L('title', 'Week Recap')}</div>
     <div class="recap-scores">${scoreLines}</div>
     <div class="recap-highlights">${highlights.join('')}</div>
   `;
@@ -5251,7 +5314,10 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     return; // don't wipe an existing view over a transient refresh error
   }
 
-  renderRecapBanner(byMatchup, teamInfo);
+  // The theme is looked up here (cached, and awaited again below) so the
+  // recap's holiday names are right on the very first render of a week.
+  const recapTheme = await determineSeasonalTheme(year, week);
+  renderRecapBanner(byMatchup, teamInfo, recapTheme);
 
   {
     const ids = Object.keys(byMatchup);
@@ -5325,6 +5391,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     // no CSS hooked up to it yet.
     document.documentElement.setAttribute('data-seasonal-theme', currentSeasonalTheme);
   }
+  renderFestBanner(currentSeasonalTheme, week);
 
   if (Object.keys(byMatchup).length === 0) {
     updateChampionshipStage(false, {});
