@@ -3869,6 +3869,11 @@ function animateEspnPct(el, newValue) {
     return;
   }
 
+  // Brief glow in the team's own color while the number rolls.
+  el.classList.remove('pct-tick');
+  void el.offsetWidth; // restart the animation if one is already running
+  el.classList.add('pct-tick');
+
   const duration = 350;
   const start = performance.now();
 
@@ -3985,6 +3990,63 @@ function renderTeamIcon(team) {
   return '';
 }
 
+// ---- ESPN view effects ----
+// Live "head": a dot pinned to the newest point on the chart line, in the
+// color of whichever team is leading, with a soft ripple. It glides to each
+// new point and pings once when a poll adds one. A plain DOM element over the
+// canvas (positioned from the chart's own scales), so the animation runs on
+// CSS and costs nothing between updates. Only shown while the game is live.
+function positionEspnHead(chart) {
+  if (!chart || !chart.canvas || !chart._state) return;
+  const box = chart.canvas.closest('.espn-chartBox');
+  if (!box) return;
+  let el = box.querySelector('.espn-head');
+  if (!el) {
+    el = document.createElement('span');
+    el.className = 'espn-head';
+    box.appendChild(el);
+  }
+  const pts = chart.data.datasets[chart._state.mainIdx].data;
+  const last = pts[pts.length - 1];
+  const sx = chart.scales && chart.scales.x, sy = chart.scales && chart.scales.y;
+  if (!last || !sx || !sy || !chart._state.live) { el.classList.remove('on'); return; }
+  el.style.left = `${sx.getPixelForValue(last.x)}px`;
+  el.style.top = `${sy.getPixelForValue(last.y)}px`;
+  el.style.setProperty('--head', last.y >= 50 ? chart._state.homeColor : chart._state.awayColor);
+  const key = String(last.x);
+  if (el._lastX !== undefined && el._lastX !== key) {
+    el.classList.remove('ping');
+    void el.offsetWidth;
+    el.classList.add('ping');
+  }
+  el._lastX = key;
+  el.classList.add('on');
+}
+
+// Lead change: when the favorite flips, the new leader's row sweeps with its
+// team color and its percentage pops, and the chart's live dot sends out a
+// bigger double ripple. `side` is 'home' or 'away' (the NEW leader).
+function flashLeadChange(card, chart, side, color) {
+  const row = card.querySelector(side === 'home' ? '.espn-row-top' : '.espn-row-bottom');
+  if (row) {
+    row.style.setProperty('--flip', color);
+    row.style.setProperty('--flip-glow', colorWithAlpha(color, 0.3));
+    row.classList.remove('lead-flip');
+    void row.offsetWidth;
+    row.classList.add('lead-flip');
+    clearTimeout(row._flipT);
+    row._flipT = setTimeout(() => row.classList.remove('lead-flip'), 1800);
+  }
+  const head = card.querySelector('.espn-head');
+  if (head) {
+    head.classList.remove('flip');
+    void head.offsetWidth;
+    head.classList.add('flip');
+    clearTimeout(head._flipT);
+    head._flipT = setTimeout(() => head.classList.remove('flip'), 2400);
+  }
+}
+
 function renderEspnCard(rows, home, away, allDone) {
   const homePct = latestPct(rows);
   const isLive = !allDone && isRecentlyActive(rows);
@@ -4048,6 +4110,9 @@ function renderEspnCard(rows, home, away, allDone) {
     upsetHistory: getUpsetWatchHistory(rows),
     currentUpsetInfo: upsetInfo,
     mainIdx,
+    homeColor: home.color,
+    awayColor: away.color,
+    live: isLive,
   };
   const canvas = card.querySelector('canvas');
 
@@ -4137,6 +4202,7 @@ function renderEspnCard(rows, home, away, allDone) {
       // throttling above, in case anything else nearby ever triggers a
       // rapid string of resize checks during hover.
       resizeDelay: 100,
+      onResize: (c) => positionEspnHead(c),
       // Fixed, explicit padding -- without this, Chart.js auto-calculates
       // padding based on what's actually rendered, to keep points near the
       // plot edges (like the hover dot, which has real pixel radius) from
@@ -4205,6 +4271,7 @@ function renderEspnCard(rows, home, away, allDone) {
     },
   });
   chart._state = state;
+  requestAnimationFrame(() => positionEspnHead(chart));
 
   // Manual hover handling: find the nearest real data point to the mouse's
   // x position, show the marker line + dot there, and show that point's
@@ -4322,6 +4389,10 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   chart._state.currentHomePct = newHomePct;
   chart.options.scales.x.max = maxX;
   chart.update('none');
+  chart._state.homeColor = home.color;
+  chart._state.awayColor = away.color;
+  chart._state.live = !allDone && isRecentlyActive(rows);
+  positionEspnHead(chart);
 
   // Only refresh the visible labels if the marker isn't currently being
   // shown via hover -- otherwise a background refresh would yank the
@@ -4331,6 +4402,14 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   const isHovering = chart.data.datasets[mainIdx + 1].hidden === false;
   if (!isHovering) {
     setEspnPctLabels(chart.canvas, chart._state.currentHomePct);
+
+    // Lead change (live games only): the favorite flipped since the last poll.
+    const sideOf = (p) => (p == null ? null : p > 50 ? 'home' : p < 50 ? 'away' : null);
+    const prevSide = sideOf(prevHomePct), newSide = sideOf(newHomePct);
+    if (!allDone && prevSide && newSide && prevSide !== newSide) {
+      const flipCard = chart.canvas.closest('.espn-card');
+      if (flipCard) flashLeadChange(flipCard, chart, newSide, newSide === 'home' ? home.color : away.color);
+    }
 
     const badges = chart.canvas.closest('.espn-card')?.querySelectorAll('.delta-badge');
     if (badges && badges.length === 2) {
