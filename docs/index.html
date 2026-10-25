@@ -1315,6 +1315,59 @@
   .espn-pct { font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl); font-variant-numeric: tabular-nums; margin-left: auto; }
   .espn-chartBox { position: relative; height: 220px; width: 100%; margin: 6px 0; }
 
+  /* ---- ESPN view effects ----
+     1) Live head: a dot on the newest point of the chart line, in the leading
+        team's color, with a soft ripple. app.js positions it and sets --head.
+     2) Lead change: the new leader's row sweeps in its color and the number
+        pops; the live dot sends out a bigger double ripple.
+     3) Rolling percentages: the number glows in its team color while it
+        counts (the count itself and the +/- popup already existed). */
+  .espn-head {
+    position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%;
+    --head: #888; background: var(--head); box-shadow: 0 0 8px var(--head);
+    pointer-events: none; opacity: 0; transition: left 0.7s ease, top 0.7s ease, opacity 0.4s ease; z-index: 2;
+  }
+  .espn-head.on { opacity: 1; }
+  .espn-head::before, .espn-head::after {
+    content: ''; position: absolute; inset: -1px; border-radius: 50%;
+    border: 1.5px solid var(--head); opacity: 0; transform: scale(1);
+  }
+  .espn-head.on::before { animation: headRipple 2.6s ease-out infinite; }
+  .espn-head.ping::after { animation: headRipple 1.1s ease-out 1; }
+  .espn-head.flip::after { animation: headRippleBig 1.3s ease-out 2; }
+  @keyframes headRipple { 0% { opacity: 0.55; transform: scale(1); } 100% { opacity: 0; transform: scale(3.2); } }
+  @keyframes headRippleBig { 0% { opacity: 0.8; transform: scale(1); } 100% { opacity: 0; transform: scale(5.5); } }
+
+  .espn-row.lead-flip::before {
+    content: ''; position: absolute; inset: -2px -8px; border-radius: 10px; pointer-events: none;
+    background: linear-gradient(100deg, transparent 0%, var(--flip-glow) 50%, transparent 100%);
+    background-size: 260% 100%; animation: leadSweep 1.5s ease-out 1 forwards;
+  }
+  .espn-row.lead-flip .espn-pct { animation: pctPop 1.1s ease-out 1; transform-origin: right center; }
+  @keyframes leadSweep {
+    0% { background-position: 130% 0; opacity: 1; }
+    70% { opacity: 1; }
+    100% { background-position: -30% 0; opacity: 0; }
+  }
+  @keyframes pctPop {
+    0% { transform: scale(1); text-shadow: 0 0 0 transparent; }
+    25% { transform: scale(1.18); text-shadow: 0 0 14px var(--flip); }
+    100% { transform: scale(1); text-shadow: 0 0 0 transparent; }
+  }
+  .espn-pct.pct-tick { animation: pctGlow 0.9s ease-out 1; }
+  @keyframes pctGlow { 0% { text-shadow: 0 0 12px currentColor; } 100% { text-shadow: 0 0 0 transparent; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .espn-head { transition: opacity 0.2s ease; }
+    .espn-head.on::before, .espn-head.ping::after, .espn-head.flip::after { animation: none; }
+    .espn-row.lead-flip::before, .espn-row.lead-flip .espn-pct, .espn-pct.pct-tick { animation: none; }
+  }
+  html[data-reduce-motion="true"] .espn-head { transition: opacity 0.2s ease; }
+  html[data-reduce-motion="true"] .espn-head.on::before, html[data-reduce-motion="true"] .espn-head.ping::after,
+  html[data-reduce-motion="true"] .espn-head.flip::after,
+  html[data-reduce-motion="true"] .espn-row.lead-flip::before, html[data-reduce-motion="true"] .espn-row.lead-flip .espn-pct,
+  html[data-reduce-motion="true"] .espn-pct.pct-tick { animation: none; }
+
   /* ---- Needle/Forecasting view -- full-width stacked cards like ESPN
      view, not a grid of narrow ones. The whole point of the spacious,
      two-column layout below is a wide card; a narrow grid cell would
@@ -1621,6 +1674,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=36"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>
