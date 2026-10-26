@@ -644,6 +644,7 @@ function simulateOutlook(W, numSims) {
   const stats = new Map(teamIds.map((id) => [id, { playoffs: 0, bye: 0, semis: 0, final: 0, title: 0, winSum: 0, wins: new Map(), gamesLeft: 0 }]));
   const approxWeeks = new Set();
   const oppCounts = new Map(); // `${week}|${team}` -> Map(opponent -> sims) for standings-matched weeks
+  const seedCounts = new Map(); // seed index -> Map(team -> sims)
   const slotCounts = new Map(); // `${round}|${pos}|${a|b}` -> Map(team -> sims)
 
   // Rating uncertainty. A team's rating is an estimate from a handful of
@@ -704,7 +705,7 @@ function simulateOutlook(W, numSims) {
 
     // ---- bracket ----
     const seeds = order.slice(0, playoffSpots);
-    seeds.forEach((id) => stats.get(id).playoffs++);
+    seeds.forEach((id, i) => { stats.get(id).playoffs++; let m = seedCounts.get(i); if (!m) { m = new Map(); seedCounts.set(i, m); } m.set(id, (m.get(id) || 0) + 1); });
     seeds.slice(0, byes).forEach((id) => stats.get(id).bye++);
     const seedOf = new Map(seeds.map((id, i) => [id, i]));
     let alive = seeds.slice();
@@ -764,6 +765,7 @@ function simulateOutlook(W, numSims) {
   }
   result.approxWeeks = [...approxWeeks].sort((a, b) => a - b);
   result.slotCounts = slotCounts;
+  result.seedCounts = seedCounts;
   result.oppCounts = oppCounts;
   result.numSims = numSims;
   outlookCache.set(key, result);
