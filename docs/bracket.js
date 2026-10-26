@@ -84,26 +84,34 @@
   //           F, champion, odds:[[team,p]], note, rounds:[{r,week,games:[...]}], teamSlot:[..] }
   function projView(cur, W) {
     const g = geo, slots = new Map(), lines = new Map();
-    // Per round, hand out the most likely team for each slot without repeating
-    // a team inside a round (a team can only be in one slot per round).
-    for (let r = 1; r <= g.R; r++) {
-      const cand = [];
-      for (let p = 0; p < g.nGames(r); p++) {
-        if (r === 1 && g.isByePos(p)) continue;
-        for (const side of ['a', 'b']) {
-          const key = `${r}|${p}|${side}`;
-          slots.set(key, { team: null, mode: 'empty' });
-          const m = cur.slotCounts && cur.slotCounts.get(key);
-          if (m) for (const [t, n] of m) cand.push([n, key, t]);
-        }
-      }
-      cand.sort((x, y) => y[0] - x[0]);
-      const usedT = new Set(), usedS = new Set();
-      for (const [n, key, t] of cand) {
-        if (usedT.has(t) || usedS.has(key)) continue;
-        usedT.add(t); usedS.add(key);
-        slots.set(key, { team: t, mode: 'proj', pct: Math.round((n / cur.numSims) * 100) });
-      }
+    // One coherent projected bracket: give each seed its most likely team (no
+    // team twice), then advance the stronger team in every game. Percentages are
+    // that team's own odds of holding the seed / reaching that round.
+    const P = state.playoffSpots, size = g.size, byes = state.byes;
+    const cand = [];
+    for (let i = 0; i < P; i++) { const m = cur.seedCounts && cur.seedCounts.get(i); if (m) for (const [t, n] of m) cand.push([n, i, t]); }
+    cand.sort((x, y) => y[0] - x[0]);
+    const seedTeam = new Array(P).fill(null), seedPct = new Array(P).fill(0), usedT = new Set();
+    for (const [n, i, t] of cand) { if (seedTeam[i] || usedT.has(t)) continue; seedTeam[i] = t; seedPct[i] = n / cur.numSims; usedT.add(t); }
+    const rest = state.teamIds.filter((t) => !usedT.has(t)).sort((x, y) => cur.get(y).playoffs - cur.get(x).playoffs);
+    for (let i = 0; i < P; i++) if (!seedTeam[i]) { seedTeam[i] = rest.shift(); seedPct[i] = 0; }
+    const seedIdx = (t) => seedTeam.indexOf(t);
+    const reach = (t, r) => (r === g.R ? cur.get(t).final : r === g.R - 1 ? cur.get(t).semis : cur.get(t).playoffs);
+    const put = (r, pos, side, t, pct) => slots.set(`${r}|${pos}|${side}`, { team: t, mode: 'proj', pct: Math.round(pct * 100) });
+    // Fixed bracket: seeds sit in their standard spots and winners move straight
+    // along the lines, so what you see is one believable path.
+    const occ = treeInit(seedTeam);
+    for (let r = 1; r <= g.R; r++) for (let p = 0; p < g.nGames(r); p++) {
+      const a = occ.get(`${r}|${p}|a`), b = occ.get(`${r}|${p}|b`);
+      if (a && b && r < g.R) occ.set(g.target(r, p), cur.get(a).mu >= cur.get(b).mu ? a : b);
+    }
+    for (const [key, t] of occ) {
+      const r = Number(key.split('|')[0]);
+      put(r, Number(key.split('|')[1]), key.split('|')[2], t, r === 1 ? seedPct[seedIdx(t)] : reach(t, r));
+    }
+    for (let r = 1; r <= g.R; r++) for (let p = 0; p < g.nGames(r); p++) {
+      if (r === 1 && g.isByePos(p)) continue;
+      for (const side of ['a', 'b']) { const k = `${r}|${p}|${side}`; if (!slots.has(k)) slots.set(k, { team: null, mode: 'empty' }); }
     }
     addStructureLines(slots, lines);
     const odds = state.teamIds.map((id) => [id, cur.get(id).title]).sort((a, b) => b[1] - a[1]).slice(0, Math.max(2, Math.min(8, state.playoffSpots))).filter((x) => x[1] >= 0.005);
@@ -125,6 +133,20 @@
     }
   }
 
+  // Seeds into the fixed bracket: round-1 games for seeds without a bye, bye
+  // seeds straight into their round-2 slot.
+  function treeInit(seeds) {
+    const g = geo, size = g.size, byes = state.byes, ord1 = seedOrder(size / 2);
+    const occ = new Map();
+    seeds.forEach((t, i) => {
+      if (!t) return;
+      const n = i + 1, rank = n <= size / 2 ? n : size + 1 - n, pos = Math.max(0, ord1.indexOf(rank));
+      if (n > byes || g.R < 2) occ.set(`1|${pos}|${n <= size / 2 ? 'a' : 'b'}`, t);
+      else occ.set(g.target(1, pos), t);
+    });
+    return occ;
+  }
+
   function realView(W) {
     const g = geo, size = state.size, R = g.R, P = state.playoffSpots, byes = state.byes, regEnd = state.regEnd;
     const st = fillMissingTeams(computeStandings(allRows, teamInfo, regEnd), state.teamIds, teamInfo);
@@ -144,98 +166,73 @@
       return { matchupId: rx.matchup_id, sa: rx.actual_score, sb: ry.actual_score, final: !!(rx.all_starters_done && ry.all_starters_done), aHome: !!rx.is_home };
     };
     const byeTeams = seeds.slice(0, byes);
+    const occ = treeInit(seeds);
     const slots = new Map(), lines = new Map();
     addStructureLines(slots, lines);
-    const teamSlot = [null];
-    const rounds = [];
-    let entering = seeds.slice(byes);
+    const rounds = [], gameAt = new Map();
     let F = 0, prevComplete = true, firstIncomplete = null, pairsForIncomplete = null;
-    let treeFillRound = 0;
 
     for (let r = 1; r <= R; r++) {
       const week = regEnd + r;
-      const pset = new Set(entering);
-      let pairs = null;
-      if (prevComplete) {
+      // The real week's matchups can differ from the fixed bracket (leagues that
+      // reseed): once the previous round is done, trust the real pairings.
+      if (prevComplete && r >= 2) {
+        const here = [...occ].filter(([k]) => k.startsWith(r + '|')).map(([, t]) => t);
+        const pset = new Set(here);
         const avail = (state.pairingsByWeek.get(week) || []).filter(([x, y]) => pset.has(x) && pset.has(y));
-        if (avail.length * 2 === entering.length) pairs = avail;
-        else {
-          const srt = entering.slice().sort((x, y) => seedIdx(x) - seedIdx(y));
-          pairs = []; for (let i = 0, j = srt.length - 1; i < j; i++, j--) pairs.push([srt[i], srt[j]]);
+        const treePairs = [];
+        for (let p = 0; p < g.nGames(r); p++) { const a = occ.get(`${r}|${p}|a`), b = occ.get(`${r}|${p}|b`); if (a && b) treePairs.push([a, b]); }
+        const same = avail.length === treePairs.length && avail.every(([x, y]) => treePairs.some(([a, b]) => (a === x && b === y) || (a === y && b === x)));
+        if (avail.length * 2 === here.length && !same) {
+          for (const k of [...occ.keys()]) if (k.startsWith(r + '|')) occ.delete(k);
+          for (const pg of placeGames(avail, seedIdx, r, size)) { occ.set(`${r}|${pg.pos}|a`, pg.a); occ.set(`${r}|${pg.pos}|b`, pg.b); }
         }
       }
-      if (!pairs) { treeFillRound = treeFillRound || r; break; }
-      const placed = placeGames(pairs, seedIdx, r, size);
-      const ts = new Map();
-      const games = placed.map((pg) => {
-        let a = pg.a, b = pg.b;
-        if (r === R && R > 1) { // left-side finalist on top
-          const prev = teamSlot[r - 1];
-          const leftOf = (t) => { const k = prev && prev.get(t); return k ? geo.pos(r - 1, Number(k.split('|')[1]), 'a').left : null; };
-          const la = leftOf(a), lb = leftOf(b);
-          if (la === false && lb === true) { const t = a; a = b; b = t; }
-        }
+      const games = [];
+      for (let p = 0; p < g.nGames(r); p++) {
+        const a = occ.get(`${r}|${p}|a`), b = occ.get(`${r}|${p}|b`);
+        if (!a || !b) continue;
         const inf = info(week, a, b);
         let winner = null;
         if (inf && inf.final) winner = inf.sa > inf.sb ? a : inf.sb > inf.sa ? b : (seedIdx(a) <= seedIdx(b) ? a : b);
-        const game = { r, week, pos: pg.pos, a, b, winner, sa: inf ? inf.sa : null, sb: inf ? inf.sb : null, final: !!(inf && inf.final), matchupId: inf ? inf.matchupId : null, aHome: inf ? inf.aHome : true };
-        for (const [t, side, sc] of [[a, 'a', game.sa], [b, 'b', game.sb]]) {
-          const key = `${r}|${pg.pos}|${side}`;
-          slots.set(key, { team: t, mode: 'locked', seed: seedIdx(t) + 1, score: sc != null && (inf && (inf.sa > 0 || inf.sb > 0)) ? sc : null, out: !!(winner && winner !== t), bye: false });
-          ts.set(t, key);
-        }
-        return game;
-      });
-      rounds.push({ r, week, games });
-      teamSlot[r] = ts;
-      const complete = games.every((x) => x.winner);
-      if (complete) {
-        F = r;
-        entering = games.map((x) => x.winner).concat(r === 1 ? byeTeams : []).sort((x, y) => seedIdx(x) - seedIdx(y));
-        if (r === R) break;
-      } else {
-        prevComplete = false; firstIncomplete = r; pairsForIncomplete = pairs;
-        treeFillRound = r + 1;
-        // winners of already-final games and bye teams drop into their tree slots
-        for (const x of games) if (x.winner && r < R) {
-          const to = g.target(r, x.pos);
-          slots.set(to, { team: x.winner, mode: 'locked', seed: seedIdx(x.winner) + 1, score: null, out: false });
-        }
-        break;
+        const game = { r, week, pos: p, a, b, winner, sa: inf ? inf.sa : null, sb: inf ? inf.sb : null, final: !!(inf && inf.final), matchupId: inf ? inf.matchupId : null, aHome: inf ? inf.aHome : true, started: !!(inf && (inf.sa > 0 || inf.sb > 0)) };
+        games.push(game); gameAt.set(`${r}|${p}`, game);
+        if (winner && r < R) occ.set(g.target(r, p), winner);
       }
+      const expected = r === 1 ? (P - byes) / 2 : g.nGames(r);
+      rounds.push({ r, week, games });
+      const complete = games.length === expected && games.every((x) => x.winner);
+      if (complete) F = r;
+      else if (prevComplete) { prevComplete = false; firstIncomplete = r; pairsForIncomplete = games.map((x) => [x.a, x.b]); }
     }
-    // Bye teams sit in round 2 from the start (until round 2 is paired for real).
-    if (byes > 0 && R >= 2 && !teamSlot[2]) {
-      const ord = seedOrder(size / 2);
-      byeTeams.forEach((t, i) => {
-        const p1 = ord.indexOf(i + 1), to = g.target(1, p1);
-        slots.set(to, { team: t, mode: 'locked', seed: i + 1, score: null, out: false, bye: true });
-      });
-    } else if (byes > 0 && teamSlot[2]) {
-      byeTeams.forEach((t) => { const s = slots.get(teamSlot[2].get(t)); if (s) s.bye = true; });
+    // Slots from the fixed bracket.
+    const teamSlot = [null];
+    for (let r = 1; r <= R; r++) teamSlot[r] = new Map();
+    for (const [key, t] of occ) {
+      const [rs, ps, side] = key.split('|'), r = Number(rs), p = Number(ps);
+      const game = gameAt.get(`${r}|${p}`);
+      let score = null, out = false;
+      if (game) {
+        score = game.started ? (side === 'a' ? game.sa : game.sb) : null;
+        out = !!(game.winner && game.winner !== t);
+      }
+      slots.set(key, { team: t, mode: 'locked', seed: seedIdx(t) + 1, score, out, bye: r === 2 && byeTeams.includes(t) && !(game && game.final) });
+      teamSlot[r].set(t, key);
     }
-    // Empty (TBD) slots wherever nothing is known.
     for (let r = 1; r <= R; r++) for (let p = 0; p < g.nGames(r); p++) {
       if (r === 1 && g.isByePos(p)) continue;
       for (const side of ['a', 'b']) { const k = `${r}|${p}|${side}`; if (!slots.has(k)) slots.set(k, { team: null, mode: 'empty' }); }
     }
-    // Lit lines: a team's move from its slot in one round to its slot in the next.
-    for (let r = 1; r < R; r++) {
-      const a = teamSlot[r], b = teamSlot[r + 1];
-      if (!a) continue;
-      for (const [t, from] of a) {
-        const game = rounds[r - 1].games.find((x) => x.a === t || x.b === t);
-        if (!game || game.winner !== t) continue;
-        let to = b && b.get(t);
-        if (!to) to = g.target(r, game.pos);
-        const lk = `${from}>${to}`;
-        if (lines.has(lk)) lines.get(lk).on = true; else lines.set(lk, { from, to, on: true });
-      }
+    // Lit lines: a winner's move along the bracket.
+    for (const game of gameAt.values()) {
+      if (!game.winner || game.r >= R) continue;
+      const from = teamSlot[game.r].get(game.winner), to = g.target(game.r, game.pos);
+      const lk = `${from}>${to}`;
+      if (lines.has(lk)) lines.get(lk).on = true; else lines.set(lk, { from, to, on: true });
     }
-    // Champion / odds
     let champion = null, odds = [];
-    const last = rounds[R - 1];
-    if (last && last.games[0] && last.games[0].winner) champion = last.games[0].winner;
+    const last = gameAt.get(`${R}|0`);
+    if (last && last.winner) champion = last.winner;
     if (champion) odds = [[champion, 1]];
     else odds = remainingOdds(seeds, seedIdx, byeTeams, firstIncomplete || 1, pairsForIncomplete, rounds, W);
     const rn = F >= 1 ? g.roundName(F) : null;
