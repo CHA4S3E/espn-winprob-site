@@ -553,12 +553,13 @@ async function loadLeagueData(leagueId) {
 
   state = {
     teamIds, cw, playoffSpots, rawSpotsMissing: rawSpots == null, reseedWeeks, size, byes: size - playoffSpots,
-    regEnd: Math.max(cw, REG_SEASON_END_DEFAULT_BASE - rounds),
+    regEnd: REG_SEASON_END_DEFAULT_BASE - rounds, // playoff weeks (cw beyond this) are handled by the bracket
     pregameMap: extractPregameWinProb(allRows), pairingsByWeek, scheduleWeeks,
     usedRealSchedule: scheduleRows.length > 0,
+    year: latestYear, leagueId,
   };
   regEndInput.value = state.regEnd;
-  regEndInput.min = cw;
+  regEndInput.min = 1;
   asOfSlider.min = 1; asOfSlider.max = cw;
   asOfWeek = cw; asOfSlider.value = cw;
   openTeams.clear();
@@ -607,15 +608,43 @@ function strengthAsOf(W) {
   return { ratings, standings, mu, lg };
 }
 
+// ---------- bracket geometry helpers (shared by the sim and bracket.js) ----------
+// seedOrder(n): the bracket-position order of game "ranks" for n games in a
+// round, e.g. 4 -> [1,4,2,3]. The first half of the positions is the LEFT
+// side of the drawn bracket, the second half the RIGHT side.
+function seedOrder(n) {
+  let o = [1];
+  while (o.length < n) { const m = o.length * 2; o = o.flatMap((s) => [s, m + 1 - s]); }
+  return o;
+}
+// Places one round's games into bracket positions. `games` = [[teamX, teamY]];
+// seedIdx(team) -> 0-based seed. Round 1 ranks a game by its best seed number
+// (so byes leave gaps); later rounds rank by order of best seed. Within a game,
+// `a` is the better seed.
+function placeGames(games, seedIdx, r, size) {
+  const nFull = Math.max(1, size / Math.pow(2, r));
+  const order = seedOrder(nFull);
+  const oriented = games.map(([x, y]) => (seedIdx(x) <= seedIdx(y) ? { a: x, b: y } : { a: y, b: x } ));
+  oriented.sort((g, h) => seedIdx(g.a) - seedIdx(h.a));
+  return oriented.map((g, i) => {
+    const rank = r === 1 ? seedIdx(g.a) + 1 : i + 1;
+    return { a: g.a, b: g.b, pos: Math.max(0, order.indexOf(rank)) };
+  });
+}
+
 function simulateOutlook(W, numSims) {
   const key = `${W}|${numSims}`;
   if (outlookCache.has(key)) return outlookCache.get(key);
   const { teamIds, regEnd, playoffSpots, reseedWeeks, size, byes, pairingsByWeek } = state;
   const reseedSet = new Set(reseedWeeks);
-  const { ratings, standings, mu } = strengthAsOf(W);
+  const { ratings, mu } = strengthAsOf(W);
+  // Records as of the end of the REGULAR season at most -- playoff games don't count toward seeding.
+  const standings = fillMissingTeams(computeStandings(allRows, teamInfo, Math.min(W, regEnd)), teamIds, teamInfo);
   const start = new Map(standings.map((s) => [s.teamId, { w: s.wins, l: s.losses, t: s.ties, pf: s.pointsFor }]));
   const stats = new Map(teamIds.map((id) => [id, { playoffs: 0, bye: 0, semis: 0, final: 0, title: 0, winSum: 0, wins: new Map(), gamesLeft: 0 }]));
   const approxWeeks = new Set();
+  const oppCounts = new Map(); // `${week}|${team}` -> Map(opponent -> sims) for standings-matched weeks
+  const slotCounts = new Map(); // `${round}|${pos}|${a|b}` -> Map(team -> sims)
 
   // Rating uncertainty. A team's rating is an estimate from a handful of
   // games, not its true strength, so each simulated season first draws every
@@ -655,6 +684,10 @@ function simulateOutlook(W, numSims) {
       if (reseedSet.has(wk)) {
         const order = sortRec(rec); pairs = [];
         for (let i = 0; i + 1 < order.length; i += 2) pairs.push([order[i], order[i + 1]]);
+        for (const [a, b] of pairs) for (const [x, y] of [[a, b], [b, a]]) {
+          const k = wk + '|' + x; let m = oppCounts.get(k); if (!m) { m = new Map(); oppCounts.set(k, m); }
+          m.set(y, (m.get(y) || 0) + 1);
+        }
       } else if (pairingsByWeek.has(wk)) {
         pairs = pairingsByWeek.get(wk);
       } else {
@@ -677,16 +710,43 @@ function simulateOutlook(W, numSims) {
     let alive = seeds.slice();
     let semisMarked = false;
     let firstRound = true;
+    const nRounds = Math.round(Math.log2(size));
+    let roundNo = 1;
+    let prevPos = new Map(); // team -> bracket position it held the previous round
+    const n1 = size / 2, ord1 = seedOrder(n1);
+    seeds.slice(0, byes).forEach((id, i) => prevPos.set(id, ord1.indexOf(i + 1)));
+    const seedIdxFn = (t) => seedOf.get(t);
     while (alive.length > 1) {
       if (!semisMarked && alive.length <= 4) { alive.forEach((id) => stats.get(id).semis++); semisMarked = true; }
       if (alive.length <= 2) alive.forEach((id) => stats.get(id).final++);
       const byeTeams = firstRound ? alive.slice(0, byes) : [];
       const playing = firstRound ? alive.slice(byes) : alive;
       const winners = [];
-      for (let i = 0, j = playing.length - 1; i < j; i++, j--) winners.push(knockout(playing[i], playing[j]));
+      const games = [];
+      for (let i = 0, j = playing.length - 1; i < j; i++, j--) { games.push([playing[i], playing[j]]); winners.push(knockout(playing[i], playing[j])); }
       if (playing.length % 2 === 1) winners.push(playing[Math.floor(playing.length / 2)]); // odd field: middle seed advances
+      // Remember who sat where, so the page can show the most likely team per slot.
+      const placed = placeGames(games, seedIdxFn, roundNo, size);
+      const half = Math.max(1, size / Math.pow(2, roundNo)) / 2;
+      const nextPrev = new Map();
+      for (const g of placed) {
+        let a = g.a, b = g.b;
+        if (roundNo === nRounds && nRounds > 1) { // final: left-side finalist on top
+          const left = (t) => (prevPos.has(t) ? prevPos.get(t) : 0) < size / Math.pow(2, roundNo - 1) / 2;
+          if (!left(a) && left(b)) { const t = a; a = b; b = t; }
+        }
+        for (const [t, side] of [[a, 'a'], [b, 'b']]) {
+          const k = roundNo + '|' + g.pos + '|' + side;
+          let m = slotCounts.get(k); if (!m) { m = new Map(); slotCounts.set(k, m); }
+          m.set(t, (m.get(t) || 0) + 1);
+          nextPrev.set(t, g.pos);
+        }
+      }
+      for (const t of byeTeams) if (!nextPrev.has(t)) nextPrev.set(t, prevPos.get(t));
+      prevPos = nextPrev;
       alive = byeTeams.concat(winners).sort((x, y) => seedOf.get(x) - seedOf.get(y));
       firstRound = false;
+      roundNo++;
     }
     stats.get(alive[0]).title++;
   }
@@ -703,6 +763,9 @@ function simulateOutlook(W, numSims) {
     });
   }
   result.approxWeeks = [...approxWeeks].sort((a, b) => a - b);
+  result.slotCounts = slotCounts;
+  result.oppCounts = oppCounts;
+  result.numSims = numSims;
   outlookCache.set(key, result);
   return result;
 }
@@ -773,6 +836,8 @@ function render(animate) {
   });
   boardEl.querySelectorAll('.item.open').forEach(fillPanel);
   if (animate) countUp();
+  window.__lastRender = [cur, W, !!animate];
+  if (window.renderBracket) window.renderBracket(cur, W, !!animate);
 }
 
 function countUp() {
@@ -791,7 +856,16 @@ function fillPanel(item) {
   // Remaining schedule with per-game win odds
   const games = [];
   for (let wk = W + 1; wk <= state.regEnd; wk++) {
-    if (state.reseedWeeks.includes(wk)) { games.push({ wk, label: 'Matched by standings (reseed week)' }); continue; }
+    if (state.reseedWeeks.includes(wk)) {
+      // Matched by standings inside every simulated season: show the opponent
+      // this team most often draws, as a tentative matchup.
+      const cnt = simulateOutlook(W, sims).oppCounts.get(wk + '|' + id);
+      let best = null, bestN = 0;
+      if (cnt) for (const [o, n] of cnt) if (n > bestN) { best = o; bestN = n; }
+      if (best) { const o = simulateOutlook(W, sims).get(best); games.push({ wk, opp: best, p: winProbFromMu(x.mu, o.mu), tent: bestN / sims }); }
+      else games.push({ wk, label: 'Matched by standings (reseed week)' });
+      continue;
+    }
     const pairs = state.pairingsByWeek.get(wk);
     const pair = pairs && pairs.find(([a, b]) => a === id || b === id);
     if (!pair) { games.push({ wk, label: pairs ? 'Bye' : 'Opponent not saved yet' }); continue; }
@@ -800,7 +874,7 @@ function fillPanel(item) {
     games.push({ wk, opp, p: winProbFromMu(x.mu, o.mu) });
   }
   const sched = games.length ? games.map((g) => g.opp
-    ? `<div class="g"><span class="w">Wk ${g.wk}</span><span class="opp">${teamInfo[g.opp].emoji ? teamInfo[g.opp].emoji + ' ' : ''}${teamInfo[g.opp].name}</span><div class="bar"><i style="width:${g.p * 100}%"></i></div><span class="p">${Math.round(g.p * 100)}%</span></div>`
+    ? `<div class="g"><span class="w">Wk ${g.wk}</span><span class="opp" ${g.tent != null ? `title="Reseed week: matched by standings. ${Math.round(g.tent * 100)}% of simulated seasons pair these two."` : ''}>${teamInfo[g.opp].emoji ? teamInfo[g.opp].emoji + ' ' : ''}${teamInfo[g.opp].name}${g.tent != null ? ` <span class="muted">(likely · ${Math.round(g.tent * 100)}%)</span>` : ''}</span><div class="bar"><i style="width:${g.p * 100}%"></i></div><span class="p">${Math.round(g.p * 100)}%</span></div>`
     : `<div class="g"><span class="w">Wk ${g.wk}</span><span class="opp muted">${g.label}</span><span></span><span></span></div>`).join('')
     : '<div class="g"><span class="opp muted">No regular-season games left.</span></div>';
 
@@ -844,7 +918,7 @@ playBtn.addEventListener('click', () => {
     asOfWeek++; render(true);
   }, 1400);
 });
-regEndInput.addEventListener('change', () => { state.regEnd = Math.max(state.cw, Number(regEndInput.value) || state.regEnd); outlookCache.clear(); render(true); });
+regEndInput.addEventListener('change', () => { state.regEnd = Math.max(1, Number(regEndInput.value) || state.regEnd); outlookCache.clear(); render(true); });
 simCountSelect.addEventListener('change', () => { outlookCache.clear(); render(true); });
 leagueSelect.addEventListener('change', () => loadLeagueData(leagueSelect.value));
 
