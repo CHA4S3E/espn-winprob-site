@@ -940,11 +940,15 @@ async function determineSeasonalTheme(year, week) {
 
 // Shown instead of the 'christmas' hint when Christmas was moved a week early
 // to make room for Championship Week (it isn't literally Christmas week).
-const SEASONAL_HINT_COPY_FESTIVE = '🎄 Festive week is ahead!';
+const SEASONAL_HINT_COPY_FESTIVE = '🔔 Something is on its way…';
+const SEASONAL_HINT_COPY_WARN_XMAS = '🔔 Listen closely…';
+const SEASONAL_HINT_COPY_WARN = '⚠️ Brace for impact…';
 const SEASONAL_HINT_COPY = {
-  thanksgiving: '🦃 Thanksgiving week is almost here',
-  christmas: '🎄 Christmas week is almost here',
-  halloween: '🦇 Halloween week is closing in',
+  // The three comet holidays are deliberately vague -- the comet and the
+  // countdown carry the surprise (see SEASONAL_HINT_COPY_WARN for the last hour).
+  thanksgiving: '☄️ Something is on its way…',
+  christmas: '🔔 Something is on its way…',
+  halloween: '☄️ Something is on its way…',
   'coldsnap-pre': '🥶 Cold Snap week is settling in',
   'coldsnap-post': '✨ The magic doesn’t end here',
 };
@@ -1304,11 +1308,43 @@ function cmSpawn(rgb, W, H) {
   cmList.push({ x: -tail - Math.random() * W * 0.45, y: Math.random() * H * 0.7 - 20,
     vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, r: 1.8 + Math.random() * 2.6, tail, rgb, sparks: [] });
 }
+const snowList = [];
+function cmBlizzardLevel(remainingMs) {          // 0 (calm flurries) -> 1 (whiteout), smooth over the last ~3 days
+  const p = Math.min(Math.max(1 - remainingMs / (72 * 3600 * 1000), 0), 1);
+  return Math.pow(p, 1.5);
+}
+function cmSnowTick() {
+  const W = cmCanvas.width, H = cmCanvas.height;
+  const remaining = kickoffCountdownTarget.getTime() - Date.now();
+  const b = cmBlizzardLevel(remaining);
+  document.documentElement.style.setProperty('--blizz', b.toFixed(3));
+  const want = Math.round(14 + b * 560);
+  while (snowList.length < want) snowList.push({ x: Math.random() * (W + 200) - 100, y: Math.random() * H, r: 0.8 + Math.random() * 2.2, z: 0.5 + Math.random() * 1.0, ph: Math.random() * 6.28 });
+  if (snowList.length > want) snowList.length = want;
+  const vy0 = 0.9 + b * 9, wind = 0.25 + b * 11;
+  cmCtx.fillStyle = cmCtx.strokeStyle = '#fff';
+  for (const f of snowList) {
+    const vy = vy0 * f.z, vx = wind * f.z + Math.sin(f.ph + performance.now() / 1200) * (0.4 + b * 0.8);
+    f.x += vx; f.y += vy;
+    if (f.y > H + 10) { f.y = -10; f.x = Math.random() * (W + 200) - 100; }
+    if (f.x > W + 30) { f.x = -30; f.y = Math.random() * H; }
+    cmCtx.globalAlpha = Math.min(0.9, 0.35 + f.z * 0.4);
+    if (b > 0.25) { cmCtx.lineWidth = f.r * 0.9; cmCtx.beginPath(); cmCtx.moveTo(f.x, f.y); cmCtx.lineTo(f.x - vx * (1 + b * 2.2), f.y - vy * (1 + b * 2.2)); cmCtx.stroke(); }
+    else { cmCtx.beginPath(); cmCtx.arc(f.x, f.y, f.r, 0, Math.PI * 2); cmCtx.fill(); }
+  }
+  cmCtx.globalAlpha = 1;
+}
 function cmTick(t) {
   if (cmCtx) {
     cmCtx.clearRect(0, 0, cmCanvas.width, cmCanvas.height);
-    const on = kickoffCountdownTarget && !prefersReducedMotion() && !document.hidden;
-    if (on) {
+    const hasTarget = !!kickoffCountdownTarget && !cometSuppressed;
+    const okMotion = !prefersReducedMotion() && !document.hidden;
+    const snowMode = hasTarget && kcHintTheme === 'christmas';
+    const meteorMode = hasTarget && (kcHintTheme === 'halloween' || kcHintTheme === 'thanksgiving');
+    cmCanvas.style.zIndex = snowMode ? '3' : '0';
+    if (!snowMode) { document.documentElement.style.setProperty('--blizz', '0'); snowList.length = 0; }
+    if (snowMode && okMotion) cmSnowTick();
+    if (meteorMode && okMotion) {
       const now = performance.now(), remaining = kickoffCountdownTarget.getTime() - Date.now();
       if (remaining > 0 && now >= cmNext) {
         const rgb = CM_COLORS[kcHintTheme] || CM_COLORS.none;
@@ -1316,7 +1352,7 @@ function cmTick(t) {
         if (remaining < 3600 * 1000 && Math.random() < 0.35 && cmList.length < 16) cmSpawn(rgb, cmCanvas.width, cmCanvas.height); // last hour: occasional doubles
         cmNext = now + cmInterval(remaining);
       }
-    } else if (!kickoffCountdownTarget) cmList.length = 0;
+    } else if (!meteorMode) cmList.length = 0;
     cmCtx.globalCompositeOperation = 'lighter';
     for (let i = cmList.length - 1; i >= 0; i--) {
       const m = cmList[i];
@@ -1601,8 +1637,7 @@ requestAnimationFrame(skyTick);
 const SKY_COMETS = {
   halloween:    { emoji: '\u{1F383}', color: '#ff9a3c', label: 'Halloween is next week' },
   thanksgiving: { emoji: '\u{1F983}', color: '#e0883a', label: 'Thanksgiving is next week' },
-  christmas:    { emoji: '\u{1F384}', color: '#4fd493', label: 'Christmas is next week' },
-  championship: { emoji: '\u{1F3C6}', color: '#f4c430', label: 'Championship Week is next week' },
+  christmas:    { emoji: '\u{1F98C}\u{1F98C}\u{1F6F7}', color: '#4fd493', label: 'Something is coming…', sleigh: true },
 };
 // The comet APPROACHES over the week. Early on (Tuesday, when only Power
 // Picks are showing) it's a faint short dash of the event's color, far off
@@ -1646,8 +1681,7 @@ async function cometForWeek(year, week) {
     base = SKY_COMETS[debugComet] || null;
   } else if (yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0) {
     // Only meaningful on the latest week -- same convention as the kickoff countdown.
-    if (week + 1 === CHAMPIONSHIP_WEEK) base = SKY_COMETS.championship;
-    else base = SKY_COMETS[await realSeasonalTheme(year, week + 1)] || null; // real schedule, never debug-overridden
+    if (week + 1 !== CHAMPIONSHIP_WEEK) base = SKY_COMETS[await realSeasonalTheme(year, week + 1)] || null; // real schedule, never debug-overridden
   }
   if (!base) return null;
   return { ...base, progress: await cometProgress(year, week), impact: await cometImpact(year, week) };
@@ -1655,6 +1689,7 @@ async function cometForWeek(year, week) {
 function renderComet(comet) {
   const el = document.getElementById('comet');
   if (!el) return;
+  if (cometSuppressed) comet = null;
   if (comet) {
     const p = comet.progress ?? 1;
     const sym = Math.min(Math.max((p - COMET_SYMBOL_FROM) / (COMET_SYMBOL_FULL - COMET_SYMBOL_FROM), 0), 1);
@@ -1667,6 +1702,7 @@ function renderComet(comet) {
     el.classList.toggle('impact', imp > 0.55);
     const symEl = document.getElementById('cometSymbol');
     if (symEl) symEl.textContent = comet.emoji;
+    el.classList.toggle('sleigh', !!comet.sleigh);
     // Don't give the event away in the tooltip until the emoji is visible.
     el.title = sym > 0 ? comet.label : '';
   }
@@ -1834,13 +1870,16 @@ function renderFestMeteor(theme) {
   const latest = yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0;
   if (!m || !latest) { el.hidden = true; return; }
   el.style.setProperty('--fm-color', m.color);
+  el.classList.toggle('sleigh', theme === 'christmas');
+  const lab = el.querySelector('.fm-label'); if (lab) lab.textContent = theme === 'christmas' ? 'Replay the arrival' : 'Replay the impact';
   el.hidden = false;
 }
 
-function playFestCine(theme, { replay = false } = {}) {
+function playFestCine(theme, { replay = false, fromBlack = false } = {}) {
   const ov = document.getElementById('festCine');
   const m = FEST_METEOR[theme];
   if (!ov || !m) { festApplyTheme(theme, true); return; }
+  if (theme === 'christmas') return playChristmasCine({ replay, fromBlack });
   if (festCinePlaying && festCineFinish) festCineFinish();
   const id = ++festCineRun;
   festCinePlaying = true;
@@ -1858,7 +1897,8 @@ function playFestCine(theme, { replay = false } = {}) {
   titleEl.classList.remove('show'); flash.classList.remove('go');
   dim.style.display = ''; dim.style.setProperty('--hr', '-300px');
   ov.classList.add('on'); ov.classList.remove('out');
-  requestAnimationFrame(() => ov.classList.add('dark'));
+  if (fromBlack) { dim.style.transition = 'none'; ov.classList.add('dark'); setTimeout(() => { dim.style.transition = ''; }, 100); }
+  else requestAnimationFrame(() => ov.classList.add('dark'));
   body.classList.add('fest-rumble'); body.style.setProperty('--rb', '0');
 
   // Timeline (simulated ms): prelude -> flight -> impact (slow motion around it) -> shockwave wipe -> title.
@@ -1890,6 +1930,7 @@ function playFestCine(theme, { replay = false } = {}) {
     ov.classList.add('out'); ov.classList.remove('dark');
     setTimeout(() => { if (id === festCineRun) { ov.classList.remove('on', 'out'); ctx.clearRect(0, 0, W, H); dim.style.display = ''; } }, 700);
     festCinePlaying = false; festCineFinish = null;
+    if (window.__kickCine) { window.__kickCine = false; if (window.__kickClearAfter) { cometSuppressed = false; document.body.classList.remove('kick-zero'); } }
     document.removeEventListener('keydown', onKey);
   }
   function onKey(e) { if (e.key === 'Escape') finish(); }
@@ -2043,6 +2084,119 @@ function playFestCine(theme, { replay = false } = {}) {
   }
   requestAnimationFrame(frame);
 }
+
+// Christmas: no meteor. A blizzard builds to a whiteout, then Santa's sleigh bursts
+// through, trailing glitter, and the festive look spreads out behind it.
+function playChristmasCine({ replay = false, fromBlack = false } = {}) {
+  const theme = 'christmas';
+  const ov = document.getElementById('festCine');
+  if (festCinePlaying && festCineFinish) festCineFinish();
+  const id = ++festCineRun;
+  festCinePlaying = true;
+  const root = document.documentElement;
+  if (replay) { root.classList.add('fest-pre'); root.removeAttribute('data-seasonal-theme'); }
+  const canvas = ov.querySelector('canvas'), ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = window.innerWidth, H = window.innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const flash = ov.querySelector('.flash'), titleEl = ov.querySelector('.fc-title'), dim = ov.querySelector('.fc-dim');
+  const b = FEST_BANNERS[theme];
+  titleEl.querySelector('.fc-emoji').textContent = b.emoji;
+  titleEl.querySelector('.fc-text').textContent = b.title;
+  titleEl.querySelector('.fc-sub').textContent = b.sub;
+  titleEl.classList.remove('show'); flash.classList.remove('go');
+  dim.style.display = ''; dim.style.setProperty('--hr', '-300px');
+  dim.style.background = 'radial-gradient(ellipse at 50% 40%, rgba(70,100,150,.92), rgba(8,16,36,.97) 75%)';
+  ov.classList.add('on'); ov.classList.remove('out');
+  if (fromBlack) { dim.style.transition = 'none'; ov.classList.add('dark'); setTimeout(() => { dim.style.transition = ''; }, 100); }
+  else requestAnimationFrame(() => ov.classList.add('dark'));
+
+  const T0 = 2900, FLY = 2300, TW = T0 + 900, T_TITLE = TW + 900, T_END = TW + 3900;
+  const rnd = Math.random, clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const flakes = Array.from({ length: 520 }, () => ({ x: rnd() * W, y: rnd() * H, r: 0.8 + rnd() * 2.6, z: 0.4 + rnd() * 1.1 }));
+  const trail = [], glitter = [];
+  const COLORS = ['255,211,107', '255,90,95', '91,227,154', '255,255,255'];
+  const P = { x: W * 0.5, y: H * 0.5 };
+  const maxR = Math.hypot(Math.max(P.x, W - P.x), Math.max(P.y, H - P.y)) + 120;
+  let st = 0, last = performance.now(), ended = false, applied = false, titleOn = false;
+  const bliz = (t) => t < T0 + 1000 ? clamp(t / 2400, 0, 1) : clamp(1 - (t - (T0 + 1000)) / 2200, 0.12, 1);
+  const flyPos = (u) => ({ x: W * (-0.2 + 1.4 * u), y: H * (0.78 - 0.5 * Math.sin(Math.PI * u) * (0.9) - 0.04 * u) });
+
+  function finish() {
+    if (ended) return; ended = true;
+    if (root.classList.contains('fest-pre')) festApplyTheme(theme, applied);
+    ov.classList.add('out'); ov.classList.remove('dark');
+    setTimeout(() => { if (id === festCineRun) { ov.classList.remove('on', 'out'); ctx.clearRect(0, 0, W, H); dim.style.display = ''; dim.style.background = ''; } }, 700);
+    festCinePlaying = false; festCineFinish = null;
+    if (window.__kickCine) { window.__kickCine = false; if (window.__kickClearAfter) { cometSuppressed = false; document.body.classList.remove('kick-zero'); } }
+    document.removeEventListener('keydown', onKey);
+  }
+  function onKey(e) { if (e.key === 'Escape') finish(); }
+  festCineFinish = finish;
+  document.addEventListener('keydown', onKey);
+  ov.querySelector('.fc-skip').onclick = finish;
+
+  function frame(now) {
+    if (id !== festCineRun || ended) return;
+    const dt = Math.max(0, Math.min(50, now - last)); last = now; st += dt;
+    ctx.clearRect(0, 0, W, H);
+    const B = bliz(st);
+    // whiteout haze
+    ctx.fillStyle = `rgba(228,240,255,${0.62 * B * B})`; ctx.fillRect(0, 0, W, H);
+    // blizzard
+    ctx.strokeStyle = ctx.fillStyle = '#fff';
+    const vy0 = 1.4 + B * 11, wind = 0.5 + B * 15;
+    for (const f of flakes) {
+      const vx = wind * f.z, vy = vy0 * f.z;
+      f.x += vx * dt / 16; f.y += vy * dt / 16;
+      if (f.y > H + 10) { f.y = -10; f.x = rnd() * (W + 300) - 150; }
+      if (f.x > W + 30) { f.x = -30; f.y = rnd() * H; }
+      ctx.globalAlpha = clamp(0.3 + f.z * 0.45, 0, 0.95);
+      ctx.lineWidth = f.r; ctx.beginPath(); ctx.moveTo(f.x, f.y); ctx.lineTo(f.x - vx * (1 + B * 2.6), f.y - vy * (1 + B * 2.6)); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // distant warm glow in the whiteout, just before the sleigh appears
+    if (st > T0 - 1000 && st < T0 + 400) { const a = clamp((st - (T0 - 1000)) / 900, 0, 1) * clamp(1 - (st - T0) / 400, 0, 1); const g = ctx.createRadialGradient(0, H * 0.78, 0, 0, H * 0.78, 360); g.addColorStop(0, `rgba(255,211,107,${0.55 * a})`); g.addColorStop(1, 'rgba(255,211,107,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+
+    // sleigh
+    const u = clamp((st - T0) / FLY, 0, 1);
+    if (st >= T0 && u < 1) {
+      const pos = flyPos(u), nx = flyPos(Math.min(1, u + 0.01)), ang = Math.atan2(nx.y - pos.y, nx.x - pos.x);
+      const size = 96 + 90 * Math.sin(Math.PI * u);
+      trail.push({ x: pos.x - Math.cos(ang) * size * 0.9, y: pos.y - Math.sin(ang) * size * 0.9 + size * 0.1, t: st });
+      for (let k = 0; k < 4; k++) glitter.push({ x: pos.x - Math.cos(ang) * size * (0.6 + rnd()), y: pos.y + (rnd() - 0.2) * size * 0.5, vx: -2 + rnd() * 1, vy: 0.4 + rnd() * 1.4, life: 1, c: COLORS[(rnd() * COLORS.length) | 0], r: 1 + rnd() * 2.6 });
+      ctx.globalCompositeOperation = 'lighter';
+      // ribbon
+      for (let k = 1; k < trail.length; k++) { const q = trail[k], p0 = trail[k - 1], age = clamp(1 - (st - q.t) / 1400, 0, 1); if (age <= 0) continue; ctx.strokeStyle = `rgba(255,211,107,${0.7 * age})`; ctx.lineWidth = 2 + 16 * age; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(q.x, q.y); ctx.stroke(); ctx.strokeStyle = `rgba(255,255,255,${0.5 * age})`; ctx.lineWidth = 1.5 + 3 * age; ctx.stroke(); }
+      const gg = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, size * 2.4); gg.addColorStop(0, 'rgba(255,225,150,.6)'); gg.addColorStop(1, 'rgba(255,200,100,0)'); ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(pos.x, pos.y, size * 2.4, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.save(); ctx.translate(pos.x, pos.y); ctx.rotate(ang); ctx.scale(-1, 1);
+      ctx.font = `${Math.round(size)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(255,211,107,.95)'; ctx.shadowBlur = size * 0.35;
+      ctx.fillText('\u{1F98C}\u{1F98C}\u{1F6F7}', 0, 0); ctx.restore();
+    }
+    // glitter
+    ctx.globalCompositeOperation = 'lighter';
+    for (let k = glitter.length - 1; k >= 0; k--) { const g = glitter[k]; g.x += g.vx; g.y += g.vy; g.life -= dt / 1300; if (g.life <= 0) { glitter.splice(k, 1); continue; } ctx.fillStyle = `rgba(${g.c},${g.life})`; ctx.beginPath(); ctx.arc(g.x, g.y, g.r * (0.5 + g.life), 0, Math.PI * 2); ctx.fill(); }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // transformation: the festive page spreads outward behind the sleigh
+    if (st >= TW) {
+      if (!applied) { festApplyTheme(theme, true); applied = true; flash.classList.remove('go'); void flash.offsetWidth; flash.classList.add('go'); }
+      const e = clamp((st - TW) / 2100, 0, 1), eased = 1 - Math.pow(1 - e, 3), hr = eased * maxR;
+      dim.style.setProperty('--hx', P.x + 'px'); dim.style.setProperty('--hy', P.y + 'px'); dim.style.setProperty('--hr', hr.toFixed(1) + 'px');
+      if (e > 0 && e < 1) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.strokeStyle = `rgba(255,225,150,${0.5 * (1 - e * 0.6)})`; ctx.lineWidth = 14; ctx.shadowColor = '#ffd36b'; ctx.shadowBlur = 36; ctx.beginPath(); ctx.arc(P.x, P.y, hr + 34, 0, Math.PI * 2); ctx.stroke(); ctx.restore(); }
+      if (e >= 1) dim.style.display = 'none';
+      if (!titleOn && st > T_TITLE) { titleOn = true; titleEl.classList.add('show'); }
+      if (titleOn && st > T_END - 900) titleEl.classList.remove('show');
+    }
+    if (st >= T_END) { finish(); return; }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
 document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('#festMeteor')) playFestCine(currentSeasonalTheme, { replay: true }); });
 
 // Bigger corner decorations, added ON TOP of the existing garland and the
@@ -3353,20 +3507,51 @@ const KICKOFF_FINAL_MINUTE_MS = 60 * 1000; // 1 minute -- matches #kickoffCountd
 // comet is up, the comet swells, its halo and a screen-edge glow pulse faster,
 // and the page starts to tremble as kickoff nears (0 ~2.5 days out -> 1 at kickoff).
 const DOOM_SPAN_MS = 64 * 3600 * 1000;
+const WARN_MS = 60 * 60 * 1000;          // red/amber alarm stage
+const WARN_URGENT_MS = 10 * 60 * 1000;   // faster pulse
+let cometSuppressed = false;             // set at kickoff so the build-up comet is gone during the impact cinematic
+let kickoffCountdownYear = null, kickoffCountdownWeek = null;
+function applyWarn(on, urgent, heartbeat) {
+  const root = document.documentElement;
+  if (kcHintTheme === 'christmas') root.dataset.warnTheme = 'christmas'; else delete root.dataset.warnTheme;
+  const v = on ? (heartbeat ? 'hb' : urgent ? 'urgent' : 'on') : '';
+  if ((root.dataset.warn || '') !== v) { if (v) root.dataset.warn = v; else delete root.dataset.warn; }
+}
+// Kickoff reached on a holiday countdown: fade to black, drop the comet, then play the cinematic.
+function startKickoffImpact(theme, year, week) {
+  if (prefersReducedMotion() || document.hidden || festCinePlaying || !FEST_METEOR[theme]) return;
+  try { localStorage.setItem(`winProbFestCineSeen:v1:${year}:${week}:${theme}`, '1'); } catch {}
+  const root = document.documentElement, k = document.getElementById('kickBlack');
+  cometSuppressed = true;
+  setTimeout(() => { cometSuppressed = false; document.body.classList.remove('kick-zero'); }, 10 * 60 * 1000);
+  applyWarn(false);
+  if (k) k.classList.add('show');
+  setTimeout(() => {
+    document.body.classList.add('kick-zero'); document.body.classList.remove('doom-rumble');
+    root.classList.add('fest-pre'); root.removeAttribute('data-seasonal-theme');
+    window.__kickCine = true; window.__kickClearAfter = false;
+    playFestCine(theme, { fromBlack: true });
+    setTimeout(() => k && k.classList.remove('show'), 300);
+  }, 750);
+}
 function setDoom(d) {
   const root = document.documentElement;
   const comet = document.getElementById('comet');
-  if (!comet || !comet.classList.contains('on')) d = 0;
+  if (!comet || !comet.classList.contains('on') || cometSuppressed) d = 0;
   d = Math.min(Math.max(d, 0), 1);
   const v = d.toFixed(3);
   if (root.dataset.doom !== v) { root.dataset.doom = v; root.style.setProperty('--comet-d', v); }
-  document.body.classList.toggle('doom-rumble', d > 0.45 && !prefersReducedMotion());
+  document.body.classList.toggle('doom-rumble', d > 0.45 && !prefersReducedMotion() && kcHintTheme !== 'christmas');
   document.body.style.setProperty('--dr', (d * 1.5).toFixed(2));
 }
 function tickKickoffCountdown() {
   const el = document.getElementById('kickoffCountdown');
   if (!el) return;
   setDoom(kickoffCountdownTarget ? 1 - (kickoffCountdownTarget.getTime() - Date.now()) / DOOM_SPAN_MS : 0);
+  const rem0 = kickoffCountdownTarget ? kickoffCountdownTarget.getTime() - Date.now() : Infinity;
+  const holidayCd = !!FEST_METEOR[kcHintTheme] && !cometSuppressed;
+  const warn = holidayCd && rem0 > 0 && rem0 <= WARN_MS;
+  applyWarn(warn, rem0 <= WARN_URGENT_MS, rem0 <= 60000);
   if (!kickoffCountdownTarget) {
     el.hidden = true;
     el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween', 'seasonal-coldsnap');
@@ -3377,8 +3562,11 @@ function tickKickoffCountdown() {
   if (!formatted) {
     // Kickoff has arrived (or passed) since this was last checked -- hide
     // immediately rather than show a stale "0m 0s" or a negative countdown.
+    const wasTheme = kcHintTheme, wasYear = kickoffCountdownYear, wasWeek = kickoffCountdownWeek;
+    const fresh = kickoffCountdownTarget && Date.now() - kickoffCountdownTarget.getTime() < 15000; // just now, not a stale tab
     kickoffCountdownTarget = null;
     kcHintTheme = 'none'; // stops the mini particle field too, not just the label
+    if (fresh && FEST_METEOR[wasTheme] && wasYear != null) startKickoffImpact(wasTheme, wasYear, wasWeek);
     el.hidden = true;
     el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween', 'seasonal-coldsnap');
     return;
@@ -3391,7 +3579,9 @@ function tickKickoffCountdown() {
   // in index.html.
   const labelEl = document.getElementById('kickoffCountdownLabelEl');
   const timeEl = document.getElementById('kickoffCountdownTimeEl');
-  if (labelEl) labelEl.textContent = kickoffCountdownLabel;
+  if (labelEl) labelEl.textContent = warn ? (kcHintTheme === 'christmas' ? '🔔 SLEIGH BELLS RINGING · ARRIVAL IMMINENT' : '⚠ WARNING · IMPACT IMMINENT') : kickoffCountdownLabel;
+  el.classList.toggle('kc-warn', warn);
+  el.classList.toggle('kc-warn-xmas', warn && kcHintTheme === 'christmas');
   if (timeEl) timeEl.textContent = formatted;
   // Starts pulsing in the final hour, then gets a bigger, faster pulse in
   // the final minute specifically (see .imminent / .final-minute in
@@ -3430,7 +3620,7 @@ function tickKickoffCountdown() {
     el.classList.add(`seasonal-${seasonalCssTheme(kcHintTheme)}`);
     if (seasonalHintEl) {
       seasonalHintEl.hidden = false;
-      seasonalHintEl.textContent = (kcHintTheme === 'christmas' && kcHintFestive) ? SEASONAL_HINT_COPY_FESTIVE : (SEASONAL_HINT_COPY[kcHintTheme] || '');
+      seasonalHintEl.textContent = warn ? (kcHintTheme === 'christmas' ? SEASONAL_HINT_COPY_WARN_XMAS : SEASONAL_HINT_COPY_WARN) : ((kcHintTheme === 'christmas' && kcHintFestive) ? SEASONAL_HINT_COPY_FESTIVE : (SEASONAL_HINT_COPY[kcHintTheme] || ''));
     }
   }
 }
@@ -3461,6 +3651,7 @@ async function updateKickoffCountdown(byMatchup, year, week) {
 
   kickoffCountdownTarget = weekStart;
   kickoffCountdownLabel = `Week ${targetWeek} kicks off in`;
+  kickoffCountdownYear = year; kickoffCountdownWeek = targetWeek;
 
   // Is the week THIS countdown is counting down to itself a Thanksgiving/
   // Christmas week? Deliberately uses realSeasonalTheme (no debug
@@ -5759,8 +5950,12 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     // driver, the same way the particle canvas reacts to this same
     // variable every frame. Harmless to set on every theme, even ones with
     // no CSS hooked up to it yet.
-    if (festCinePlaying && festCineFinish) festCineFinish(); // week/league switched mid-cinematic
-    if (festCineDue(currentSeasonalTheme, year, week, leagueId)) {
+    if (window.__kickCine) window.__kickClearAfter = true; // the kickoff cinematic is mid-play: let it finish, clear the comet hold afterwards
+    else { cometSuppressed = false; document.body.classList.remove('kick-zero'); }
+    if (festCinePlaying && festCineFinish && !window.__kickCine) festCineFinish(); // week/league switched mid-cinematic
+    if (window.__kickCine && festCinePlaying) {
+      // The kickoff cinematic is already playing and will reveal the holiday look itself.
+    } else if (festCineDue(currentSeasonalTheme, year, week, leagueId)) {
       // Hold the holiday look back; the meteor's impact reveals it.
       document.documentElement.classList.add('fest-pre');
       document.documentElement.removeAttribute('data-seasonal-theme');
