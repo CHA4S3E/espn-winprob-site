@@ -388,10 +388,25 @@
      "dash" state, so nothing spoils the event before the variables arrive. */
   #comet {
     position: absolute; top: 6vh; left: 11vw; width: 0; height: 0; z-index: 0; pointer-events: none;
-    --comet-color: #ff9a3c; --comet-p: 0; --comet-sym: 0;
-    opacity: 0; transition: opacity 1s ease, transform 1.5s ease;
-    transform: translate(calc((1 - var(--comet-p)) * -8vw), calc((1 - var(--comet-p)) * -4vh));
+    --comet-color: #ff9a3c; --comet-p: 0; --comet-sym: 0; --comet-i: 0;
+    opacity: 0; transition: opacity 1s ease, transform 2.5s ease;
+    transform: translate(calc((1 - var(--comet-p)) * -8vw + var(--comet-i) * 54vw), calc((1 - var(--comet-p)) * -4vh + var(--comet-i) * 14vh)) scale(calc(1 + var(--comet-i) * 4));
   }
+  /* Impact (Sunday evening -> end of Monday night): --comet-i swells the whole
+     comet and slides it toward the page, with a growing halo behind it, so the
+     week's end reads as "about to hit". */
+  #comet::before {
+    content: ''; position: absolute; left: 0; top: 0; border-radius: 50%; pointer-events: none;
+    width: calc(var(--comet-i) * 90px); height: calc(var(--comet-i) * 90px); transform: translate(-50%, -50%);
+    background: radial-gradient(circle, var(--comet-color) 0, color-mix(in srgb, var(--comet-color) 40%, transparent) 38%, transparent 70%);
+    filter: blur(6px); opacity: calc(var(--comet-i) * 0.55);
+    transition: opacity 2.5s ease, width 2.5s ease, height 2.5s ease;
+  }
+  #comet.impact::before { animation: ctImpact 1.8s ease-in-out infinite alternate; }
+  #comet.impact #cometTail { opacity: 1; width: 120px; }
+  #comet.impact .ct-w { animation-duration: 2.2s; }
+  #comet.impact #cometOrb { animation-duration: 1.2s; }
+  @keyframes ctImpact { from { transform: translate(-50%, -50%) scale(0.85); } to { transform: translate(-50%, -50%) scale(1.2); } }
   #comet.on { opacity: 1; }
   /* The tail is layered so it reads as moving even though the comet stays
      put: a soft tapered glow that breathes, a bright core that flickers,
@@ -1744,6 +1759,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=38"></script>
+<script src="app.js?v=39"></script>
 </body>
 </html>
