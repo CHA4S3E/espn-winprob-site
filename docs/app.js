@@ -1230,18 +1230,29 @@ const kcCtx = kcCanvas ? kcCanvas.getContext('2d') : null;
 let kcParticles = [];
 
 function resizeKcCanvas() {
+  if (!kcCanvas) return false;
+  const box = document.getElementById('kickoffCountdown');
+  if (!box || box.hidden) return false;
+  // clientWidth/Height = the padding box the canvas is stretched over (inset:0),
+  // and unlike getBoundingClientRect it ignores the box's pulse transform.
+  const w = box.clientWidth, h = box.clientHeight;
+  if (w <= 0 || h <= 0) return false;
+  kcCanvas.width = w; kcCanvas.height = h;
+  return true;
+}
+window.addEventListener('resize', () => { kcSeedKey = ''; });
+
+let kcSeedKey = '';
+// Seeds only when the theme or the box size actually changed, so periodic
+// refreshes / returning to the tab never reshuffle the bats.
+function seedKcParticles() {
   if (!kcCanvas) return;
   const box = document.getElementById('kickoffCountdown');
-  if (!box) return;
-  const rect = box.getBoundingClientRect();
-  kcCanvas.width = Math.round(rect.width);
-  kcCanvas.height = Math.round(rect.height);
-}
-window.addEventListener('resize', resizeKcCanvas);
-
-function seedKcParticles() {
-  resizeKcCanvas();
-  if (!kcCanvas) return;
+  if (!box || box.hidden || box.clientWidth <= 0 || box.clientHeight <= 0) return;
+  const key = kcHintTheme + '|' + box.clientWidth + 'x' + box.clientHeight;
+  if (key === kcSeedKey && kcParticles.length) return;
+  if (!resizeKcCanvas()) return;
+  kcSeedKey = key;
   const count = SEASONAL_KC_PARTICLE_COUNTS[seasonalCssTheme(kcHintTheme)] || 0;
   kcParticles = [];
   for (let i = 0; i < count; i++) {
@@ -1251,13 +1262,8 @@ function seedKcParticles() {
 
 function kcTick(t) {
   if (kcCtx) {
-    // Self-heal: if the box was hidden (0x0) when particles were seeded, or its
-    // size changed since, re-measure and re-seed once it has a real size.
-    const kcBox = kcCanvas.parentElement;
-    if (kcBox && !kcBox.hidden && kcHintTheme !== 'none') {
-      const w = Math.round(kcBox.clientWidth), h = Math.round(kcBox.clientHeight);
-      if (w > 0 && h > 0 && (kcCanvas.width !== w || kcCanvas.height !== h || !kcParticles.length)) seedKcParticles();
-    }
+    // Self-heal: seed once the box has a real size (no-op if nothing changed).
+    if (kcHintTheme !== 'none') seedKcParticles();
     kcCtx.clearRect(0, 0, kcCanvas.width, kcCanvas.height);
     if (kcHintTheme !== 'none' && !prefersReducedMotion()) {
       for (const p of kcParticles) {
