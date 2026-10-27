@@ -387,10 +387,10 @@
      and the emoji fades in as the head. Defaults (no JS yet) are the far
      "dash" state, so nothing spoils the event before the variables arrive. */
   #comet {
-    position: absolute; top: 6vh; left: 11vw; width: 0; height: 0; z-index: 0; pointer-events: none;
+    position: absolute; top: 6vh; left: 11vw; width: 0; height: 0; z-index: 5; pointer-events: none;
     --comet-color: #ff9a3c; --comet-p: 0; --comet-sym: 0; --comet-i: 0;
     opacity: 0; transition: opacity 1s ease, transform 2.5s ease;
-    transform: translate(calc((1 - var(--comet-p)) * -8vw + var(--comet-i) * 54vw), calc((1 - var(--comet-p)) * -4vh + var(--comet-i) * 14vh)) scale(calc(1 + var(--comet-i) * 4));
+    transform: translate(calc((1 - var(--comet-p)) * -8vw + var(--comet-i) * 2vw), calc((1 - var(--comet-p)) * -4vh + var(--comet-i) * 20vh)) scale(calc(1 + var(--comet-i) * 4));
   }
   /* Impact (Sunday evening -> end of Monday night): --comet-i swells the whole
      comet and slides it toward the page, with a growing halo behind it, so the
@@ -467,6 +467,52 @@
     filter: drop-shadow(0 0 5px var(--comet-color)) drop-shadow(0 0 12px var(--comet-color));
     transition: opacity 1.5s ease, transform 1.5s ease;
   }
+
+  /* ---- Seasonal intro: meteor strike + the meteor that stays ----------------- */
+  html.fest-pre #festBanner, html.fest-pre .fest-corner, html.fest-pre .seasonal-garland,
+  html.fest-pre #seasonalParticleCanvas, html.fest-pre #seasonalFog { visibility: hidden !important; opacity: 0 !important; }
+  html.fest-pre .espn-card[class*="seasonal-"], html.fest-pre .needle-card[class*="seasonal-"] {
+    background: var(--card-bg) !important; border-color: var(--border) !important; box-shadow: none !important;
+  }
+  html.fest-pre .espn-card[class*="seasonal-"]::before, html.fest-pre .espn-card[class*="seasonal-"]::after,
+  html.fest-pre .needle-card[class*="seasonal-"]::before, html.fest-pre .needle-card[class*="seasonal-"]::after { display: none !important; }
+  @keyframes festPop { from { opacity: 0; scale: 0.3; } 60% { scale: 1.25; } to { opacity: 1; scale: 1; } }
+  @keyframes festCardGlow { 0% { box-shadow: 0 0 0 0 transparent; } 25% { box-shadow: 0 0 46px 8px var(--fest-glow, rgba(255,255,255,.4)); } 100% { box-shadow: 0 0 0 0 transparent; } }
+  html.fest-reveal .fest-corner, html.fest-reveal #festBanner { animation: festPop 0.9s cubic-bezier(.2,1.3,.4,1) both; }
+  html.fest-reveal .espn-card[class*="seasonal-"], html.fest-reveal .needle-card[class*="seasonal-"] { animation: festCardGlow 1.5s ease-out; }
+  #festCine { position: fixed; inset: 0; z-index: 10000; display: none; }
+  #festCine.on { display: block; }
+  #festCine .fc-dim { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 62%, rgba(14,16,30,.5), rgba(3,4,10,.93)); opacity: 0; transition: opacity .55s ease; }
+  #festCine.dark .fc-dim { opacity: 1; }
+  #festCine.out { opacity: 0; transition: opacity .65s ease; }
+  #festCine canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #festCine .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+  #festCine .flash.go { animation: festFlash 1s ease-out; }
+  @keyframes festFlash { 0% { opacity: 0; } 8% { opacity: 1; } 100% { opacity: 0; } }
+  #festCine .fc-title { position: absolute; left: 0; right: 0; top: 30%; text-align: center; color: #fff; opacity: 0; transform: scale(.8); transition: opacity .6s ease, transform .6s cubic-bezier(.2,1.2,.4,1); pointer-events: none; text-shadow: 0 0 30px rgba(255,255,255,.35), 0 4px 24px rgba(0,0,0,.6); }
+  #festCine .fc-title.show { opacity: 1; transform: none; }
+  #festCine .fc-emoji { font-size: 64px; line-height: 1; display: block; margin-bottom: 6px; }
+  #festCine .fc-text { font-family: var(--fest-font, var(--font-display)); font-size: 44px; line-height: 1.05; display: block; }
+  #festCine .fc-sub { font-size: 14px; opacity: .8; margin-top: 8px; display: block; letter-spacing: .04em; }
+  #festCine .fc-skip { position: absolute; right: 16px; top: 16px; background: rgba(0,0,0,.5); color: #fff; border: 1px solid rgba(255,255,255,.3); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; font-family: inherit; }
+  body.fest-shake #wrap { animation: festShake .6s ease-out; }
+  @keyframes festShake { 0%,100% { transform: none; } 12% { transform: translate(-9px, 5px); } 26% { transform: translate(8px, -6px); } 40% { transform: translate(-6px, -4px); } 56% { transform: translate(5px, 4px); } 72% { transform: translate(-3px, 2px); } }
+  /* The meteor that stays at the bottom of the page. */
+  #festMeteor { display: block; position: relative; width: 140px; height: 84px; margin: 34px auto 4px; padding: 0; border: 0; background: none; cursor: pointer; --fm-color: #ff9a3c; -webkit-tap-highlight-color: transparent; }
+  #festMeteor[hidden] { display: none; }
+  #festMeteor .fm-crater { position: absolute; left: 50%; bottom: 8px; width: 126px; height: 28px; transform: translateX(-50%); border-radius: 50%; background: radial-gradient(ellipse, rgba(0,0,0,.6), rgba(0,0,0,.15) 55%, transparent 72%); }
+  #festMeteor .fm-glow { position: absolute; left: 50%; bottom: 12px; width: 104px; height: 66px; transform: translateX(-50%); border-radius: 50%; background: radial-gradient(ellipse at 50% 70%, color-mix(in srgb, var(--fm-color) 75%, transparent), transparent 70%); filter: blur(7px); animation: fmPulse 2.6s ease-in-out infinite alternate; }
+  #festMeteor .fm-rock { position: absolute; left: 50%; bottom: 18px; width: 52px; height: 42px; transform: translateX(-50%) rotate(-8deg); border-radius: 48% 52% 46% 54% / 56% 50% 50% 44%; background: radial-gradient(circle at 35% 30%, #6a6571, #2c2933 58%, #131116); box-shadow: inset -5px -6px 9px rgba(0,0,0,.55), 0 0 16px var(--fm-color); transition: transform .25s ease; }
+  #festMeteor .fm-rock::after { content: ''; position: absolute; left: 13px; top: 11px; width: 22px; height: 15px; border-top: 2px solid var(--fm-color); border-radius: 50%; transform: rotate(16deg); filter: drop-shadow(0 0 4px var(--fm-color)); }
+  #festMeteor:hover .fm-rock { transform: translateX(-50%) rotate(-3deg) scale(1.08); }
+  #festMeteor i { position: absolute; bottom: 52px; width: 4px; height: 4px; border-radius: 50%; background: var(--fm-color); box-shadow: 0 0 6px var(--fm-color); opacity: 0; animation: fmEmber 3.2s ease-in infinite; }
+  #festMeteor i:nth-of-type(1) { left: 56px; animation-delay: 0s; } #festMeteor i:nth-of-type(2) { left: 72px; animation-delay: 1.1s; } #festMeteor i:nth-of-type(3) { left: 64px; animation-delay: 2.1s; }
+  #festMeteor .fm-label { position: absolute; left: 0; right: 0; bottom: -12px; text-align: center; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); opacity: 0; transition: opacity .3s ease; }
+  #festMeteor:hover .fm-label, #festMeteor:focus-visible .fm-label { opacity: 1; }
+  @keyframes fmPulse { from { opacity: .55; transform: translateX(-50%) scale(.94); } to { opacity: 1; transform: translateX(-50%) scale(1.06); } }
+  @keyframes fmEmber { 0% { opacity: 0; transform: translateY(0) scale(1); } 15% { opacity: .9; } 100% { opacity: 0; transform: translateY(-34px) scale(.4); } }
+  @media (prefers-reduced-motion: reduce) { #festMeteor .fm-glow, #festMeteor i { animation: none; } }
+
   @media (prefers-reduced-motion: reduce) {
     #comet, #cometTail, #cometSymbol, #cometOrb { transition: opacity 0.3s ease; }
     #comet.on #cometTail, #comet.on #cometTail i, #comet.on #cometOrb { animation: none; }
@@ -1657,6 +1703,7 @@
   <div class="champ-beam cb4"></div>
 </div>
 <div id="leaderGradient"><div class="leader-gradient-layer" id="leaderGradientLayerA"></div><div class="leader-gradient-layer" id="leaderGradientLayerB"></div></div>
+<div id="festCine"><div class="fc-dim"></div><canvas></canvas><div class="flash"></div><div class="fc-title"><span class="fc-emoji"></span><span class="fc-text"></span><span class="fc-sub"></span></div><button class="fc-skip" type="button">Skip ›</button></div>
 <div id="wrap">
   <div class="title-row">
     <h2>Fantasy W<a class="info-icon" href="settings.html" title="Team settings" aria-label="Team settings">i</a>n Probability</h2>
@@ -1759,6 +1806,7 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=39"></script>
+<button id="festMeteor" type="button" hidden aria-label="Replay the meteor strike" title="Replay the meteor strike"><span class="fm-crater"></span><span class="fm-glow"></span><i></i><i></i><i></i><span class="fm-rock"></span><span class="fm-label">Replay the impact</span></button>
+<script src="app.js?v=40"></script>
 </body>
 </html>
