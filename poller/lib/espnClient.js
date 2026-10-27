@@ -68,11 +68,16 @@ async function fetchNflGameStatusMap({ year, week }) {
   // Additive (nothing existing reads these): lets the poller tell whether
   // any game is live or about to start, so it can skip idle polls.
   let anyLive = false;
+  let recentlyEnded = false; // some game finished within roughly the last hour (kicked off < 4.5h ago, now 'post')
   let nextKickoff = null; // earliest kickoff among games still in state 'pre' (may already be in the past = delayed start)
 
   for (const event of data.events) {
     const state = event.status?.type?.state; // 'pre' | 'in' | 'post'
     if (state === 'in') anyLive = true;
+    if (state === 'post' && event.date) {
+      const kd = new Date(event.date);
+      if (!isNaN(kd) && Date.now() - kd.getTime() < 4.5 * 60 * 60 * 1000) recentlyEnded = true;
+    }
     if (state === 'pre' && event.date) {
       const d = new Date(event.date);
       if (!isNaN(d) && (!nextKickoff || d < nextKickoff)) nextKickoff = d;
@@ -92,7 +97,7 @@ async function fetchNflGameStatusMap({ year, week }) {
     }
   }
 
-  return { statusMap, weekStart, anyLive, nextKickoff };
+  return { statusMap, weekStart, anyLive, nextKickoff, recentlyEnded };
 }
 
 // NFL regulation is 4 x 15-minute quarters (900s each) = 3600s total.
