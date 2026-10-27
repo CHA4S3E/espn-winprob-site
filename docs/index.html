@@ -490,6 +490,37 @@
   @keyframes festCardGlow { 0% { box-shadow: 0 0 0 0 transparent; } 25% { box-shadow: 0 0 46px 8px var(--fest-glow, rgba(255,255,255,.4)); } 100% { box-shadow: 0 0 0 0 transparent; } }
   html.fest-reveal .fest-corner, html.fest-reveal #festBanner { animation: festPop 0.9s cubic-bezier(.2,1.3,.4,1) both; }
   html.fest-reveal .espn-card[class*="seasonal-"], html.fest-reveal .needle-card[class*="seasonal-"] { animation: festCardGlow 1.5s ease-out; }
+
+  /* ---- Final-hour WARNING (holiday countdowns only; html[data-warn] set by applyWarn in app.js) ---- */
+  #warnEdge { position: fixed; inset: 0; z-index: 4; pointer-events: none; opacity: 0; box-shadow: inset 0 0 90px 10px rgba(255,48,32,.65), inset 0 0 220px 30px rgba(255,150,30,.28); }
+  html[data-warn] #warnEdge { opacity: 1; animation: warnPulse 2.4s ease-in-out infinite; }
+  html[data-warn="urgent"] #warnEdge { animation-duration: 1.1s; }
+  html[data-warn="hb"] #warnEdge { animation: warnThump 1s ease-out infinite; }
+  @keyframes warnPulse { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
+  @keyframes warnThump { 0% { opacity: .2; } 12% { opacity: 1; } 26% { opacity: .35; } 38% { opacity: .9; } 100% { opacity: .2; } }
+  #kickoffCountdown.kc-warn { color: #ff6b3d; border-color: #ff4a30; background: color-mix(in srgb, #5a0f08 40%, var(--card-bg)); animation: warnBox 1.6s ease-in-out infinite; }
+  #kickoffCountdown.kc-warn .kickoff-label { color: #ffb347; opacity: 1; letter-spacing: .12em; font-weight: 700; }
+  html[data-warn="urgent"] #kickoffCountdown.kc-warn { animation-duration: .8s; }
+  html[data-warn="hb"] #kickoffCountdown.kc-warn .kickoff-time { animation: warnThrob 1s ease-out infinite; display: inline-block; }
+  @keyframes warnBox { 0%,100% { box-shadow: 0 0 0 0 rgba(255,60,40,0); } 50% { box-shadow: 0 0 22px 3px rgba(255,60,40,.65); } }
+  @keyframes warnThrob { 0% { transform: scale(1); } 12% { transform: scale(1.18); } 26% { transform: scale(1.02); } 38% { transform: scale(1.12); } 100% { transform: scale(1); } }
+
+  /* ---- Christmas: sleigh instead of a comet, blizzard build-up, festive warning ---- */
+  #comet.sleigh #cometOrb { display: none; }
+  #comet.sleigh #cometSymbol { font-size: 15px; left: -46px; top: -12px; white-space: nowrap; scale: -1 1; letter-spacing: -2px; }
+  #blizzHaze { position: fixed; inset: 0; z-index: 3; pointer-events: none; opacity: calc(var(--blizz, 0) * var(--blizz, 0) * 0.9);
+    background: radial-gradient(ellipse 90% 80% at 50% 50%, rgba(235,244,255,0) 40%, rgba(225,238,255,.85) 100%), radial-gradient(ellipse at 50% 50%, rgba(235,244,255,.16), transparent 70%); }
+  html[data-warn-theme="christmas"] #warnEdge { box-shadow: inset 0 0 90px 10px rgba(230,40,50,.6), inset 0 0 220px 30px rgba(40,200,110,.35); }
+  #kickoffCountdown.kc-warn.kc-warn-xmas { color: #9dffc6; border-color: #e63946; background: color-mix(in srgb, #0f3a22 45%, var(--card-bg)); }
+  #kickoffCountdown.kc-warn.kc-warn-xmas .kickoff-label { color: #ff8c94; }
+  #festMeteor .fm-sleigh { display: none; position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); font-size: 40px; line-height: 1; filter: drop-shadow(0 0 10px var(--fm-color)); }
+  #festMeteor.sleigh .fm-sleigh { display: block; }
+  #festMeteor.sleigh .fm-rock, #festMeteor.sleigh i { display: none; }
+  body.kick-zero #blizzHaze { display: none !important; }
+  #kickBlack { position: fixed; inset: 0; z-index: 10001; background: #000; opacity: 0; pointer-events: none; transition: opacity .7s ease; }
+  #kickBlack.show { opacity: 1; }
+  body.kick-zero #comet, body.kick-zero #doomGlow, body.kick-zero #warnEdge, body.kick-zero #cdMeteorCanvas { display: none !important; }
+  html[data-reduce-motion="true"] #warnEdge, html[data-reduce-motion="true"] #kickoffCountdown.kc-warn, html[data-reduce-motion="true"] #kickoffCountdown.kc-warn .kickoff-time { animation: none !important; }
   #festCine { position: fixed; inset: 0; z-index: 10000; display: none; }
   #festCine.on { display: block; }
   #festCine .fc-dim { position: absolute; inset: 0; background: radial-gradient(ellipse at 20% 10%, rgba(30,22,40,.9), rgba(3,4,10,.96) 70%); opacity: 0; transition: opacity .9s ease; --hx: 50%; --hy: 60%; --hr: -300px; -webkit-mask-image: radial-gradient(circle at var(--hx) var(--hy), transparent var(--hr), #000 calc(var(--hr) + 90px)); mask-image: radial-gradient(circle at var(--hx) var(--hy), transparent var(--hr), #000 calc(var(--hr) + 90px)); }
@@ -1708,6 +1739,9 @@
 <canvas id="skyCanvas"></canvas>
 <canvas id="cdMeteorCanvas"></canvas>
 <div id="doomGlow"></div>
+<div id="blizzHaze"></div>
+<div id="warnEdge"></div>
+<div id="kickBlack"></div>
 <div id="moon"><canvas id="moonCanvas" width="64" height="64"></canvas></div>
 <div id="comet"><span id="cometTail"><i class="ct-glow"></i><i class="ct-core"></i><i class="ct-w ct-w1"></i><i class="ct-w ct-w2"></i><i class="ct-w ct-w3"></i><i class="ct-w ct-w4"></i></span><span id="cometOrb"></span><span id="cometSymbol"></span></div>
 <div id="champSpotlights">
@@ -1820,7 +1854,7 @@
 </div>
 
 <script src="config.js"></script>
-<button id="festMeteor" type="button" hidden aria-label="Replay the meteor strike" title="Replay the meteor strike"><span class="fm-crater"></span><span class="fm-glow"></span><i></i><i></i><i></i><span class="fm-rock"></span><span class="fm-label">Replay the impact</span></button>
-<script src="app.js?v=45"></script>
+<button id="festMeteor" type="button" hidden aria-label="Replay the meteor strike" title="Replay the meteor strike"><span class="fm-crater"></span><span class="fm-glow"></span><i></i><i></i><i></i><span class="fm-rock"></span><span class="fm-sleigh">🛷</span><span class="fm-label">Replay the impact</span></button>
+<script src="app.js?v=47"></script>
 </body>
 </html>
