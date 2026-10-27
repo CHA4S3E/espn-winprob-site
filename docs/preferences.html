@@ -181,6 +181,13 @@
         <div class="option-example">Overridden by Thanksgiving/Christmas above if more than one is somehow on -- trigger a real Upset Watch (or use the Championship Week debug view alongside it) to see the spiders glow and pulse</div>
       </span>
     </label>
+    <label class="option-row">
+      <input type="checkbox" id="debugFestCine">
+      <span>
+        <div class="option-label">Always play the holiday meteor intro (default: off)</div>
+        <div class="option-example">Normally the meteor strike plays once, the first time you open a Halloween / Thanksgiving / Christmas week. Turn this on to see it on every page load (combine with a Force ... Week look above). You can also click the meteor at the bottom of the page.</div>
+      </span>
+    </label>
   </div>
 
   <div class="setting-group setting-group-debug">
@@ -388,6 +395,13 @@
   cometDebugSelect.value = localStorage.getItem(COMET_DEBUG_KEY) || 'none';
   cometDebugSelect.addEventListener('change', () => {
     localStorage.setItem(COMET_DEBUG_KEY, cometDebugSelect.value);
+  });
+
+  const FEST_CINE_KEY = 'winProbDebugFestCine';
+  const festCineCheckbox = document.getElementById('debugFestCine');
+  festCineCheckbox.checked = localStorage.getItem(FEST_CINE_KEY) === 'true';
+  festCineCheckbox.addEventListener('change', () => {
+    localStorage.setItem(FEST_CINE_KEY, festCineCheckbox.checked ? 'true' : 'false');
   });
 
   const COMET_PROGRESS_KEY = 'winProbDebugCometProgress';
