@@ -1296,10 +1296,13 @@ function cmInterval(remainingMs) {
   return (11000 * Math.pow(1 - p, 1.8) + 700) * jitter;   // ~11s -> ~0.7s
 }
 function cmSpawn(rgb, W, H) {
-  const dirX = Math.random() < 0.7 ? -1 : 1;              // mostly down-left, like the shooting stars
-  const sp = 7 + Math.random() * 7, ang = 0.45 + Math.random() * 0.45;
-  cmList.push({ x: dirX < 0 ? W * (0.25 + Math.random() * 0.85) : W * (Math.random() * 0.75), y: -20 - Math.random() * H * 0.25,
-    vx: dirX * Math.cos(ang) * sp, vy: Math.sin(ang) * sp, r: 1.8 + Math.random() * 2.6, tail: 70 + Math.random() * 110, rgb, sparks: [] });
+  // Same heading as the holiday comet: its tail trails up-left, so it is
+  // travelling toward the lower-right at ~14 degrees. Meteors enter from the
+  // left / top-left edge and cross the page along that same line.
+  const sp = 8 + Math.random() * 7, ang = 0.245 + (Math.random() - 0.5) * 0.1;
+  const tail = 70 + Math.random() * 110;
+  cmList.push({ x: -tail - Math.random() * W * 0.45, y: Math.random() * H * 0.7 - 20,
+    vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, r: 1.8 + Math.random() * 2.6, tail, rgb, sparks: [] });
 }
 function cmTick(t) {
   if (cmCtx) {
@@ -1333,7 +1336,7 @@ function cmTick(t) {
         if (s.life <= 0) { m.sparks.splice(k, 1); continue; }
         cmCtx.fillStyle = `rgba(${m.rgb},${s.life * 0.8})`; cmCtx.beginPath(); cmCtx.arc(s.x, s.y, 0.9, 0, Math.PI * 2); cmCtx.fill();
       }
-      if (m.x < -tx - 300 && m.vx < 0 || m.y > cmCanvas.height + m.tail || m.x > cmCanvas.width + m.tail + 100 || m.x < -m.tail - 100) cmList.splice(i, 1);
+      if (m.y > cmCanvas.height + m.tail || m.x > cmCanvas.width + m.tail + 100) cmList.splice(i, 1);
     }
     cmCtx.globalCompositeOperation = 'source-over'; cmCtx.globalAlpha = 1;
   }
@@ -1656,6 +1659,7 @@ function renderComet(comet) {
     const p = comet.progress ?? 1;
     const sym = Math.min(Math.max((p - COMET_SYMBOL_FROM) / (COMET_SYMBOL_FULL - COMET_SYMBOL_FROM), 0), 1);
     el.style.setProperty('--comet-color', comet.color);
+    document.documentElement.style.setProperty('--comet-color', comet.color);
     el.style.setProperty('--comet-p', p.toFixed(3));
     el.style.setProperty('--comet-sym', sym.toFixed(3));
     const imp = comet.impact || 0;
@@ -3345,9 +3349,24 @@ let kickoffCountdownLabel = '';
 const KICKOFF_IMMINENT_MS = 60 * 60 * 1000; // 1 hour -- matches #kickoffCountdown.imminent in index.html
 const KICKOFF_FINAL_MINUTE_MS = 60 * 1000; // 1 minute -- matches #kickoffCountdown.final-minute in index.html
 
+// "About to impact" build-up: while a kickoff countdown is showing and a holiday
+// comet is up, the comet swells, its halo and a screen-edge glow pulse faster,
+// and the page starts to tremble as kickoff nears (0 ~2.5 days out -> 1 at kickoff).
+const DOOM_SPAN_MS = 64 * 3600 * 1000;
+function setDoom(d) {
+  const root = document.documentElement;
+  const comet = document.getElementById('comet');
+  if (!comet || !comet.classList.contains('on')) d = 0;
+  d = Math.min(Math.max(d, 0), 1);
+  const v = d.toFixed(3);
+  if (root.dataset.doom !== v) { root.dataset.doom = v; root.style.setProperty('--comet-d', v); }
+  document.body.classList.toggle('doom-rumble', d > 0.45 && !prefersReducedMotion());
+  document.body.style.setProperty('--dr', (d * 1.5).toFixed(2));
+}
 function tickKickoffCountdown() {
   const el = document.getElementById('kickoffCountdown');
   if (!el) return;
+  setDoom(kickoffCountdownTarget ? 1 - (kickoffCountdownTarget.getTime() - Date.now()) / DOOM_SPAN_MS : 0);
   if (!kickoffCountdownTarget) {
     el.hidden = true;
     el.classList.remove('imminent', 'final-minute', 'seasonal-thanksgiving', 'seasonal-christmas', 'seasonal-halloween', 'seasonal-coldsnap');
