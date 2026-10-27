@@ -1707,6 +1707,151 @@ function renderFestBanner(theme, week) {
   el.hidden = false;
 }
 
+
+// ---- Seasonal intro: the meteor strike --------------------------------------
+// The first time the page is opened in a Halloween / Thanksgiving / Christmas
+// week, a short cinematic plays: the comet that has been approaching all week
+// slams into the page, and the page transforms into the holiday. Afterwards the
+// meteor sits at the bottom of the page -- click it to watch the strike again.
+// While it plays, html.fest-pre hides every holiday visual (the theme attribute
+// is held back too); the impact flash removes it, so the transformation is what
+// you see happen.
+const FEST_METEOR = {
+  halloween:    { color: '#ff9a3c', rgb: '255,154,60' },
+  thanksgiving: { color: '#e0883a', rgb: '224,136,58' },
+  christmas:    { color: '#4fd493', rgb: '79,212,147' },
+};
+let festCineRun = 0;
+let festCinePlaying = false;
+let festCineFinish = null; // set while a cinematic is running: jumps to the end state
+const debugFestCine = () => localStorage.getItem('winProbDebugFestCine') === 'true'; // set on preferences.html
+
+function festApplyTheme(theme, quiet) {
+  const root = document.documentElement;
+  root.classList.remove('fest-pre');
+  if (theme && theme !== 'none') root.setAttribute('data-seasonal-theme', theme);
+  if (!quiet) { root.classList.add('fest-reveal'); setTimeout(() => root.classList.remove('fest-reveal'), 1800); }
+}
+
+// Should this load play the intro? Only on the latest week of the latest year,
+// once per device per holiday week, and never with reduced motion.
+function festCineDue(theme, year, week, leagueId) {
+  if (!FEST_METEOR[theme]) return false;
+  if (prefersReducedMotion()) return false;
+  if (!(yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0)) return false;
+  if (debugFestCine()) return true;
+  const key = `winProbFestCineSeen:v1:${year}:${week}:${theme}`;
+  try { if (localStorage.getItem(key) === '1') return false; localStorage.setItem(key, '1'); } catch { return false; }
+  return true;
+}
+
+function renderFestMeteor(theme) {
+  const el = document.getElementById('festMeteor');
+  if (!el) return;
+  const m = FEST_METEOR[theme];
+  const latest = yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0;
+  if (!m || !latest) { el.hidden = true; return; }
+  el.style.setProperty('--fm-color', m.color);
+  el.hidden = false;
+}
+
+function playFestCine(theme, { replay = false } = {}) {
+  const ov = document.getElementById('festCine');
+  const m = FEST_METEOR[theme];
+  if (!ov || !m) { festApplyTheme(theme, true); return; }
+  if (festCinePlaying && festCineFinish) festCineFinish();
+  const id = ++festCineRun;
+  festCinePlaying = true;
+  const root = document.documentElement;
+  if (replay) { root.classList.add('fest-pre'); root.removeAttribute('data-seasonal-theme'); }
+  const canvas = ov.querySelector('canvas'), ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = window.innerWidth, H = window.innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const flash = ov.querySelector('.flash'), titleEl = ov.querySelector('.fc-title');
+  const b = FEST_BANNERS[theme] || { emoji: '', title: '', sub: '' };
+  titleEl.querySelector('.fc-emoji').textContent = b.emoji;
+  titleEl.querySelector('.fc-text').textContent = b.title;
+  titleEl.querySelector('.fc-sub').textContent = b.sub;
+  titleEl.classList.remove('show'); flash.classList.remove('go');
+  ov.classList.add('on'); ov.classList.remove('out');
+  requestAnimationFrame(() => ov.classList.add('dark'));
+
+  const S = { x: -0.08 * W, y: -0.1 * H }, P = { x: W * 0.5, y: H * 0.62 };
+  const T_FLY = 2200, T_IMPACT = 2300, T_END = 5300;
+  const sparks = [], debris = [], rings = [];
+  let impacted = false, last = performance.now(), t0 = last, titleOn = false, ended = false;
+  const ease = (t) => Math.pow(t, 2.3);
+  const posAt = (t) => { const e = ease(Math.min(Math.max(t, 0), 1)); return { x: S.x + (P.x - S.x) * e, y: S.y + (P.y - S.y) * e }; };
+
+  function finish() {
+    if (ended) return; ended = true;
+    if (root.classList.contains('fest-pre')) festApplyTheme(theme, impacted);
+    ov.classList.add('out'); ov.classList.remove('dark');
+    setTimeout(() => { if (id === festCineRun) { ov.classList.remove('on', 'out'); ctx.clearRect(0, 0, W, H); } }, 700);
+    festCinePlaying = false; festCineFinish = null;
+    document.removeEventListener('keydown', onKey);
+  }
+  function onKey(e) { if (e.key === 'Escape') finish(); }
+  festCineFinish = finish;
+  document.addEventListener('keydown', onKey);
+  ov.querySelector('.fc-skip').onclick = finish;
+
+  function frame(now) {
+    if (id !== festCineRun || ended) return;
+    const dt = Math.max(0, Math.min(50, now - last)); last = now;
+    const t = Math.max(0, now - t0);
+    ctx.clearRect(0, 0, W, H);
+    if (t < T_IMPACT) {
+      const p = Math.min(t / T_FLY, 1), pos = posAt(p);
+      const r = 5 + 52 * Math.pow(p, 2.2);
+      // tail: samples back along the flight path
+      for (let k = 0; k < 90; k++) {
+        const q = posAt(p - k * 0.0046 * (0.6 + p));
+        const f = 1 - k / 90;
+        ctx.beginPath(); ctx.arc(q.x, q.y, Math.max(1.5, r * (0.2 + 0.8 * f * f)), 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${m.rgb},${0.16 * f * f})`; ctx.fill();
+      }
+      for (let k = 0; k < 2; k++) sparks.push({ x: pos.x, y: pos.y, vx: (Math.random() - 0.5) * 90 - 40, vy: (Math.random() - 0.3) * 90 - 20, life: 1, r: 1 + Math.random() * 2.5 });
+      const g = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, r * 2.6);
+      g.addColorStop(0, 'rgba(255,255,255,0.98)'); g.addColorStop(0.25, `rgba(${m.rgb},0.95)`); g.addColorStop(1, `rgba(${m.rgb},0)`);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(pos.x, pos.y, r * 2.6, 0, Math.PI * 2); ctx.fill();
+    } else if (!impacted) {
+      impacted = true;
+      flash.classList.remove('go'); void flash.offsetWidth; flash.classList.add('go');
+      document.body.classList.add('fest-shake'); setTimeout(() => document.body.classList.remove('fest-shake'), 700);
+      for (let k = 0; k < 3; k++) rings.push({ r: 0, v: 520 + k * 190, a: 0.9 - k * 0.15, w: 6 - k * 1.5, delay: k * 120 });
+      for (let k = 0; k < 90; k++) { const ang = Math.random() * Math.PI * 2, sp = 140 + Math.random() * 520; debris.push({ x: P.x, y: P.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 220, life: 1, r: 1.5 + Math.random() * 4, c: Math.random() < 0.3 ? '255,255,255' : m.rgb }); }
+      setTimeout(() => { if (id === festCineRun && !ended) festApplyTheme(theme, false); }, 90); // under the flash
+    }
+    // sparks / debris
+    for (const s of sparks) { s.x += s.vx * dt / 1000; s.y += s.vy * dt / 1000; s.life -= dt / 600; }
+    for (let i = sparks.length - 1; i >= 0; i--) if (sparks[i].life <= 0) sparks.splice(i, 1);
+    for (const s of sparks) { ctx.fillStyle = `rgba(${m.rgb},${Math.max(0, s.life)})`; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); }
+    for (const d of debris) { d.vy += 900 * dt / 1000; d.x += d.vx * dt / 1000; d.y += d.vy * dt / 1000; d.life -= dt / 1400; }
+    for (let i = debris.length - 1; i >= 0; i--) if (debris[i].life <= 0) debris.splice(i, 1);
+    for (const d of debris) { ctx.fillStyle = `rgba(${d.c},${Math.max(0, d.life)})`; ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill(); }
+    // shockwave rings + lingering crater glow
+    if (impacted) {
+      const since = t - T_IMPACT;
+      for (const rg of rings) {
+        if (since < rg.delay) continue;
+        const rr = rg.v * (since - rg.delay) / 1000;
+        const al = Math.max(0, rg.a - (since - rg.delay) / 1500);
+        if (al > 0) { ctx.strokeStyle = `rgba(${m.rgb},${al})`; ctx.lineWidth = rg.w; ctx.beginPath(); ctx.arc(P.x, P.y, rr, 0, Math.PI * 2); ctx.stroke(); }
+      }
+      const ga = Math.max(0, 0.7 - since / 2200);
+      if (ga > 0) { const g = ctx.createRadialGradient(P.x, P.y, 0, P.x, P.y, 220); g.addColorStop(0, `rgba(${m.rgb},${ga})`); g.addColorStop(1, `rgba(${m.rgb},0)`); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(P.x, P.y, 220, 0, Math.PI * 2); ctx.fill(); }
+      if (!titleOn && since > 350) { titleOn = true; titleEl.classList.add('show'); }
+      if (titleOn && since > 2300) titleEl.classList.remove('show');
+    }
+    if (t >= T_END) { finish(); return; }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('#festMeteor')) playFestCine(currentSeasonalTheme, { replay: true }); });
+
 // Bigger corner decorations, added ON TOP of the existing garland and the
 // pumpkin/ghost corners (those are untouched): bottom corners for every
 // holiday, plus top corners for Christmas (which had none).
@@ -5406,9 +5551,19 @@ async function loadMatchups({ preserveCharts = false } = {}) {
     // driver, the same way the particle canvas reacts to this same
     // variable every frame. Harmless to set on every theme, even ones with
     // no CSS hooked up to it yet.
-    document.documentElement.setAttribute('data-seasonal-theme', currentSeasonalTheme);
+    if (festCinePlaying && festCineFinish) festCineFinish(); // week/league switched mid-cinematic
+    if (festCineDue(currentSeasonalTheme, year, week, leagueId)) {
+      // Hold the holiday look back; the meteor's impact reveals it.
+      document.documentElement.classList.add('fest-pre');
+      document.documentElement.removeAttribute('data-seasonal-theme');
+      playFestCine(currentSeasonalTheme);
+    } else {
+      document.documentElement.classList.remove('fest-pre');
+      document.documentElement.setAttribute('data-seasonal-theme', currentSeasonalTheme);
+    }
   }
   renderFestBanner(currentSeasonalTheme, week);
+  renderFestMeteor(currentSeasonalTheme);
 
   if (Object.keys(byMatchup).length === 0) {
     updateChampionshipStage(false, {});
