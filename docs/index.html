@@ -326,6 +326,7 @@
      following the screen. FIXED TO THE VIEWPORT: the star canvas (which
      drifts very slightly on scroll) and the bottom haze. All of it sits
      at z-index 0 behind #wrap, never over the leader gradient or cards. ---- */
+  #cdMeteorCanvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; }
   #skyCanvas {
     position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none;
     opacity: 0; transition: opacity 1.2s ease;
@@ -1696,6 +1697,7 @@
 <div id="sunGlow" class="sky-layer"></div>
 <div id="stadiumHaze" class="sky-layer"></div>
 <canvas id="skyCanvas"></canvas>
+<canvas id="cdMeteorCanvas"></canvas>
 <div id="moon"><canvas id="moonCanvas" width="64" height="64"></canvas></div>
 <div id="comet"><span id="cometTail"><i class="ct-glow"></i><i class="ct-core"></i><i class="ct-w ct-w1"></i><i class="ct-w ct-w2"></i><i class="ct-w ct-w3"></i><i class="ct-w ct-w4"></i></span><span id="cometOrb"></span><span id="cometSymbol"></span></div>
 <div id="champSpotlights">
@@ -1809,6 +1811,6 @@
 
 <script src="config.js"></script>
 <button id="festMeteor" type="button" hidden aria-label="Replay the meteor strike" title="Replay the meteor strike"><span class="fm-crater"></span><span class="fm-glow"></span><i></i><i></i><i></i><span class="fm-rock"></span><span class="fm-label">Replay the impact</span></button>
-<script src="app.js?v=42"></script>
+<script src="app.js?v=43"></script>
 </body>
 </html>
