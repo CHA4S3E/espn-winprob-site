@@ -565,9 +565,12 @@ async function pollLeague(league) {
   // pollLeagueWeek() re-fetches NFL game status itself below (a cheap
   // public scoreboard call) since plottingOpen has to already be known
   // before calling it.
-  const { weekStart, anyLive, nextKickoff } = await fetchNflGameStatusMap({ year, week });
+  const { weekStart, anyLive, nextKickoff, recentlyEnded } = await fetchNflGameStatusMap({ year, week });
 
-  const gameActive = anyLive || (nextKickoff && nextKickoff.getTime() - Date.now() <= PRE_KICKOFF_LEAD_MS);
+  // recentlyEnded: a game just finished, so keep polling every run until the
+  // final scores (all_starters_done) are written -- otherwise the last write
+  // would wait for the 15-minute catch-up run and the recap would lag.
+  const gameActive = anyLive || recentlyEnded || (nextKickoff && nextKickoff.getTime() - Date.now() <= PRE_KICKOFF_LEAD_MS);
   if (process.env.FORCE_FULL_POLL !== '1' && !gameActive && !CATCH_UP_RUN) {
     console.log(`[${league.slug}] idle -- no game live or starting within 45 min; skipping this run (catch-up run every 15 min)`);
     return;
