@@ -1533,8 +1533,22 @@ const COMET_LEAD_MS = 2 * 86400000;
 const COMET_SPAN_MS = 5.7 * 86400000; // reaches 1 at about Sunday's 1pm games
 const COMET_SYMBOL_FROM = 0.45; // emoji starts fading in (about Friday morning)
 const COMET_SYMBOL_FULL = 0.8;  // emoji fully shown (about Saturday night)
+// Impact: from Sunday evening (when the comet has fully arrived) through the
+// end of Monday night it swells toward the page -- huge, bright, about to hit.
+// 0 = normal arrived comet, 1 = full impact; it then holds until the next week takes over.
+const COMET_IMPACT_FROM_MS = 3.7 * 86400000; // after the week's first kickoff (= progress 1)
+const COMET_IMPACT_SPAN_MS = 0.5 * 86400000; // ~Sunday 8pm -> Monday night's last whistle
 let debugCometProgress = localStorage.getItem('winProbDebugCometProgress') || 'auto'; // set on preferences.html
+async function cometImpact(year, week) {
+  if (/^i\d+$/.test(debugCometProgress)) return Math.min(Math.max(Number(debugCometProgress.slice(1)) / 100, 0), 1);
+  if (debugCometProgress !== 'auto' || debugComet !== 'none') return 0;
+  const start = await fetchWeekStart(year, week);
+  if (!start) return 0;
+  const i = (Date.now() - (start.getTime() + COMET_IMPACT_FROM_MS)) / COMET_IMPACT_SPAN_MS;
+  return Math.min(Math.max(i, 0), 1);
+}
 async function cometProgress(year, week) {
+  if (/^i\d+$/.test(debugCometProgress)) return 1;
   if (debugCometProgress !== 'auto') {
     const forced = Number(debugCometProgress);
     if (Number.isFinite(forced)) return Math.min(Math.max(forced / 100, 0), 1);
@@ -1555,7 +1569,7 @@ async function cometForWeek(year, week) {
     else base = SKY_COMETS[await realSeasonalTheme(year, week + 1)] || null; // real schedule, never debug-overridden
   }
   if (!base) return null;
-  return { ...base, progress: await cometProgress(year, week) };
+  return { ...base, progress: await cometProgress(year, week), impact: await cometImpact(year, week) };
 }
 function renderComet(comet) {
   const el = document.getElementById('comet');
@@ -1566,6 +1580,9 @@ function renderComet(comet) {
     el.style.setProperty('--comet-color', comet.color);
     el.style.setProperty('--comet-p', p.toFixed(3));
     el.style.setProperty('--comet-sym', sym.toFixed(3));
+    const imp = comet.impact || 0;
+    el.style.setProperty('--comet-i', imp.toFixed(3));
+    el.classList.toggle('impact', imp > 0.55);
     const symEl = document.getElementById('cometSymbol');
     if (symEl) symEl.textContent = comet.emoji;
     // Don't give the event away in the tooltip until the emoji is visible.
