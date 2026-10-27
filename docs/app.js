@@ -1762,33 +1762,51 @@ function playFestCine(theme, { replay = false } = {}) {
   if (festCinePlaying && festCineFinish) festCineFinish();
   const id = ++festCineRun;
   festCinePlaying = true;
-  const root = document.documentElement;
+  const root = document.documentElement, body = document.body;
   if (replay) { root.classList.add('fest-pre'); root.removeAttribute('data-seasonal-theme'); }
   const canvas = ov.querySelector('canvas'), ctx = canvas.getContext('2d');
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const W = window.innerWidth, H = window.innerHeight;
   canvas.width = W * dpr; canvas.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const flash = ov.querySelector('.flash'), titleEl = ov.querySelector('.fc-title');
+  const flash = ov.querySelector('.flash'), titleEl = ov.querySelector('.fc-title'), dim = ov.querySelector('.fc-dim');
   const b = FEST_BANNERS[theme] || { emoji: '', title: '', sub: '' };
   titleEl.querySelector('.fc-emoji').textContent = b.emoji;
   titleEl.querySelector('.fc-text').textContent = b.title;
   titleEl.querySelector('.fc-sub').textContent = b.sub;
   titleEl.classList.remove('show'); flash.classList.remove('go');
+  dim.style.display = ''; dim.style.setProperty('--hr', '-300px');
   ov.classList.add('on'); ov.classList.remove('out');
   requestAnimationFrame(() => ov.classList.add('dark'));
+  body.classList.add('fest-rumble'); body.style.setProperty('--rb', '0');
 
-  const S = { x: -0.08 * W, y: -0.1 * H }, P = { x: W * 0.5, y: H * 0.62 };
-  const T_FLY = 2200, T_IMPACT = 2300, T_END = 5300;
-  const sparks = [], debris = [], rings = [];
-  let impacted = false, last = performance.now(), t0 = last, titleOn = false, ended = false;
-  const ease = (t) => Math.pow(t, 2.3);
-  const posAt = (t) => { const e = ease(Math.min(Math.max(t, 0), 1)); return { x: S.x + (P.x - S.x) * e, y: S.y + (P.y - S.y) * e }; };
+  // Timeline (simulated ms): prelude -> flight -> impact (slow motion around it) -> shockwave wipe -> title.
+  const FLY0 = 1200, T_FLY = 2000, T_IMP = FLY0 + T_FLY;
+  const S = { x: -0.06 * W, y: -0.08 * H }, P = { x: W * 0.5, y: H * 0.6 };
+  const fl = Math.hypot(P.x - S.x, P.y - S.y), dir = { x: (P.x - S.x) / fl, y: (P.y - S.y) / fl }, perp = { x: -dir.y, y: dir.x };
+  const maxR = Math.hypot(Math.max(P.x, W - P.x), Math.max(P.y, H - P.y)) + 120;
+  const rnd = Math.random, clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const stars = Array.from({ length: 140 }, () => ({ x: rnd() * W, y: rnd() * H, r: 0.4 + rnd() * 1.5, ph: rnd() * 6.28, sp: 0.8 + rnd() * 2.2 }));
+  const coreShape = Array.from({ length: 12 }, (_, k) => ({ a: (k / 12) * Math.PI * 2, k: 0.76 + rnd() * 0.32 }));
+  const plasma = [], smoke = [], sparks = [], shards = [], dust = [], rings = [], cracks = [];
+  let st = 0, last = performance.now(), impacted = false, realImpact = 0, titleOn = false, ended = false, shownTheme = false;
+  const posAt = (p) => { const q = Math.pow(clamp(p, 0, 1), 2.1); return { x: S.x + (P.x - S.x) * q, y: S.y + (P.y - S.y) * q, q }; };
+
+  function makeCrack(x, y, ang, len, w, d0) {
+    const pts = [{ x, y, d: d0 }]; let cx = x, cy = y, a = ang, d = d0;
+    while (d - d0 < len) {
+      const step = 26 + rnd() * 40; a += (rnd() - 0.5) * 0.7;
+      cx += Math.cos(a) * step; cy += Math.sin(a) * step; d += step; pts.push({ x: cx, y: cy, d });
+      if (w > 1 && rnd() < 0.18) makeCrack(cx, cy, a + (rnd() < 0.5 ? -1 : 1) * (0.5 + rnd() * 0.6), len * 0.4 * rnd() + 60, w * 0.6, d);
+    }
+    cracks.push({ pts, w });
+  }
 
   function finish() {
     if (ended) return; ended = true;
-    if (root.classList.contains('fest-pre')) festApplyTheme(theme, impacted);
+    if (root.classList.contains('fest-pre')) festApplyTheme(theme, shownTheme);
+    body.classList.remove('fest-rumble'); body.style.removeProperty('--rb');
     ov.classList.add('out'); ov.classList.remove('dark');
-    setTimeout(() => { if (id === festCineRun) { ov.classList.remove('on', 'out'); ctx.clearRect(0, 0, W, H); } }, 700);
+    setTimeout(() => { if (id === festCineRun) { ov.classList.remove('on', 'out'); ctx.clearRect(0, 0, W, H); dim.style.display = ''; } }, 700);
     festCinePlaying = false; festCineFinish = null;
     document.removeEventListener('keydown', onKey);
   }
@@ -1797,55 +1815,148 @@ function playFestCine(theme, { replay = false } = {}) {
   document.addEventListener('keydown', onKey);
   ov.querySelector('.fc-skip').onclick = finish;
 
+  function glowDot(x, y, rad, c0, c1) { const g = ctx.createRadialGradient(x, y, 0, x, y, rad); g.addColorStop(0, c0); g.addColorStop(1, c1); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill(); }
+
+  function impact(now) {
+    impacted = true; realImpact = now;
+    body.classList.remove('fest-rumble');
+    flash.classList.remove('go'); void flash.offsetWidth; flash.classList.add('go');
+    body.classList.add('fest-shake'); setTimeout(() => body.classList.remove('fest-shake'), 1500);
+    for (let k = 0; k < 3; k++) rings.push({ v: 0.9 + k * 0.28, a: 0.95 - k * 0.2, w: 7 - k * 2, delay: k * 140 });
+    for (let k = 0; k < 15; k++) makeCrack(P.x, P.y, (k / 15) * Math.PI * 2 + (rnd() - 0.5) * 0.35, Math.max(W, H) * (0.45 + rnd() * 0.5), 3, 0);
+    for (let k = 0; k < 46; k++) { const ang = rnd() * Math.PI * 2, sp = 0.05 + rnd() * 0.2; dust.push({ x: P.x + (rnd() - 0.5) * 80, y: P.y + (rnd() - 0.5) * 20, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp * 0.5 - 0.06 - rnd() * 0.05, r: 30 + rnd() * 60, life: 1, g: rnd() * 0.4 }); }
+    for (let k = 0; k < 34; k++) { const ang = -Math.PI / 2 + (rnd() - 0.5) * 2.6, sp = 0.35 + rnd() * 0.95; shards.push({ x: P.x, y: P.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 0.3, rot: rnd() * 6, vr: (rnd() - 0.5) * 0.02, s: 4 + rnd() * 11, life: 1 }); }
+    for (let k = 0; k < 110; k++) { const ang = rnd() * Math.PI * 2, sp = 0.15 + rnd() * 0.9; sparks.push({ x: P.x, y: P.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 0.35, life: 1, r: 1 + rnd() * 3, hot: rnd() < 0.35 }); }
+    // The holiday look is applied here, hidden behind the dark layer; the wipe reveals it.
+    festApplyTheme(theme, true); shownTheme = true;
+  }
+
   function frame(now) {
     if (id !== festCineRun || ended) return;
     const dt = Math.max(0, Math.min(50, now - last)); last = now;
-    const t = Math.max(0, now - t0);
+    let scale = 1;
+    if (!impacted) { const p = (st - FLY0) / T_FLY; if (p > 0.86) scale = 1 - 0.82 * clamp((p - 0.86) / 0.1, 0, 1); }
+    else scale = clamp(0.18 + (now - realImpact) / 1700 * 0.82, 0.18, 1);
+    const sdt = dt * scale; st += sdt;
     ctx.clearRect(0, 0, W, H);
-    if (t < T_IMPACT) {
-      const p = Math.min(t / T_FLY, 1), pos = posAt(p);
-      const r = 5 + 52 * Math.pow(p, 2.2);
-      // tail: samples back along the flight path
-      for (let k = 0; k < 90; k++) {
-        const q = posAt(p - k * 0.0046 * (0.6 + p));
-        const f = 1 - k / 90;
-        ctx.beginPath(); ctx.arc(q.x, q.y, Math.max(1.5, r * (0.2 + 0.8 * f * f)), 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${m.rgb},${0.16 * f * f})`; ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+    const since = st - T_IMP;
+
+    if (!impacted) body.style.setProperty('--rb', (clamp(st / T_IMP, 0, 1) * 2.6).toFixed(2));
+
+    // stars + a growing distant glow top-left: the page "notices" something coming
+    const starA = clamp(st / 900, 0, 1) * (impacted ? clamp(1 - since / 500, 0, 1) : 1);
+    if (starA > 0) for (const s of stars) { ctx.globalAlpha = starA * (0.45 + 0.55 * Math.sin(st / 1000 * s.sp + s.ph) ** 2); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); }
+    ctx.globalAlpha = 1;
+    if (!impacted) { const gp = clamp(st / T_IMP, 0, 1); glowDot(0, 0, 60 + 340 * gp, `rgba(${m.rgb},${0.18 + 0.4 * gp})`, `rgba(${m.rgb},0)`); }
+
+    if (!impacted && st >= FLY0) {
+      const p = clamp((st - FLY0) / T_FLY, 0, 1), pos = posAt(p), r = 7 + 58 * pos.q;
+      // plasma + smoke tail, emitted at the head, drifting back and spreading
+      const n = Math.max(1, Math.round(sdt / 16 * (4 + 8 * pos.q)));
+      for (let k = 0; k < n; k++) {
+        const sp = 0.05 + rnd() * 0.18, sideways = (rnd() - 0.5) * 0.12 * (0.5 + pos.q * 2);
+        plasma.push({ x: pos.x - dir.x * r * 0.2, y: pos.y - dir.y * r * 0.2, vx: -dir.x * sp + perp.x * sideways, vy: -dir.y * sp + perp.y * sideways, life: 1, max: 520 + rnd() * 520, s: r * (0.35 + rnd() * 0.6) });
+        if (rnd() < 0.5) smoke.push({ x: pos.x - dir.x * r, y: pos.y - dir.y * r, vx: -dir.x * 0.03 + (rnd() - 0.5) * 0.04, vy: -dir.y * 0.03 + (rnd() - 0.5) * 0.04 - 0.01, life: 1, max: 1100 + rnd() * 700, s: r * (0.5 + rnd() * 0.7) });
+        if (rnd() < 0.4) sparks.push({ x: pos.x, y: pos.y, vx: -dir.x * (0.08 + rnd() * 0.3) + (rnd() - 0.5) * 0.25, vy: -dir.y * (0.08 + rnd() * 0.3) + (rnd() - 0.5) * 0.25 + 0.05, life: 1, r: 0.8 + rnd() * 2.2, hot: rnd() < 0.5 });
       }
-      for (let k = 0; k < 2; k++) sparks.push({ x: pos.x, y: pos.y, vx: (Math.random() - 0.5) * 90 - 40, vy: (Math.random() - 0.3) * 90 - 20, life: 1, r: 1 + Math.random() * 2.5 });
-      const g = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, r * 2.6);
-      g.addColorStop(0, 'rgba(255,255,255,0.98)'); g.addColorStop(0.25, `rgba(${m.rgb},0.95)`); g.addColorStop(1, `rgba(${m.rgb},0)`);
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(pos.x, pos.y, r * 2.6, 0, Math.PI * 2); ctx.fill();
+      // draw smoke (dark, soft), then plasma (additive)
+      for (const q of smoke) { q.x += q.vx * sdt; q.y += q.vy * sdt; q.life -= sdt / q.max; }
+      for (let k = smoke.length - 1; k >= 0; k--) if (smoke[k].life <= 0) smoke.splice(k, 1);
+      for (const q of smoke) glowDot(q.x, q.y, q.s * (1.2 - q.life * 0.5), `rgba(30,22,26,${0.22 * q.life})`, 'rgba(30,22,26,0)');
+      ctx.globalCompositeOperation = 'lighter';
+      for (const q of plasma) { q.x += q.vx * sdt; q.y += q.vy * sdt; q.life -= sdt / q.max; }
+      for (let k = plasma.length - 1; k >= 0; k--) if (plasma[k].life <= 0) plasma.splice(k, 1);
+      for (const q of plasma) {
+        const l = q.life, rad = q.s * (0.55 + (1 - l) * 0.9);
+        const c0 = l > 0.62 ? `rgba(255,244,214,${0.5 * l})` : `rgba(${m.rgb},${0.55 * l})`;
+        glowDot(q.x, q.y, rad, c0, `rgba(${m.rgb},0)`);
+      }
+      // holiday-colored aura + white-hot leading edge
+      glowDot(pos.x, pos.y, r * 5, `rgba(${m.rgb},0.2)`, `rgba(${m.rgb},0)`);
+      glowDot(pos.x, pos.y, r * 2.4, `rgba(${m.rgb},0.55)`, `rgba(${m.rgb},0)`);
+      ctx.globalCompositeOperation = 'source-over';
+      // rocky core: irregular, tumbling, dark, lit by its own fire
+      ctx.save(); ctx.translate(pos.x, pos.y); ctx.rotate(st * 0.0022);
+      ctx.beginPath();
+      coreShape.forEach((c, k) => { const x = Math.cos(c.a) * r * c.k, y = Math.sin(c.a) * r * c.k; k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.closePath();
+      const cg = ctx.createRadialGradient(r * 0.3, r * 0.3, r * 0.1, 0, 0, r * 1.05); cg.addColorStop(0, '#4a4350'); cg.addColorStop(0.6, '#1d1a22'); cg.addColorStop(1, '#09080b');
+      ctx.fillStyle = cg; ctx.fill();
+      ctx.lineWidth = Math.max(2, r * 0.09); ctx.strokeStyle = `rgba(${m.rgb},0.9)`; ctx.shadowColor = m.color; ctx.shadowBlur = r * 0.8; ctx.stroke();
+      ctx.restore();
+      ctx.globalCompositeOperation = 'lighter';
+      glowDot(pos.x + dir.x * r * 0.55, pos.y + dir.y * r * 0.55, r * 1.05, 'rgba(255,255,255,0.9)', 'rgba(255,255,255,0)');
+      ctx.globalCompositeOperation = 'source-over';
+      // the holiday's symbol blazes out of the rock as it nears
+      const symA = clamp((p - 0.4) / 0.35, 0, 1);
+      if (symA > 0) {
+        ctx.save(); ctx.globalAlpha = symA; ctx.shadowColor = m.color; ctx.shadowBlur = r * 0.9;
+        ctx.font = `${Math.round(r * 1.5)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(b.emoji, pos.x, pos.y + r * 0.06); ctx.restore();
+      }
     } else if (!impacted) {
-      impacted = true;
-      flash.classList.remove('go'); void flash.offsetWidth; flash.classList.add('go');
-      document.body.classList.add('fest-shake'); setTimeout(() => document.body.classList.remove('fest-shake'), 700);
-      for (let k = 0; k < 3; k++) rings.push({ r: 0, v: 520 + k * 190, a: 0.9 - k * 0.15, w: 6 - k * 1.5, delay: k * 120 });
-      for (let k = 0; k < 90; k++) { const ang = Math.random() * Math.PI * 2, sp = 140 + Math.random() * 520; debris.push({ x: P.x, y: P.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 220, life: 1, r: 1.5 + Math.random() * 4, c: Math.random() < 0.3 ? '255,255,255' : m.rgb }); }
-      setTimeout(() => { if (id === festCineRun && !ended) festApplyTheme(theme, false); }, 90); // under the flash
+      // prelude: a few early streaks in the dark
     }
-    // sparks / debris
-    for (const s of sparks) { s.x += s.vx * dt / 1000; s.y += s.vy * dt / 1000; s.life -= dt / 600; }
-    for (let i = sparks.length - 1; i >= 0; i--) if (sparks[i].life <= 0) sparks.splice(i, 1);
-    for (const s of sparks) { ctx.fillStyle = `rgba(${m.rgb},${Math.max(0, s.life)})`; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); }
-    for (const d of debris) { d.vy += 900 * dt / 1000; d.x += d.vx * dt / 1000; d.y += d.vy * dt / 1000; d.life -= dt / 1400; }
-    for (let i = debris.length - 1; i >= 0; i--) if (debris[i].life <= 0) debris.splice(i, 1);
-    for (const d of debris) { ctx.fillStyle = `rgba(${d.c},${Math.max(0, d.life)})`; ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill(); }
-    // shockwave rings + lingering crater glow
+
+    if (!impacted && st >= T_IMP) impact(now);
+
     if (impacted) {
-      const since = t - T_IMPACT;
+      // cracks spreading across the page
+      const L = since * 1.15, fade = 1 - clamp((since - 2000) / 1100, 0, 1);
+      if (fade > 0) {
+        ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.globalAlpha = fade;
+        for (const pass of [0, 1]) {
+          ctx.strokeStyle = pass ? 'rgba(255,255,255,0.95)' : `rgba(${m.rgb},0.9)`; ctx.shadowColor = pass ? 'transparent' : m.color; ctx.shadowBlur = pass ? 0 : 16;
+          for (const c of cracks) {
+            ctx.lineWidth = pass ? Math.max(0.8, c.w * 0.4) : c.w * 1.6;
+            ctx.beginPath(); let started = false;
+            for (const pt of c.pts) { if (pt.d > L) { break; } started ? ctx.lineTo(pt.x, pt.y) : (ctx.moveTo(pt.x, pt.y), started = true); }
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+      // dust cloud
+      for (const q of dust) { q.x += q.vx * sdt; q.y += q.vy * sdt; q.vx *= 0.995; q.r += sdt * 0.03; q.life -= sdt / 2600; }
+      for (const q of dust) if (q.life > 0) glowDot(q.x, q.y, q.r, `rgba(${70 + q.g * 40 | 0},${58 + q.g * 25 | 0},${54},${0.34 * q.life})`, 'rgba(60,50,48,0)');
+      // shockwave rings
       for (const rg of rings) {
-        if (since < rg.delay) continue;
-        const rr = rg.v * (since - rg.delay) / 1000;
-        const al = Math.max(0, rg.a - (since - rg.delay) / 1500);
+        const s = since - rg.delay / 1; if (s < 0) continue;
+        const rr = rg.v * s, al = clamp(rg.a - s / 1900, 0, 1);
         if (al > 0) { ctx.strokeStyle = `rgba(${m.rgb},${al})`; ctx.lineWidth = rg.w; ctx.beginPath(); ctx.arc(P.x, P.y, rr, 0, Math.PI * 2); ctx.stroke(); }
       }
-      const ga = Math.max(0, 0.7 - since / 2200);
-      if (ga > 0) { const g = ctx.createRadialGradient(P.x, P.y, 0, P.x, P.y, 220); g.addColorStop(0, `rgba(${m.rgb},${ga})`); g.addColorStop(1, `rgba(${m.rgb},0)`); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(P.x, P.y, 220, 0, Math.PI * 2); ctx.fill(); }
-      if (!titleOn && since > 350) { titleOn = true; titleEl.classList.add('show'); }
-      if (titleOn && since > 2300) titleEl.classList.remove('show');
+      // crater glow
+      const ga = clamp(0.75 - since / 2400, 0, 1);
+      if (ga > 0) glowDot(P.x, P.y, 260, `rgba(${m.rgb},${ga})`, `rgba(${m.rgb},0)`);
+      // rock shards + sparks
+      for (const d of shards) { d.vy += 0.0016 * sdt; d.x += d.vx * sdt; d.y += d.vy * sdt; d.rot += d.vr * sdt; d.life -= sdt / 1800; }
+      for (const d of shards) if (d.life > 0) { ctx.save(); ctx.translate(d.x, d.y); ctx.rotate(d.rot); ctx.globalAlpha = clamp(d.life * 1.4, 0, 1); ctx.fillStyle = '#17141b'; ctx.strokeStyle = `rgba(${m.rgb},0.8)`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(-d.s, d.s * 0.6); ctx.lineTo(d.s * 0.2, -d.s); ctx.lineTo(d.s, d.s * 0.7); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
+      ctx.globalAlpha = 1;
     }
-    if (t >= T_END) { finish(); return; }
+    // sparks (before and after impact)
+    for (const s of sparks) { s.vy += 0.0009 * sdt; s.x += s.vx * sdt; s.y += s.vy * sdt; s.life -= sdt / (impacted ? 1500 : 650); }
+    for (let k = sparks.length - 1; k >= 0; k--) if (sparks[k].life <= 0) sparks.splice(k, 1);
+    ctx.globalCompositeOperation = 'lighter';
+    for (const s of sparks) { ctx.fillStyle = s.hot ? `rgba(255,245,220,${s.life})` : `rgba(${m.rgb},${s.life})`; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); }
+    ctx.globalCompositeOperation = 'source-over';
+
+    if (impacted) {
+      // shockwave WIPE: the dark layer opens outward from the impact, revealing the holiday page
+      const e = clamp((since - 250) / 1900, 0, 1), eased = 1 - Math.pow(1 - e, 3), hr = eased * maxR;
+      dim.style.setProperty('--hx', P.x + 'px'); dim.style.setProperty('--hy', P.y + 'px'); dim.style.setProperty('--hr', hr.toFixed(1) + 'px');
+      if (e > 0 && e < 1) { // glowing wavefront
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = `rgba(${m.rgb},${0.55 * (1 - e * 0.6)})`; ctx.lineWidth = 16; ctx.shadowColor = m.color; ctx.shadowBlur = 40;
+        ctx.beginPath(); ctx.arc(P.x, P.y, hr + 36, 0, Math.PI * 2); ctx.stroke();
+        ctx.strokeStyle = `rgba(255,255,255,${0.5 * (1 - e)})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(P.x, P.y, hr + 34, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+      if (e >= 1) dim.style.display = 'none';
+      if (!titleOn && since > 1000) { titleOn = true; titleEl.classList.add('show'); }
+      if (titleOn && since > 3000) titleEl.classList.remove('show');
+    }
+    if (impacted && since >= 3700) { finish(); return; }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
