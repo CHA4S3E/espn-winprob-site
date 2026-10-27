@@ -1270,6 +1270,71 @@ function kcTick(t) {
 }
 requestAnimationFrame(kcTick);
 
+// ---- Countdown meteors: small holiday-colored fireballs streaking across the
+// whole screen while the kickoff countdown is showing. One every ~8-16s more
+// than a day out; inside the final 24h the gap shrinks steadily (and keeps
+// shrinking) until kickoff, ending in a proper shower.
+const cmCanvas = document.getElementById('cdMeteorCanvas');
+const cmCtx = cmCanvas ? cmCanvas.getContext('2d') : null;
+let cmList = [];
+let cmNext = 0;
+const CM_COLORS = { halloween: '255,154,60', thanksgiving: '224,136,58', christmas: '79,212,147', 'coldsnap-pre': '150,205,255', 'coldsnap-post': '150,205,255', none: '255,170,90' };
+function resizeCmCanvas() { if (cmCanvas) { cmCanvas.width = window.innerWidth; cmCanvas.height = window.innerHeight; } }
+window.addEventListener('resize', resizeCmCanvas); resizeCmCanvas();
+
+function cmInterval(remainingMs) {
+  const H24 = 24 * 3600 * 1000;
+  const jitter = 0.6 + Math.random() * 0.8;
+  if (remainingMs > H24) return (8000 + Math.random() * 8000);
+  const p = 1 - Math.max(0, remainingMs) / H24;          // 0 at 24h out -> 1 at kickoff
+  return (11000 * Math.pow(1 - p, 1.8) + 700) * jitter;   // ~11s -> ~0.7s
+}
+function cmSpawn(rgb, W, H) {
+  const dirX = Math.random() < 0.7 ? -1 : 1;              // mostly down-left, like the shooting stars
+  const sp = 7 + Math.random() * 7, ang = 0.45 + Math.random() * 0.45;
+  cmList.push({ x: dirX < 0 ? W * (0.25 + Math.random() * 0.85) : W * (Math.random() * 0.75), y: -20 - Math.random() * H * 0.25,
+    vx: dirX * Math.cos(ang) * sp, vy: Math.sin(ang) * sp, r: 1.8 + Math.random() * 2.6, tail: 70 + Math.random() * 110, rgb, sparks: [] });
+}
+function cmTick(t) {
+  if (cmCtx) {
+    cmCtx.clearRect(0, 0, cmCanvas.width, cmCanvas.height);
+    const on = kickoffCountdownTarget && !prefersReducedMotion() && !document.hidden;
+    if (on) {
+      const now = performance.now(), remaining = kickoffCountdownTarget.getTime() - Date.now();
+      if (remaining > 0 && now >= cmNext) {
+        const rgb = CM_COLORS[kcHintTheme] || CM_COLORS.none;
+        if (cmList.length < 16) cmSpawn(rgb, cmCanvas.width, cmCanvas.height);
+        if (remaining < 3600 * 1000 && Math.random() < 0.35 && cmList.length < 16) cmSpawn(rgb, cmCanvas.width, cmCanvas.height); // last hour: occasional doubles
+        cmNext = now + cmInterval(remaining);
+      }
+    } else if (!kickoffCountdownTarget) cmList.length = 0;
+    cmCtx.globalCompositeOperation = 'lighter';
+    for (let i = cmList.length - 1; i >= 0; i--) {
+      const m = cmList[i];
+      m.x += m.vx; m.y += m.vy;
+      if (Math.random() < 0.5) m.sparks.push({ x: m.x, y: m.y, vx: -m.vx * 0.1 + (Math.random() - 0.5) * 1.2, vy: -m.vy * 0.1 + (Math.random() - 0.5) * 1.2 + 0.2, life: 1 });
+      const len = Math.hypot(m.vx, m.vy), ux = m.vx / len, uy = m.vy / len, tx = m.x - ux * m.tail, ty = m.y - uy * m.tail;
+      const g = cmCtx.createLinearGradient(m.x, m.y, tx, ty);
+      g.addColorStop(0, `rgba(255,248,230,0.95)`); g.addColorStop(0.15, `rgba(${m.rgb},0.7)`); g.addColorStop(1, `rgba(${m.rgb},0)`);
+      cmCtx.strokeStyle = g; cmCtx.lineCap = 'round';
+      cmCtx.lineWidth = m.r * 2.2; cmCtx.globalAlpha = 0.55; cmCtx.beginPath(); cmCtx.moveTo(m.x, m.y); cmCtx.lineTo(tx, ty); cmCtx.stroke();
+      cmCtx.lineWidth = m.r * 0.9; cmCtx.globalAlpha = 1; cmCtx.beginPath(); cmCtx.moveTo(m.x, m.y); cmCtx.lineTo(tx, ty); cmCtx.stroke();
+      const hg = cmCtx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r * 5);
+      hg.addColorStop(0, 'rgba(255,255,255,0.95)'); hg.addColorStop(0.3, `rgba(${m.rgb},0.6)`); hg.addColorStop(1, `rgba(${m.rgb},0)`);
+      cmCtx.fillStyle = hg; cmCtx.beginPath(); cmCtx.arc(m.x, m.y, m.r * 5, 0, Math.PI * 2); cmCtx.fill();
+      for (let k = m.sparks.length - 1; k >= 0; k--) {
+        const s = m.sparks[k]; s.x += s.vx; s.y += s.vy; s.life -= 0.04;
+        if (s.life <= 0) { m.sparks.splice(k, 1); continue; }
+        cmCtx.fillStyle = `rgba(${m.rgb},${s.life * 0.8})`; cmCtx.beginPath(); cmCtx.arc(s.x, s.y, 0.9, 0, Math.PI * 2); cmCtx.fill();
+      }
+      if (m.x < -tx - 300 && m.vx < 0 || m.y > cmCanvas.height + m.tail || m.x > cmCanvas.width + m.tail + 100 || m.x < -m.tail - 100) cmList.splice(i, 1);
+    }
+    cmCtx.globalCompositeOperation = 'source-over'; cmCtx.globalAlpha = 1;
+  }
+  requestAnimationFrame(cmTick);
+}
+requestAnimationFrame(cmTick);
+
 // ============================== NIGHT-GAME SKY ==============================
 // A night sky that only exists during PRIMETIME games -- Thursday / Sunday /
 // Monday night, whenever an in-progress game kicked off at 6pm Eastern or
