@@ -482,12 +482,12 @@
   html.fest-reveal .espn-card[class*="seasonal-"], html.fest-reveal .needle-card[class*="seasonal-"] { animation: festCardGlow 1.5s ease-out; }
   #festCine { position: fixed; inset: 0; z-index: 10000; display: none; }
   #festCine.on { display: block; }
-  #festCine .fc-dim { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 62%, rgba(14,16,30,.5), rgba(3,4,10,.93)); opacity: 0; transition: opacity .55s ease; }
+  #festCine .fc-dim { position: absolute; inset: 0; background: radial-gradient(ellipse at 20% 10%, rgba(30,22,40,.9), rgba(3,4,10,.96) 70%); opacity: 0; transition: opacity .9s ease; --hx: 50%; --hy: 60%; --hr: -300px; -webkit-mask-image: radial-gradient(circle at var(--hx) var(--hy), transparent var(--hr), #000 calc(var(--hr) + 90px)); mask-image: radial-gradient(circle at var(--hx) var(--hy), transparent var(--hr), #000 calc(var(--hr) + 90px)); }
   #festCine.dark .fc-dim { opacity: 1; }
   #festCine.out { opacity: 0; transition: opacity .65s ease; }
   #festCine canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   #festCine .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
-  #festCine .flash.go { animation: festFlash 1s ease-out; }
+  #festCine .flash.go { animation: festFlash 1.2s ease-out; }
   @keyframes festFlash { 0% { opacity: 0; } 8% { opacity: 1; } 100% { opacity: 0; } }
   #festCine .fc-title { position: absolute; left: 0; right: 0; top: 30%; text-align: center; color: #fff; opacity: 0; transform: scale(.8); transition: opacity .6s ease, transform .6s cubic-bezier(.2,1.2,.4,1); pointer-events: none; text-shadow: 0 0 30px rgba(255,255,255,.35), 0 4px 24px rgba(0,0,0,.6); }
   #festCine .fc-title.show { opacity: 1; transform: none; }
@@ -495,8 +495,10 @@
   #festCine .fc-text { font-family: var(--fest-font, var(--font-display)); font-size: 44px; line-height: 1.05; display: block; }
   #festCine .fc-sub { font-size: 14px; opacity: .8; margin-top: 8px; display: block; letter-spacing: .04em; }
   #festCine .fc-skip { position: absolute; right: 16px; top: 16px; background: rgba(0,0,0,.5); color: #fff; border: 1px solid rgba(255,255,255,.3); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; font-family: inherit; }
-  body.fest-shake #wrap { animation: festShake .6s ease-out; }
-  @keyframes festShake { 0%,100% { transform: none; } 12% { transform: translate(-9px, 5px); } 26% { transform: translate(8px, -6px); } 40% { transform: translate(-6px, -4px); } 56% { transform: translate(5px, 4px); } 72% { transform: translate(-3px, 2px); } }
+  body.fest-rumble #wrap { animation: festRumble .09s linear infinite; }
+  @keyframes festRumble { 0% { transform: translate(calc(var(--rb, 0) * 1px), calc(var(--rb, 0) * -.6px)); } 25% { transform: translate(calc(var(--rb, 0) * -1px), calc(var(--rb, 0) * .8px)); } 50% { transform: translate(calc(var(--rb, 0) * .7px), calc(var(--rb, 0) * .9px)); } 75% { transform: translate(calc(var(--rb, 0) * -.8px), calc(var(--rb, 0) * -.7px)); } 100% { transform: translate(calc(var(--rb, 0) * 1px), calc(var(--rb, 0) * -.6px)); } }
+  body.fest-shake #wrap { animation: festShake 1.4s ease-out; }
+  @keyframes festShake { 0%,100% { transform: none; } 6% { transform: translate(-14px, 8px); } 14% { transform: translate(12px, -9px); } 24% { transform: translate(-9px, -6px); } 36% { transform: translate(7px, 6px); } 50% { transform: translate(-4px, 3px); } 70% { transform: translate(2px, -2px); } }
   /* The meteor that stays at the bottom of the page. */
   #festMeteor { display: block; position: relative; width: 140px; height: 84px; margin: 34px auto 4px; padding: 0; border: 0; background: none; cursor: pointer; --fm-color: #ff9a3c; -webkit-tap-highlight-color: transparent; }
   #festMeteor[hidden] { display: none; }
@@ -1807,6 +1809,6 @@
 
 <script src="config.js"></script>
 <button id="festMeteor" type="button" hidden aria-label="Replay the meteor strike" title="Replay the meteor strike"><span class="fm-crater"></span><span class="fm-glow"></span><i></i><i></i><i></i><span class="fm-rock"></span><span class="fm-label">Replay the impact</span></button>
-<script src="app.js?v=40"></script>
+<script src="app.js?v=41"></script>
 </body>
 </html>
