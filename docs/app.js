@@ -1234,8 +1234,8 @@ function resizeKcCanvas() {
   const box = document.getElementById('kickoffCountdown');
   if (!box) return;
   const rect = box.getBoundingClientRect();
-  kcCanvas.width = rect.width;
-  kcCanvas.height = rect.height;
+  kcCanvas.width = Math.round(rect.width);
+  kcCanvas.height = Math.round(rect.height);
 }
 window.addEventListener('resize', resizeKcCanvas);
 
@@ -1251,6 +1251,13 @@ function seedKcParticles() {
 
 function kcTick(t) {
   if (kcCtx) {
+    // Self-heal: if the box was hidden (0x0) when particles were seeded, or its
+    // size changed since, re-measure and re-seed once it has a real size.
+    const kcBox = kcCanvas.parentElement;
+    if (kcBox && !kcBox.hidden && kcHintTheme !== 'none') {
+      const w = Math.round(kcBox.clientWidth), h = Math.round(kcBox.clientHeight);
+      if (w > 0 && h > 0 && (kcCanvas.width !== w || kcCanvas.height !== h || !kcParticles.length)) seedKcParticles();
+    }
     kcCtx.clearRect(0, 0, kcCanvas.width, kcCanvas.height);
     if (kcHintTheme !== 'none' && !prefersReducedMotion()) {
       for (const p of kcParticles) {
@@ -3377,8 +3384,8 @@ async function updateKickoffCountdown(byMatchup, year, week) {
     kcHintTheme = 'none';
     kcHintFestive = false;
   }
+  tickKickoffCountdown(); // unhides the box first so it has a real size to measure
   seedKcParticles();
-  tickKickoffCountdown();
 }
 
 // Plain-language "why is this the number" sentence, built entirely from
