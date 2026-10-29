@@ -5941,7 +5941,17 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   // never on every routine 30s poll, which would otherwise teleport every
   // leaf/snowflake to a new random position and read as a stutter rather
   // than smooth continuous fall.
-  const seasonalTheme = await determineSeasonalTheme(year, week);
+  let seasonalTheme = await determineSeasonalTheme(year, week);
+  // Meteor/sleigh holidays keep the normal look (Power Picks included) until the
+  // week's first kickoff; the cinematic is what flips the page to the holiday look.
+  if (FEST_METEOR[seasonalTheme] && yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0) {
+    try {
+      if (seasonalTheme === await realSeasonalTheme(year, week)) {
+        const start = await fetchWeekStart(year, week);
+        if (start && Date.now() < start.getTime()) seasonalTheme = 'none';
+      }
+    } catch { /* schedule unavailable -> fall through to the normal behavior */ }
+  }
   if (seasonalTheme !== currentSeasonalTheme) {
     currentSeasonalTheme = seasonalTheme;
     seedSeasonalParticles();
