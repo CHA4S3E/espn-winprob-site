@@ -1681,6 +1681,11 @@ async function cometForWeek(year, week) {
     base = SKY_COMETS[debugComet] || null;
   } else if (yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0) {
     // Only meaningful on the latest week -- same convention as the kickoff countdown.
+    // The selected week is itself the holiday week, still before its first kickoff
+    // (Power Picks): the comet stays up, fully arrived and about to hit.
+    const thisTheme = await realSeasonalTheme(year, week);
+    const thisStart = SKY_COMETS[thisTheme] ? await fetchWeekStart(year, week) : null;
+    if (thisStart && Date.now() < thisStart.getTime()) return { ...SKY_COMETS[thisTheme], progress: 1, impact: 1 };
     if (week + 1 !== CHAMPIONSHIP_WEEK) base = SKY_COMETS[await realSeasonalTheme(year, week + 1)] || null; // real schedule, never debug-overridden
   }
   if (!base) return null;
