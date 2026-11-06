@@ -4586,7 +4586,7 @@ function setEspnPctInstant(el, value) {
 // most recent update that actually changed it (">= 0.05" -- smaller is rounding noise).
 // Derived from the snapshot history, so it's there on first load too, and it stays
 // until the next change replaces it (with a small pop). Live games only.
-function paintDeltaBadges(badges, delta, home, away, key, title) {
+function paintDeltaBadges(badges, delta, home, away, key, title, animate = true) {
   const color = delta >= 0 ? home.color : away.color;
   [[badges[0], delta], [badges[1], -delta]].forEach(([b, d]) => {
     b.textContent = `${d > 0 ? '\u25B2' : '\u25BC'} ${Math.abs(d).toFixed(1)}%`;
@@ -4595,7 +4595,8 @@ function paintDeltaBadges(badges, delta, home, away, key, title) {
     const fresh = b._key !== undefined && b._key !== key;
     b._key = key;
     b.classList.add('perm');
-    if (fresh) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
+    if (!animate) b.classList.remove('pop');
+    else if (fresh) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
   });
 }
 
@@ -4632,7 +4633,7 @@ function setHoverDelta(canvas, currentPoints, nearest, home, away) {
   card._deltaHover = true;
   if (j < 0) { badges.forEach((b) => { b.classList.remove('perm', 'pop'); b.textContent = ''; b._key = undefined; }); return; }
   const when = j === i ? 'at this update' : 'at the last change before this';
-  paintDeltaBadges(badges, real[j].y - real[j - 1].y, home, away, real[j].ts, `Change ${when}`);
+  paintDeltaBadges(badges, real[j].y - real[j - 1].y, home, away, real[j].ts, `Change ${when}`, false); // no pop animation while scrubbing (it stutters)
 }
 
 function endHoverDelta(canvas) {
@@ -4640,7 +4641,7 @@ function endHoverDelta(canvas) {
   if (!card) return;
   card._deltaHover = false;
   const d = card._deltaArgs;
-  if (d) setPersistentDelta(card, d.rows, d.home, d.away, d.allDone);
+  if (d) { setPersistentDelta(card, d.rows, d.home, d.away, d.allDone); card.querySelectorAll('.delta-badge').forEach((b) => b.classList.remove('pop')); }
 }
 
 // (Superseded by setPersistentDelta above; kept for reference.) Shows a small "+X.X%"/"-X.X%" badge next to a team's percentage about
