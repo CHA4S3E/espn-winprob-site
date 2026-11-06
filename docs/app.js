@@ -4903,6 +4903,27 @@ function chartFxFrame(now) {
     }
     ctx.globalAlpha = 1; ctx.restore(); ctx.restore();
 
+    // square grid texture inside the fill under the line (clear lines, like graph paper), fading
+    // with the same vertical gradient as the fill: strongest at the team's 100% edge, gone by 50%
+    const y50 = sy.getPixelForValue(50), gs = 26;
+    for (const side of ['H', 'A']) {
+      const col = side === 'H' ? st.homeColor : st.awayColor, yEdge = sy.getPixelForValue(side === 'H' ? 100 : 0);
+      ctx.save(); ctx.beginPath();
+      ctx.moveTo(X(pts[0]), y50);
+      for (let i = 0; i < pts.length; i++) ctx.lineTo(X(pts[i]), Y(pts[i]));
+      ctx.lineTo(X(pts[pts.length - 1]), y50); ctx.closePath(); ctx.clip();
+      ctx.beginPath(); if (side === 'H') ctx.rect(area.left, area.top, area.right - area.left, y50 - area.top); else ctx.rect(area.left, y50, area.right - area.left, area.bottom - y50);
+      ctx.clip();
+      const gg = ctx.createLinearGradient(0, yEdge, 0, y50);
+      gg.addColorStop(0, fxRgba(col, 0.34)); gg.addColorStop(1, fxRgba(col, 0));
+      ctx.lineWidth = 1.5; ctx.strokeStyle = gg;
+      ctx.beginPath();
+      for (let gx = area.left; gx <= area.right + 1; gx += gs) { ctx.moveTo(gx, area.top); ctx.lineTo(gx, area.bottom); }
+      for (let gy2 = y50; gy2 >= area.top - 1; gy2 -= gs) { ctx.moveTo(area.left, gy2); ctx.lineTo(area.right, gy2); }
+      for (let gy2 = y50 + gs; gy2 <= area.bottom + 1; gy2 += gs) { ctx.moveTo(area.left, gy2); ctx.lineTo(area.right, gy2); }
+      ctx.stroke(); ctx.restore();
+    }
+
     // faint steady glow along the line (flares briefly on an event)
     const f = fx.flare; fx.flare = Math.max(0, fx.flare - 0.012);
     ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
