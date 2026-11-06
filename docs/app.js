@@ -4880,6 +4880,9 @@ function chartFxFrame(now) {
     const upInfo = st.currentUpsetInfo;
     const leadColor = lead === 'H' ? st.homeColor : st.awayColor; // always the current leader's color (upset watch only speeds up the pulse)
     const strength = Math.min(1, Math.abs(last.y - 50) / 45);
+    // positions come from Chart.js's own point elements, so the grid and glow follow its load/update animation
+    const els = chart.getDatasetMeta(st.mainIdx).data;
+    const PX = (i) => (els[i] && Number.isFinite(els[i].x) ? els[i].x : sx.getPixelForValue(pts[i].x)), PY = (i) => (els[i] && Number.isFinite(els[i].y) ? els[i].y : sy.getPixelForValue(pts[i].y));
     const X = (p) => sx.getPixelForValue(p.x), Y = (p) => sy.getPixelForValue(p.y);
 
     // atmosphere: glow from the leader's edge, slow scan band, drifting dots
@@ -4909,9 +4912,9 @@ function chartFxFrame(now) {
     for (const side of ['H', 'A']) {
       const col = side === 'H' ? st.homeColor : st.awayColor, yEdge = sy.getPixelForValue(side === 'H' ? 100 : 0);
       ctx.save(); ctx.beginPath();
-      ctx.moveTo(X(pts[0]), y50);
-      for (let i = 0; i < pts.length; i++) ctx.lineTo(X(pts[i]), Y(pts[i]));
-      ctx.lineTo(X(pts[pts.length - 1]), y50); ctx.closePath(); ctx.clip();
+      ctx.moveTo(PX(0), y50);
+      for (let i = 0; i < pts.length; i++) ctx.lineTo(PX(i), PY(i));
+      ctx.lineTo(PX(pts.length - 1), y50); ctx.closePath(); ctx.clip();
       ctx.beginPath(); if (side === 'H') ctx.rect(area.left, area.top, area.right - area.left, y50 - area.top); else ctx.rect(area.left, y50, area.right - area.left, area.bottom - y50);
       ctx.clip();
       const gg = ctx.createLinearGradient(0, yEdge, 0, y50);
@@ -4933,8 +4936,8 @@ function chartFxFrame(now) {
     const strokeRun = () => { if (runColor) { ctx.strokeStyle = fxRgba(runColor, 0.085 * breathe * (1 + f * 3)); ctx.stroke(); } };
     for (let i = 1; i < pts.length; i++) {
       const col = (pts[i].y + pts[i - 1].y) / 2 >= 50 ? st.homeColor : st.awayColor;
-      if (col !== runColor) { strokeRun(); runColor = col; ctx.beginPath(); ctx.moveTo(X(pts[i - 1]), Y(pts[i - 1])); }
-      ctx.lineTo(X(pts[i]), Y(pts[i]));
+      if (col !== runColor) { strokeRun(); runColor = col; ctx.beginPath(); ctx.moveTo(PX(i - 1), PY(i - 1)); }
+      ctx.lineTo(PX(i), PY(i));
     }
     strokeRun();
     ctx.restore();
