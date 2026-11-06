@@ -153,7 +153,7 @@
   function showWeekSummary() {
     running = false;
     const items = MATCHUPS.map((m) => { const big = m.events.find((e) => e.big); const fin = m.score[NP - 1]; return `<li><b>${m.homeWon ? m.h.name : m.a.name}</b> over ${m.homeWon ? m.a.name : m.h.name}, ${fin.h.toFixed(1)}&ndash;${fin.a.toFixed(1)}<br><span style="color:var(--muted)">Moment of the game: ${big ? big.label : '-'}</span></li>`; }).join('');
-    $('wc_cFinalBox').innerHTML = `<p style="letter-spacing:.2em;text-transform:uppercase;font-size:12px">That's the week</p><h2>${WEEK} in review</h2><ul>${items}</ul><div class="btns" style="justify-content:center;margin-top:10px"><button id="againBtn">&#8635; Watch again</button><button id="doneBtn">Done</button></div>`;
+    $('wc_cFinalBox').innerHTML = `<p style="letter-spacing:.2em;text-transform:uppercase;font-size:12px">That's the week</p><h2>${WEEK} in review</h2><ul>${items}</ul><div class="btns" style="justify-content:center;margin-top:10px"><button id="wc_againBtn">&#8635; Watch again</button><button id="wc_doneBtn">Done</button></div>`;
     $('wc_cFinal').classList.add('show');
     $('wc_againBtn').onclick = () => { $('wc_cFinal').classList.remove('show'); running = true; stats.length = 0; startMatchup(0); lastT = performance.now(); requestAnimationFrame(cineFrame); };
     $('wc_doneBtn').onclick = closeCine;
