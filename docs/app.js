@@ -54,6 +54,7 @@ let showUpsetHistory = localStorage.getItem('winProbShowUpsetHistory') !== 'fals
 // Defaults OFF (only 'true' turns it on) -- opposite convention from the
 // preference above, since this adds a visual layer to every chart rather
 // than just extra info on an already-opt-in hover.
+let showChartFx = localStorage.getItem('winProbShowChartFx') !== 'false'; // set on preferences.html
 let showConfidenceBand = localStorage.getItem('winProbShowConfidenceBand') === 'true'; // set on preferences.html
 // Defaults on (only off if explicitly set to 'false') -- the NYT-style
 // "+X.X%"/"-X.X%" popup that appears next to a team's percentage ~500ms
@@ -3174,7 +3175,7 @@ const RECAP_FEST = {
   },
 };
 
-function renderRecapBanner(byMatchup, teamInfo, theme) {
+function renderRecapBanner(byMatchup, teamInfo, theme, weekLabel) {
   const fest = RECAP_FEST[theme] || null;
   const L = (key, dflt) => (fest && fest[key]) || dflt;
   const banner = document.getElementById('recapBanner');
@@ -3316,8 +3317,46 @@ function renderRecapBanner(byMatchup, teamInfo, theme) {
     <div class="recap-title">${L('title', 'Week Recap')}</div>
     <div class="recap-scores">${scoreLines}</div>
     <div class="recap-highlights">${highlights.join('')}</div>
+    <button type="button" class="recap-play" id="recapPlay">\u25b6&nbsp; Play the week</button>
   `;
   banner.hidden = false;
+  const playBtn = document.getElementById('recapPlay');
+  if (playBtn) {
+    if (!window.WeekCinema) playBtn.hidden = true;
+    playBtn.onclick = () => {
+      if (window.WeekCinema) window.WeekCinema.open(buildCinemaData(byMatchup, teamInfo), weekLabel);
+    };
+  }
+}
+
+// Turns each matchup's stored snapshots into the plain timeline the "Play the
+// week" cinematic (week-cinema.js) replays: win % over time, both teams'
+// running scores, and Upset Watch state per point (from the SAME state machine
+// the live cards use, so the replay never disagrees with them).
+function buildCinemaData(byMatchup, teamInfo) {
+  const out = [];
+  for (const rows of Object.values(byMatchup)) {
+    const homeRows = rows.filter((r) => r.is_home), awayRows = rows.filter((r) => !r.is_home);
+    if (!homeRows.length || !awayRows.length) continue;
+    const { rawPoints } = computeChartPoints(homeRows, awayRows);
+    if (rawPoints.length < 4) continue;
+    const history = getUpsetWatchHistory(rows);
+    const watch = [];
+    let h = -1;
+    for (const p of rawPoints) {
+      while (h + 1 < history.length && new Date(history[h + 1].ts) <= new Date(p.ts)) h++;
+      const e = h >= 0 ? history[h] : null;
+      watch.push({ watch: !!(e && e.watch), up: e && e.upsetSide === 'home' ? 'h' : e && e.upsetSide === 'away' ? 'a' : null });
+    }
+    const hi = teamInfo[homeRows[0].team_id] || { name: 'Home', color: '#4f8cff' };
+    const ai = teamInfo[awayRows[0].team_id] || { name: 'Away', color: '#ff8a3d' };
+    out.push({
+      home: { name: hi.name, color: hi.color }, away: { name: ai.name, color: ai.color },
+      p: rawPoints.map((p) => p.y), hs: rawPoints.map((p) => p.homeActual), as: rawPoints.map((p) => p.awayActual),
+      ts: rawPoints.map((p) => p.ts), watch,
+    });
+  }
+  return out;
 }
 
 // Pure computation, shared by both the initial render and in-place
@@ -4416,6 +4455,7 @@ function renderNeedleCard(rows, home, away, allDone) {
   // prevHomePct seeds the delta-popup comparison on the FIRST background
   // update after this card is created -- see updateNeedleCard, which reads
   // and then overwrites this every refresh.
+  setPersistentDelta(card, rows, home, away, allDone);
   return { card, entry: { mode: 'needle', el: card, prevHomePct: homePct } };
 }
 
@@ -4460,13 +4500,7 @@ function updateNeedleCard(entry, rows, home, away, allDone) {
   if (powerRows[0]) powerRows[0].outerHTML = buildFcPowerRow(homeRow?.team_id);
   if (powerRows[1]) powerRows[1].outerHTML = buildFcPowerRow(awayRow?.team_id);
 
-  const deltaBadges = card.querySelectorAll('.delta-badge');
-  if (deltaBadges.length === 2) {
-    const homeDelta = prevHomePct == null ? 0 : homePct - prevHomePct;
-    const gainColor = homeDelta >= 0 ? home.color : away.color;
-    scheduleDeltaBadge(deltaBadges[0], prevHomePct, homePct, gainColor);
-    scheduleDeltaBadge(deltaBadges[1], prevHomePct == null ? null : (100 - prevHomePct), 100 - homePct, gainColor);
-  }
+  setPersistentDelta(card, rows, home, away, allDone);
 
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
   card.classList.toggle('upset-watch', !!upsetInfo);
@@ -4548,7 +4582,35 @@ function setEspnPctInstant(el, value) {
   el._animCurrent = value;
 }
 
-// Shows a small "+X.X%"/"-X.X%" badge next to a team's percentage about
+// Permanent change badge: next to each team's percentage, how that number moved at the
+// most recent update that actually changed it (">= 0.05" -- smaller is rounding noise).
+// Derived from the snapshot history, so it's there on first load too, and it stays
+// until the next change replaces it (with a small pop). Live games only.
+function setPersistentDelta(card, rows, home, away, allDone) {
+  const badges = card && card.querySelectorAll('.delta-badge');
+  if (!badges || badges.length !== 2) return;
+  const clear = () => badges.forEach((b) => { b.classList.remove('perm', 'pop'); b.textContent = ''; b._key = undefined; });
+  if (allDone) { clear(); return; }
+  const hr = rows.filter((r) => r.is_home).sort((x, y) => new Date(x.ts) - new Date(y.ts));
+  let j = -1;
+  for (let i = hr.length - 1; i >= 1; i--) if (Math.abs(hr[i].win_prob - hr[i - 1].win_prob) >= 0.05) { j = i; break; }
+  if (j < 0) { clear(); return; }
+  const delta = hr[j].win_prob - hr[j - 1].win_prob, key = hr[j].ts;
+  const color = delta >= 0 ? home.color : away.color;
+  const mins = Math.max(0, Math.round((Date.now() - new Date(key).getTime()) / 60000));
+  const ago = mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
+  [[badges[0], delta], [badges[1], -delta]].forEach(([b, d]) => {
+    b.textContent = `${d > 0 ? '\u25B2' : '\u25BC'} ${Math.abs(d).toFixed(1)}%`;
+    b.style.background = color;
+    b.title = `Change at the last update (${ago})`;
+    const fresh = b._key !== undefined && b._key !== key;
+    b._key = key;
+    b.classList.add('perm');
+    if (fresh) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
+  });
+}
+
+// (Superseded by setPersistentDelta above; kept for reference.) Shows a small "+X.X%"/"-X.X%" badge next to a team's percentage about
 // 500ms after a real poll moves it -- the same delayed, colored,
 // auto-fading callout pattern used for election-night vote-margin swings.
 // `prevPct`/`newPct` are on the SAME 0-100 scale the caller already uses
@@ -4669,6 +4731,192 @@ function positionEspnHead(chart) {
   el.classList.add('on');
 }
 
+
+// ---- ESPN chart FX (live games only) ----
+// A transparent canvas over the chart: a soft glow from the leading team's side
+// with a slow scan band and a few drifting dots, a faint glow along the line, and
+// a "burst" at the live dot when something happens (a team scores, the lead
+// changes). Events that happen while you're away or scrolled past are held, and
+// the most recent one plays once when you come back. One shared animation loop
+// drives every visible live card; finished games and hidden cards draw nothing.
+const chartFxSet = new Set();
+let chartFxRaf = 0;
+function chartFxOn() { return showChartFx && !prefersReducedMotion(); }
+const chartFxIO = typeof IntersectionObserver === 'function'
+  ? new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        const fx = e.target._fx;
+        if (!fx) continue;
+        fx.visible = e.isIntersecting;
+        if (fx.visible) chartFxPlayHeld(fx);
+      }
+    }, { threshold: 0.25 })
+  : null;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  for (const fx of chartFxSet) if (fx.visible) chartFxPlayHeld(fx);
+});
+
+function initChartFx(chart) {
+  if (!chart || chart._fx || !chart.canvas) return;
+  const box = chart.canvas.closest('.espn-chartBox');
+  if (!box) return;
+  const cv = document.createElement('canvas');
+  cv.className = 'espn-fx';
+  box.insertBefore(cv, box.firstChild.nextSibling || null);
+  const fx = { chart, box, cv, ctx: cv.getContext('2d'), w: 0, h: 0, parts: [], bursts: [], flare: 0, visible: true, held: null, cleared: true };
+  chart._fx = fx; box._fx = fx;
+  chartFxSet.add(fx);
+  if (chartFxIO) chartFxIO.observe(box);
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => chartFxResize(fx)).observe(box);
+  chartFxResize(fx);
+  if (!chartFxRaf) chartFxRaf = requestAnimationFrame(chartFxFrame);
+}
+function chartFxResize(fx) {
+  const w = fx.box.clientWidth, h = fx.box.clientHeight;
+  if (!w || !h) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  fx.dpr = dpr; fx.w = w; fx.h = h;
+  fx.cv.width = Math.round(w * dpr); fx.cv.height = Math.round(h * dpr);
+  fx.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  fx.parts = Array.from({ length: Math.max(14, Math.round(w / 22)) }, () => chartFxPart(fx, true));
+}
+function chartFxPart(fx, anywhere) {
+  return { x: Math.random() * fx.w, y: anywhere ? Math.random() * fx.h : fx.h + 6, r: 0.8 + Math.random() * 1.6, sp: 0.1 + Math.random() * 0.3, ph: Math.random() * 6.28, sw: 0.3 + Math.random() * 0.8 };
+}
+
+// Called from updateEspnCard when something happens. ev = { kind: 'score'|'lead', color, label }.
+function chartFxEvent(chart, ev) {
+  const fx = chart && chart._fx;
+  if (!fx || !chartFxOn()) return;
+  if (document.hidden || !fx.visible) { fx.held = ev; return; } // newest event wins while away
+  chartFxBurst(fx, ev);
+}
+function chartFxPlayHeld(fx) {
+  if (!fx.held || !chartFxOn()) { fx.held = null; return; }
+  const ev = fx.held; fx.held = null;
+  setTimeout(() => { if (fx.visible && !document.hidden) chartFxBurst(fx, ev); }, 350); // let the page settle first
+}
+function chartFxBurst(fx, ev) {
+  const sparks = [];
+  const n = ev.kind === 'score' ? 30 : ev.kind === 'upset' ? 44 : 20;
+  for (let i = 0; i < n; i++) { const ang = Math.random() * Math.PI * 2, sp = 0.6 + Math.random() * 2.8; sparks.push({ vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 0.8, r: 1 + Math.random() * 2, hot: Math.random() < 0.4 }); }
+  fx.bursts.push({ t0: performance.now(), sparks, ...ev });
+  fx.flare = 1;
+  const card = fx.box.closest('.espn-card');
+  if (card && !card.classList.contains('upset-watch')) {
+    card.style.setProperty('--fx', ev.color);
+    card.classList.remove('fx-flash'); void card.offsetWidth; card.classList.add('fx-flash');
+    clearTimeout(card._fxT); card._fxT = setTimeout(() => card.classList.remove('fx-flash'), 1300);
+  }
+}
+// Team names can be long; keep the tags compact.
+// A lead change only counts once the new leader is clearly ahead (>= this %), so a super
+// close game bouncing around 50% doesn't flag every flip. Walks the whole history: a side
+// "holds" the lead from the moment it reaches the threshold until the other side does.
+const LEAD_CONFIRM_PCT = 60;
+function confirmedLead(homeProbs) {
+  let side = null;
+  for (const p of homeProbs) { if (p >= LEAD_CONFIRM_PCT) side = 'home'; else if (p <= 100 - LEAD_CONFIRM_PCT) side = 'away'; }
+  return side;
+}
+const CHART_FX_SCORE_MIN = 5; // points a team must gain between polls for the chart to treat it as an event
+function fxName(n) { n = String(n || 'Team').trim(); return n.length > 18 ? n.slice(0, 17).trimEnd() + '\u2026' : n; }
+function fxRgba(hex, al) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  const n = m ? parseInt(m[1], 16) : 0x888888;
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${al})`;
+}
+
+function chartFxFrame(now) {
+  chartFxRaf = 0;
+  if (!chartFxOn() || document.hidden) { for (const fx of chartFxSet) if (!fx.cleared) { fx.ctx.clearRect(0, 0, fx.w, fx.h); fx.cleared = true; } if (chartFxSet.size && chartFxOn()) chartFxRaf = requestAnimationFrame(chartFxFrame); return; }
+  const t = now / 1000;
+  for (const fx of [...chartFxSet]) {
+    const chart = fx.chart;
+    if (!fx.cv.isConnected) { if (!fx.box.isConnected) { chartFxSet.delete(fx); if (chartFxIO) chartFxIO.unobserve(fx.box); } continue; }
+    const st = chart._state;
+    if (!st || !st.live || !fx.visible || !fx.w) { if (!fx.cleared) { fx.ctx.clearRect(0, 0, fx.w, fx.h); fx.cleared = true; } continue; }
+    const pts = chart.data.datasets[st.mainIdx].data, sx = chart.scales.x, sy = chart.scales.y, area = chart.chartArea;
+    if (!pts.length || !sx || !sy || !area) continue;
+    fx.cleared = false;
+    const ctx = fx.ctx;
+    ctx.clearRect(0, 0, fx.w, fx.h);
+    const last = pts[pts.length - 1], lead = last.y >= 50 ? 'H' : 'A';
+    const upInfo = st.currentUpsetInfo;
+    const leadColor = upInfo ? upInfo.upsetTeam.color : (lead === 'H' ? st.homeColor : st.awayColor); // upset watch: the underdog's color
+    const strength = Math.min(1, Math.abs(last.y - 50) / 45);
+    const X = (p) => sx.getPixelForValue(p.x), Y = (p) => sy.getPixelForValue(p.y);
+
+    // atmosphere: glow from the leader's edge, slow scan band, drifting dots
+    ctx.save(); ctx.globalCompositeOperation = 'screen';
+    const gy = lead === 'H' ? area.top : area.bottom, cx = (area.left + area.right) / 2, br = 0.65 + 0.35 * Math.sin(t * (upInfo ? 3.2 : 1.3));
+    const g = ctx.createRadialGradient(cx, gy, 0, cx, gy, (area.right - area.left) * 0.62);
+    g.addColorStop(0, fxRgba(leadColor, (0.07 + 0.11 * strength + (upInfo ? 0.07 : 0)) * (0.75 + 0.5 * br))); g.addColorStop(1, fxRgba(leadColor, 0));
+    ctx.fillStyle = g; ctx.fillRect(area.left, area.top, area.right - area.left, area.bottom - area.top);
+    const hh = area.bottom - area.top, sc = (t % 7) / 7, scy = area.top + (lead === 'H' ? sc : 1 - sc) * (hh + 60) - 30;
+    const sg = ctx.createLinearGradient(0, scy - 28, 0, scy + 28);
+    sg.addColorStop(0, fxRgba(leadColor, 0)); sg.addColorStop(0.5, fxRgba(leadColor, 0.05)); sg.addColorStop(1, fxRgba(leadColor, 0));
+    ctx.save(); ctx.beginPath(); ctx.rect(area.left, area.top, area.right - area.left, hh); ctx.clip();
+    ctx.fillStyle = sg; ctx.fillRect(area.left, scy - 28, area.right - area.left, 56);
+    const dir = lead === 'H' ? -1 : 1;
+    ctx.fillStyle = leadColor;
+    for (const p of fx.parts) {
+      p.y += dir * p.sp * (0.6 + strength); p.x += Math.sin(t * p.sw + p.ph) * 0.3;
+      if (p.y < area.top - 8 || p.y > area.bottom + 8) { Object.assign(p, chartFxPart(fx, false)); p.y = dir < 0 ? area.bottom + 4 : area.top - 4; p.x = area.left + Math.random() * (area.right - area.left); }
+      ctx.globalAlpha = 0.16 + 0.2 * Math.sin(t * 1.7 + p.ph) ** 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.3); ctx.fill();
+    }
+    ctx.globalAlpha = 1; ctx.restore(); ctx.restore();
+
+    // faint steady glow along the line (flares briefly on an event)
+    const f = fx.flare; fx.flare = Math.max(0, fx.flare - 0.012);
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const breathe = 0.85 + 0.15 * Math.sin(t * 1.8);
+    ctx.lineWidth = 5 * (1 + f * 0.7);
+    let runColor = null;
+    const strokeRun = () => { if (runColor) { ctx.strokeStyle = fxRgba(runColor, 0.085 * breathe * (1 + f * 3)); ctx.stroke(); } };
+    for (let i = 1; i < pts.length; i++) {
+      const col = (pts[i].y + pts[i - 1].y) / 2 >= 50 ? st.homeColor : st.awayColor;
+      if (col !== runColor) { strokeRun(); runColor = col; ctx.beginPath(); ctx.moveTo(X(pts[i - 1]), Y(pts[i - 1])); }
+      ctx.lineTo(X(pts[i]), Y(pts[i]));
+    }
+    strokeRun();
+    ctx.restore();
+
+    // bursts at the live dot
+    const hx = X(last), hy = Y(last);
+    let tagIdx = 0;
+    for (let i = fx.bursts.length - 1; i >= 0; i--) {
+      const b = fx.bursts[i], age = (now - b.t0) / 1000;
+      if (age > 2.4) { fx.bursts.splice(i, 1); continue; }
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for (const [k, d] of [[0, 0], [1, 0.12], [2, 0.26]]) {
+        const u = (age - d) / 0.9; if (u < 0 || u > 1) continue;
+        ctx.strokeStyle = fxRgba(b.color, 0.9 * (1 - u)); ctx.lineWidth = 3 - k * 0.7; ctx.beginPath(); ctx.arc(hx, hy, 6 + u * (b.kind === 'score' ? 64 : 48), 0, 6.3); ctx.stroke();
+      }
+      const fl = ctx.createRadialGradient(hx, hy, 0, hx, hy, 42); fl.addColorStop(0, fxRgba(b.color, Math.max(0, 0.55 - age * 1.1))); fl.addColorStop(1, fxRgba(b.color, 0));
+      ctx.fillStyle = fl; ctx.beginPath(); ctx.arc(hx, hy, 42, 0, 6.3); ctx.fill();
+      for (const sp of b.sparks) {
+        const x = hx + sp.vx * age * 36, y = hy + sp.vy * age * 36 + 30 * age * age, life = 1 - age / 1.6; if (life <= 0) continue;
+        ctx.fillStyle = sp.hot ? `rgba(255,248,230,${life})` : fxRgba(b.color, life); ctx.beginPath(); ctx.arc(x, y, sp.r * (0.6 + life * 0.6), 0, 6.3); ctx.fill();
+      }
+      ctx.restore();
+      const ta = age < 0.15 ? age / 0.15 : Math.max(0, 1 - (age - 1.3) / 1.0);
+      if (ta > 0) {
+        const ty = Math.max(area.top + 12, hy - 24 - age * 22 - tagIdx * 28);
+        ctx.save(); ctx.globalAlpha = ta; ctx.font = '700 12px system-ui, sans-serif';
+        const tw = ctx.measureText(b.label).width + 18, tx = Math.min(area.right - tw / 2, Math.max(area.left + tw / 2, hx));
+        ctx.fillStyle = 'rgba(10,12,18,.85)'; ctx.strokeStyle = fxRgba(b.color, 0.9); ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.roundRect(tx - tw / 2, ty - 11, tw, 22, 11); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = b.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(b.label, tx, ty + 1); ctx.restore();
+        tagIdx++;
+      }
+    }
+  }
+  chartFxRaf = chartFxSet.size ? requestAnimationFrame(chartFxFrame) : 0;
+}
+
 // Lead change: when the favorite flips, the new leader's row sweeps with its
 // team color and its percentage pops, and the chart's live dot sends out a
 // bigger double ripple. `side` is 'home' or 'away' (the NEW leader).
@@ -4759,6 +5007,8 @@ function renderEspnCard(rows, home, away, allDone) {
     homeColor: home.color,
     awayColor: away.color,
     live: isLive,
+    confirmedLead: confirmedLead(homeRows.map((r) => r.win_prob)),
+    lastActual: { h: Number(homeRows[homeRows.length - 1].actual_score) || 0, a: Number((awayRows[awayRows.length - 1] || {}).actual_score) || 0 },
   };
   const canvas = card.querySelector('canvas');
 
@@ -4917,6 +5167,7 @@ function renderEspnCard(rows, home, away, allDone) {
     },
   });
   chart._state = state;
+  initChartFx(chart);
   requestAnimationFrame(() => positionEspnHead(chart));
 
   // Manual hover handling: find the nearest real data point to the mouse's
@@ -5012,6 +5263,7 @@ function renderEspnCard(rows, home, away, allDone) {
 
   decorateSeasonalCard(card, currentSeasonalTheme, home, away);
   applySeasonalUpsetState(card, currentSeasonalTheme, !!upsetInfo);
+  setPersistentDelta(card, rows, home, away, allDone);
 
   return { card, entry: { mode: 'espn', chart } };
 }
@@ -5040,6 +5292,32 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   chart._state.live = !allDone && isRecentlyActive(rows);
   positionEspnHead(chart);
 
+  // Chart FX events: a team scored, or the lead changed (live games only).
+  {
+    const hNow = Number(homeRows[homeRows.length - 1].actual_score) || 0;
+    const aNow = Number((awayRows[awayRows.length - 1] || {}).actual_score) || 0;
+    const prevA = chart._state.lastActual || { h: hNow, a: aNow };
+    chart._state.lastActual = { h: hNow, a: aNow };
+    if (chart._state.live) {
+      // One event per moment: a score that flips the lead shows as the lead change
+      // only (with the points folded in), and scores under CHART_FX_SCORE_MIN aren't events.
+      const hGain = hNow - prevA.h, aGain = aNow - prevA.a;
+      const ps = chart._state.confirmedLead, ns = confirmedLead(homeRows.map((r) => r.win_prob));
+      chart._state.confirmedLead = ns;
+      const newUp = getLiveUpsetInfo(rows, home, away, allDone), hadUp = !!chart._state.currentUpsetInfo;
+      if (ps && ns && ps !== ns) {
+        chart._state._leadFlipTo = ns;
+        const nt = ns === 'home' ? home : away, gain = ns === 'home' ? hGain : aGain;
+        chartFxEvent(chart, { kind: 'lead', color: nt.color, label: `${fxName(nt.name)} takes the lead${gain >= CHART_FX_SCORE_MIN ? ` (+${gain.toFixed(1)})` : ''}` });
+      } else if (newUp && !hadUp) {
+        chartFxEvent(chart, { kind: 'upset', color: newUp.upsetTeam.color, label: `Upset watch: ${fxName(newUp.upsetTeam.name)} is closing in` });
+      } else {
+        if (hGain >= CHART_FX_SCORE_MIN) chartFxEvent(chart, { kind: 'score', color: home.color, label: `${fxName(home.name)} +${hGain.toFixed(1)} pts` });
+        if (aGain >= CHART_FX_SCORE_MIN) chartFxEvent(chart, { kind: 'score', color: away.color, label: `${fxName(away.name)} +${aGain.toFixed(1)} pts` });
+      }
+    }
+  }
+
   // Only refresh the visible labels if the marker isn't currently being
   // shown via hover -- otherwise a background refresh would yank the
   // numbers out from under someone mid-hover. The delta popup follows the
@@ -5049,22 +5327,17 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   if (!isHovering) {
     setEspnPctLabels(chart.canvas, chart._state.currentHomePct);
 
-    // Lead change (live games only): the favorite flipped since the last poll.
-    const sideOf = (p) => (p == null ? null : p > 50 ? 'home' : p < 50 ? 'away' : null);
-    const prevSide = sideOf(prevHomePct), newSide = sideOf(newHomePct);
-    if (!allDone && prevSide && newSide && prevSide !== newSide) {
+    // Lead change (live games only): the CONFIRMED leader flipped since the last poll
+    // (see confirmedLead -- a close game wobbling around 50% doesn't count).
+    if (!allDone && chart._state._leadFlipTo) {
       const flipCard = chart.canvas.closest('.espn-card');
-      if (flipCard) flashLeadChange(flipCard, chart, newSide, newSide === 'home' ? home.color : away.color);
+      const side = chart._state._leadFlipTo; chart._state._leadFlipTo = null;
+      if (flipCard) flashLeadChange(flipCard, chart, side, side === 'home' ? home.color : away.color);
     }
 
-    const badges = chart.canvas.closest('.espn-card')?.querySelectorAll('.delta-badge');
-    if (badges && badges.length === 2) {
-      const homeDelta = newHomePct - prevHomePct;
-      const gainColor = homeDelta >= 0 ? home.color : away.color;
-      scheduleDeltaBadge(badges[0], prevHomePct, newHomePct, gainColor);
-      scheduleDeltaBadge(badges[1], prevHomePct == null ? null : (100 - prevHomePct), 100 - newHomePct, gainColor);
-    }
   }
+
+  setPersistentDelta(chart.canvas.closest('.espn-card'), rows, home, away, allDone);
 
   const badge = chart.canvas.closest('.espn-card')?.querySelector('.postcard-status');
   if (badge) {
@@ -5900,7 +6173,7 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   // The theme is looked up here (cached, and awaited again below) so the
   // recap's holiday names are right on the very first render of a week.
   const recapTheme = await determineSeasonalTheme(year, week);
-  renderRecapBanner(byMatchup, teamInfo, recapTheme);
+  renderRecapBanner(byMatchup, teamInfo, recapTheme, `Week ${week}`);
 
   {
     const ids = Object.keys(byMatchup);
