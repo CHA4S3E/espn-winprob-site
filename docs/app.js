@@ -4586,9 +4586,24 @@ function setEspnPctInstant(el, value) {
 // most recent update that actually changed it (">= 0.05" -- smaller is rounding noise).
 // Derived from the snapshot history, so it's there on first load too, and it stays
 // until the next change replaces it (with a small pop). Live games only.
+function paintDeltaBadges(badges, delta, home, away, key, title) {
+  const color = delta >= 0 ? home.color : away.color;
+  [[badges[0], delta], [badges[1], -delta]].forEach(([b, d]) => {
+    b.textContent = `${d > 0 ? '\u25B2' : '\u25BC'} ${Math.abs(d).toFixed(1)}%`;
+    b.style.background = color;
+    b.title = title;
+    const fresh = b._key !== undefined && b._key !== key;
+    b._key = key;
+    b.classList.add('perm');
+    if (fresh) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
+  });
+}
+
 function setPersistentDelta(card, rows, home, away, allDone) {
   const badges = card && card.querySelectorAll('.delta-badge');
   if (!badges || badges.length !== 2) return;
+  card._deltaArgs = { rows, home, away, allDone };
+  if (card._deltaHover) return; // the pill is showing a hovered moment right now; restored on mouseleave
   const clear = () => badges.forEach((b) => { b.classList.remove('perm', 'pop'); b.textContent = ''; b._key = undefined; });
   if (allDone) { clear(); return; }
   const hr = rows.filter((r) => r.is_home).sort((x, y) => new Date(x.ts) - new Date(y.ts));
@@ -4596,18 +4611,36 @@ function setPersistentDelta(card, rows, home, away, allDone) {
   for (let i = hr.length - 1; i >= 1; i--) if (Math.abs(hr[i].win_prob - hr[i - 1].win_prob) >= 0.05) { j = i; break; }
   if (j < 0) { clear(); return; }
   const delta = hr[j].win_prob - hr[j - 1].win_prob, key = hr[j].ts;
-  const color = delta >= 0 ? home.color : away.color;
   const mins = Math.max(0, Math.round((Date.now() - new Date(key).getTime()) / 60000));
   const ago = mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
-  [[badges[0], delta], [badges[1], -delta]].forEach(([b, d]) => {
-    b.textContent = `${d > 0 ? '\u25B2' : '\u25BC'} ${Math.abs(d).toFixed(1)}%`;
-    b.style.background = color;
-    b.title = `Change at the last update (${ago})`;
-    const fresh = b._key !== undefined && b._key !== key;
-    b._key = key;
-    b.classList.add('perm');
-    if (fresh) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
-  });
+  paintDeltaBadges(badges, delta, home, away, key, `Change at the last update (${ago})`);
+}
+
+// While hovering the history, the pill shows how the percentage changed AT the hovered
+// moment (vs. the update before it). A point where nothing moved shows the most recent
+// change before it, same as the live pill. `currentPoints` includes synthetic 50%-crossing
+// points (no homeActual), which are skipped so only real updates count.
+function setHoverDelta(canvas, currentPoints, nearest, home, away) {
+  const card = canvas.closest('.espn-card');
+  const badges = card && card.querySelectorAll('.delta-badge');
+  if (!badges || badges.length !== 2) return;
+  const real = currentPoints.filter((p) => p.homeActual !== undefined || p === nearest);
+  let i = real.indexOf(nearest);
+  if (i < 0) { i = real.reduce((best, p, k) => (p.x <= nearest.x ? k : best), 0); }
+  let j = -1;
+  for (let k = i; k >= 1; k--) if (Math.abs(real[k].y - real[k - 1].y) >= 0.05) { j = k; break; }
+  card._deltaHover = true;
+  if (j < 0) { badges.forEach((b) => { b.classList.remove('perm', 'pop'); b.textContent = ''; b._key = undefined; }); return; }
+  const when = j === i ? 'at this update' : 'at the last change before this';
+  paintDeltaBadges(badges, real[j].y - real[j - 1].y, home, away, real[j].ts, `Change ${when}`);
+}
+
+function endHoverDelta(canvas) {
+  const card = canvas.closest('.espn-card');
+  if (!card) return;
+  card._deltaHover = false;
+  const d = card._deltaArgs;
+  if (d) setPersistentDelta(card, d.rows, d.home, d.away, d.allDone);
 }
 
 // (Superseded by setPersistentDelta above; kept for reference.) Shows a small "+X.X%"/"-X.X%" badge next to a team's percentage about
@@ -5209,6 +5242,7 @@ function renderEspnCard(rows, home, away, allDone) {
     chart.data.datasets[mainIdx + 2].hidden = false;
     chart.update('none');
     setEspnPctLabels(canvas, nearest.y, { animate: false });
+    setHoverDelta(canvas, currentPoints, nearest, home, away);
 
     // Historical upset-watch hover (gated on the preference, defaulting
     // on). Looked up via nearestByTs, not an exact match -- see
@@ -5252,6 +5286,7 @@ function renderEspnCard(rows, home, away, allDone) {
     chart.data.datasets[mainIdx + 2].hidden = true;
     chart.update('none');
     setEspnPctLabels(canvas, chart._state.currentHomePct, { animate: false });
+    endHoverDelta(canvas);
     // Revert the badge to whatever the CURRENT live state actually is
     // (kept fresh on every refresh -- see updateEspnCard), not whatever
     // text the hover happened to leave behind.
