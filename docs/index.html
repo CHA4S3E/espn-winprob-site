@@ -753,6 +753,8 @@
   }
   #kickoffCountdown.final-minute .kickoff-label { opacity: 0.6; }
 
+  .recap-play { width: 100%; margin-top: 14px; padding: 13px; font: inherit; font-size: 15px; font-weight: 700; color: #fff; border-radius: 10px; border: 1px solid rgba(120,140,255,.6); background: linear-gradient(100deg, #2c3f87, #6a3fa0); cursor: pointer; letter-spacing: .02em; }
+  .recap-play:hover { filter: brightness(1.15); }
   #recapBanner {
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
     padding: 18px 20px 20px; margin: 0 auto 20px; max-width: 640px;
@@ -875,6 +877,14 @@
     z-index: 2;
   }
   .delta-badge.show { animation: deltaPop 5s ease forwards; }
+  /* Permanent version (setPersistentDelta in app.js): sits inline between the dash and the
+     percentage, stays until the next change replaces it, pops in when it does. */
+  .delta-badge.perm { position: static; opacity: 1; transform: none; animation: none; flex: 0 0 auto; margin-left: 4px; font-size: 12px; }
+  .delta-badge.perm:empty { display: none; }
+  .delta-badge.perm.pop { animation: deltaPermPop .8s ease-out 1; }
+  @keyframes deltaPermPop { 0% { transform: scale(.6); opacity: 0; } 35% { transform: scale(1.22); opacity: 1; } 100% { transform: none; opacity: 1; } }
+  html[data-reduce-motion="true"] .delta-badge.perm.pop { animation: none; }
+  @media (prefers-reduced-motion: reduce) { .delta-badge.perm.pop { animation: none; } }
   @keyframes deltaPop {
     0% { opacity: 0; transform: translateY(-6px) scale(0.85); }
     8% { opacity: 1; transform: translateY(-16px) scale(1.08); }
@@ -1418,6 +1428,14 @@
   .espn-dash { flex: 1; height: 3px; border-radius: 2px; opacity: 0.4; margin: 0 6px; }
   .espn-pct { font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl); font-variant-numeric: tabular-nums; margin-left: auto; }
   .espn-chartBox { position: relative; height: 220px; width: 100%; margin: 6px 0; }
+  /* ---- ESPN chart FX canvas (see initChartFx in app.js) ---- */
+  .espn-fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+  .espn-card.fx-flash:not(.upset-watch) { animation: espnFxFlash 1.2s ease-out 1; }
+  @keyframes espnFxFlash { 0% { box-shadow: 0 0 0 2px var(--fx), 0 0 30px 3px var(--fx); } 100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; } }
+  @media (prefers-reduced-motion: reduce) { .espn-fx { display: none; } .espn-card.fx-flash { animation: none; } }
+  html[data-reduce-motion="true"] .espn-fx { display: none; }
+  html[data-reduce-motion="true"] .espn-card.fx-flash { animation: none; }
+
 
   /* ======== Festive weeks (Halloween / Thanksgiving / Christmas) ========
      Layered ON TOP of the existing seasonal decor (garlands, pumpkin/ghost
@@ -1855,6 +1873,7 @@
 
 <script src="config.js"></script>
 <button id="festMeteor" type="button" hidden aria-label="Replay the meteor strike" title="Replay the meteor strike"><span class="fm-crater"></span><span class="fm-glow"></span><i></i><i></i><i></i><span class="fm-rock"></span><span class="fm-sleigh">🛷</span><span class="fm-label">Replay the impact</span></button>
-<script src="app.js?v=50"></script>
+<script src="week-cinema.js?v=1"></script>
+<script src="app.js?v=53"></script>
 </body>
 </html>
