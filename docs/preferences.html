@@ -64,6 +64,19 @@
   </div>
 
   <div class="setting-group">
+    <div class="setting-title">Live chart effects</div>
+    <div class="setting-desc">On live ESPN-view games: a soft glow from the leading team's side with a few drifting dots, a faint glow along the line, and a burst at the live dot (with a small tag) when a team scores or the lead changes. If something happens while you're away, the latest event replays once when you come back.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="showChartFx">
+      <span>
+        <div class="option-label">Show live chart effects (default: on)</div>
+        <div class="option-example">Turned off automatically if your device is set to reduce motion</div>
+      </span>
+    </label>
+  </div>
+
+  <div class="setting-group">
     <div class="setting-title">Confidence band</div>
     <div class="setting-desc">A shaded band around the win-probability line on ESPN and Timeline charts (not Postcard), showing roughly how much uncertainty the model still has -- wider early, narrower as the game becomes more decided.</div>
 
@@ -85,19 +98,6 @@
       <span>
         <div class="option-label">Show Timeline &amp; Postcard views (default: off)</div>
         <div class="option-example">Adds them back to the view switcher at the top of the page</div>
-      </span>
-    </label>
-  </div>
-
-  <div class="setting-group">
-    <div class="setting-title">Win-probability change popups</div>
-    <div class="setting-desc">When a poll moves a team's win probability, a small colored "+X.X%" badge pops up next to the number about half a second later, then fades out after a few seconds -- similar to how election-night vote-margin changes are called out. Shows up on ESPN and Forecasting views.</div>
-
-    <label class="option-row">
-      <input type="checkbox" id="showDeltaPopups">
-      <span>
-        <div class="option-label">Show change popups (default: on)</div>
-        <div class="option-example">Turn off for a quieter card -- the percentage itself still updates either way, this only controls the little badge</div>
       </span>
     </label>
   </div>
@@ -274,6 +274,13 @@
     localStorage.setItem(HISTORY_KEY, historyCheckbox.checked ? 'true' : 'false');
   });
 
+  const FX_KEY = 'winProbShowChartFx';
+  const fxCheckbox = document.getElementById('showChartFx');
+  fxCheckbox.checked = localStorage.getItem(FX_KEY) !== 'false';
+  fxCheckbox.addEventListener('change', () => {
+    localStorage.setItem(FX_KEY, fxCheckbox.checked ? 'true' : 'false');
+  });
+
   // Defaults OFF -- only 'true' turns it on, the opposite convention from
   // the toggle above, since this one adds visual complexity rather than
   // just extra info on an already-opt-in hover.
@@ -282,17 +289,6 @@
   bandCheckbox.checked = localStorage.getItem(BAND_KEY) === 'true';
   bandCheckbox.addEventListener('change', () => {
     localStorage.setItem(BAND_KEY, bandCheckbox.checked ? 'true' : 'false');
-  });
-
-  // Defaults on -- only 'false' turns it off, same convention as the
-  // Upset Watch history toggle above (this is extra live-update feedback
-  // layered on top of behavior that already exists, not a new persistent
-  // visual element).
-  const DELTA_KEY = 'winProbShowDeltaPopups';
-  const deltaCheckbox = document.getElementById('showDeltaPopups');
-  deltaCheckbox.checked = localStorage.getItem(DELTA_KEY) !== 'false';
-  deltaCheckbox.addEventListener('change', () => {
-    localStorage.setItem(DELTA_KEY, deltaCheckbox.checked ? 'true' : 'false');
   });
 
   // Defaults OFF -- only 'true' brings the deprecated views back.
