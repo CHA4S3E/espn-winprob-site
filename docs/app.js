@@ -4836,7 +4836,7 @@ function chartFxFrame(now) {
     const chart = fx.chart;
     if (!fx.cv.isConnected) { if (!fx.box.isConnected) { chartFxSet.delete(fx); if (chartFxIO) chartFxIO.unobserve(fx.box); } continue; }
     const st = chart._state;
-    if (!st || !st.live || !fx.visible || !fx.w) { if (!fx.cleared) { fx.ctx.clearRect(0, 0, fx.w, fx.h); fx.cleared = true; } continue; }
+    if (!st || !fx.visible || !fx.w) { if (!fx.cleared) { fx.ctx.clearRect(0, 0, fx.w, fx.h); fx.cleared = true; } continue; }
     const pts = chart.data.datasets[st.mainIdx].data, sx = chart.scales.x, sy = chart.scales.y, area = chart.chartArea;
     if (!pts.length || !sx || !sy || !area) continue;
     fx.cleared = false;
@@ -4844,7 +4844,7 @@ function chartFxFrame(now) {
     ctx.clearRect(0, 0, fx.w, fx.h);
     const last = pts[pts.length - 1], lead = last.y >= 50 ? 'H' : 'A';
     const upInfo = st.currentUpsetInfo;
-    const leadColor = upInfo ? upInfo.upsetTeam.color : (lead === 'H' ? st.homeColor : st.awayColor); // upset watch: the underdog's color
+    const leadColor = lead === 'H' ? st.homeColor : st.awayColor; // always the current leader's color (upset watch only speeds up the pulse)
     const strength = Math.min(1, Math.abs(last.y - 50) / 45);
     const X = (p) => sx.getPixelForValue(p.x), Y = (p) => sy.getPixelForValue(p.y);
 
