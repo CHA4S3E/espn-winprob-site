@@ -2649,26 +2649,40 @@ const UPSET_LINEUP_SLACK_MS = 90 * 1000; // home/away rows can differ by a few s
 // Fallback only, when the lineup_changes view isn't available: treat a jump
 // with no score change after 45+ quiet minutes as a lineup fix.
 const UPSET_JUMP_IDLE_MS = 45 * 60 * 1000;
+const UPSET_LINEUP_SMALL = 4; // a smaller lineup-only move still resets (see below)
 function upsetResetFlags(rows, homeRows) {
   const lineupTimes = lineupChangeTimes(rows);
-  const away = lineupTimes ? null : rows.filter((r) => !r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const away = rows.filter((r) => !r.is_home).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const moved = (x, y) => Math.abs(Number(x) - Number(y)) >= 0.5;
   let lastScoreChange = -Infinity; // nothing has scored yet (fallback only)
+  // Returns, per home row: 'skip' (nothing has scored yet, so the number is
+  // pure projection and says nothing about who's actually dominating -- the
+  // state machine neither arms nor triggers on it), true (a lineup-driven move:
+  // forget any favorite status built before it), or false.
   return homeRows.map((r, i) => {
+    const a1 = nearestByTs(away, r.ts);
+    // Pregame: a manager starting a player on bye (0 projected) and then swapping
+    // in a replacement swings the projected number a lot with zero play having
+    // happened. That is the number being fixed, not a favorite collapsing.
+    if (!(Number(r.actual_score) >= 0.5) && !(a1 && Number(a1.actual_score) >= 0.5)) return 'skip';
     if (i === 0) return false;
     const prev = homeRows[i - 1];
     const t = new Date(r.ts).getTime();
+    const a0 = nearestByTs(away, prev.ts);
+    const scored = moved(r.actual_score, prev.actual_score) || (a0 && a1 && moved(a1.actual_score, a0.actual_score));
+    if (scored) lastScoreChange = t;
+    const dWP = Math.abs(r.win_prob - prev.win_prob);
     if (lineupTimes) {
-      if (Math.abs(r.win_prob - prev.win_prob) < UPSET_JUMP_MIN) return false;
       const lo = new Date(prev.ts).getTime(), hi = t + UPSET_LINEUP_SLACK_MS;
-      return lineupTimes.some((c) => c > lo && c <= hi);
+      if (!lineupTimes.some((c) => c > lo && c <= hi)) return false;
+      if (dWP >= UPSET_JUMP_MIN) return true;
+      // Smaller moves too -- bye/injury replacements often land as several
+      // modest steps -- as long as no points were scored in the step, so the
+      // move can only be the lineup. A real collapse in play involves scoring.
+      return !scored && dWP >= UPSET_LINEUP_SMALL;
     }
-    const a0 = nearestByTs(away, prev.ts), a1 = nearestByTs(away, r.ts);
-    if (moved(r.actual_score, prev.actual_score) || (a0 && a1 && moved(a1.actual_score, a0.actual_score))) {
-      lastScoreChange = t;
-      return false;
-    }
-    if (Math.abs(r.win_prob - prev.win_prob) < UPSET_JUMP_MIN) return false;
+    if (scored) return false;
+    if (dWP < UPSET_JUMP_MIN) return false;
     return t - lastScoreChange >= UPSET_JUMP_IDLE_MS;
   });
 }
@@ -2696,7 +2710,10 @@ function walkUpsetState(sortedHomeWinProbs, onStep, resets) {
     // A lineup-driven jump (see upsetResetFlags) isn't a collapse in play, so
     // forget any arming/watch built on the old baseline and start fresh from
     // this value. Episodes already recorded are kept.
-    if (resets && resets[idx]) { armed = null; peak = null; watch = false; upsetSide = null; currentEpisode = null; }
+    if (resets && resets[idx]) {
+      armed = null; peak = null; watch = false; upsetSide = null; currentEpisode = null;
+      if (resets[idx] === 'skip') { if (onStep) onStep(false, null); continue; } // nothing has scored yet
+    }
     if (hp >= UPSET_ARM) {
       if (armed !== 'home') {
         armed = 'home'; peak = hp;
