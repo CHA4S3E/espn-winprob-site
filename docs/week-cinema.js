@@ -184,10 +184,15 @@
       if (pts >= SCORE_MIN) { const tm = side === 'h' ? m.h : m.a; m.events.push({ i, kind: 'score', color: tm.color || tm.c, label: fit(tm.name) + ' +' + pts.toFixed(1) + ' pts', w: Math.min(1, Math.abs(dd) / 14) * 0.7 + 0.1, _side: side, _pts: pts }); }
       // lead change: only when the CONFIRMED leader changes (new leader reaches 60%+); one event, merged with a score that caused it
       if (cs[i] && cs[i - 1] && cs[i] !== cs[i - 1]) {
-        const tm = cs[i] === 'h' ? m.h : m.a, late = i / NP;
-        let extra = '', ww = 0; const prev = m.events[m.events.length - 1];
-        if (prev && prev.kind === 'score' && prev.i === i) { m.events.pop(); ww = prev.w; if (prev._side === cs[i]) extra = ' (+' + prev._pts.toFixed(1) + ')'; }
-        m.events.push({ i, kind: 'lead', color: tm.color, label: fit(tm.name) + ' takes the lead' + extra, w: Math.min(1, Math.max(ww, 0.5 + late * 0.4 + Math.abs(dd) / 40)) });
+        // Confirmed at 60%, but the moment the lead actually changed is when the win prob crossed 50%:
+        // walk back to the start of the run on the new leader's side of 50 and put the event THERE.
+        const home = cs[i] === 'h'; let c = i;
+        while (c > 1 && (home ? p[c - 1] >= 50 : p[c - 1] < 50)) c--;
+        const tm = home ? m.h : m.a, late = c / NP;
+        let extra = '', ww = 0, sc = null;
+        for (let k = m.events.length - 1; k >= 0 && m.events[k].i >= c; k--) if (m.events[k].kind === 'score') { sc = k; break; }
+        if (sc !== null) { const pr = m.events.splice(sc, 1)[0]; ww = pr.w; if (pr._side === cs[i]) extra = ' (+' + pr._pts.toFixed(1) + ')'; }
+        m.events.push({ i: c, kind: 'lead', color: tm.color, label: fit(tm.name) + ' takes the lead' + extra, w: Math.min(1, Math.max(ww, 0.5 + late * 0.4 + Math.abs(p[i] - p[c - 1]) / 40)) });
       }
       if (m.watch[i].watch && !m.watch[i - 1].watch) { const u = m.watch[i].up === 'h' ? m.h : m.a; m.events.push({ i, kind: 'upset', color: u.color, label: 'Upset watch: ' + fit(u.name) + ' is closing in', w: 0.9 }); }
     }
@@ -207,6 +212,7 @@
     $('wc_cSkip').onclick = () => { if (mi < MATCHUPS.length - 1) startMatchup(mi + 1); else showWeekSummary(); };
   }
   window.WeekCinema = {
+    _build: buildMatchup,
     open(matchups, weekLabel) {
       const ok = matchups.filter((d) => d.p && d.p.length >= 4);
       if (!ok.length) return;
