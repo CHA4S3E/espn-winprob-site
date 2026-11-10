@@ -4836,7 +4836,7 @@ function chartFxBurst(fx, ev) {
   const n = ev.kind === 'score' ? 30 : ev.kind === 'upset' ? 44 : 20;
   for (let i = 0; i < n; i++) { const ang = Math.random() * Math.PI * 2, sp = 0.6 + Math.random() * 2.8; sparks.push({ vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 0.8, r: 1 + Math.random() * 2, hot: Math.random() < 0.4 }); }
   fx.bursts.push({ t0: performance.now(), sparks, ...ev });
-  fx.flare = 1;
+  fx.flare = 1; fx.flareT0 = performance.now();
   const card = fx.box.closest('.espn-card');
   if (card && !card.classList.contains('upset-watch')) {
     card.style.setProperty('--fx', ev.color);
@@ -4927,19 +4927,25 @@ function chartFxFrame(now) {
       ctx.stroke(); ctx.restore();
     }
 
-    // faint steady glow along the line (flares briefly on an event)
-    const f = fx.flare; fx.flare = Math.max(0, fx.flare - 0.012);
+    // glow along the line: noticeably stronger while the game is live, and it flares on an event.
+    // The flare eases IN (no sudden pop) and then fades out.
+    fx.flare = Math.max(0, fx.flare - 0.012);
+    const f = fx.flare * Math.min(1, (now - (fx.flareT0 || 0)) / 280);
+    const live = st.live ? 1 : 0;
     ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     const breathe = 0.85 + 0.15 * Math.sin(t * 1.8);
-    ctx.lineWidth = 5 * (1 + f * 0.7);
-    let runColor = null;
-    const strokeRun = () => { if (runColor) { ctx.strokeStyle = fxRgba(runColor, 0.085 * breathe * (1 + f * 3)); ctx.stroke(); } };
-    for (let i = 1; i < pts.length; i++) {
-      const col = (pts[i].y + pts[i - 1].y) / 2 >= 50 ? st.homeColor : st.awayColor;
-      if (col !== runColor) { strokeRun(); runColor = col; ctx.beginPath(); ctx.moveTo(PX(i - 1), PY(i - 1)); }
-      ctx.lineTo(PX(i), PY(i));
+    const layers = live ? [[14, 0.07], [8, 0.16], [4, 0.28]] : [[5, 0.085]];
+    for (const [lw, la] of layers) {
+      ctx.lineWidth = lw * (1 + f * 0.6);
+      let runColor = null;
+      const strokeRun = () => { if (runColor) { ctx.strokeStyle = fxRgba(runColor, Math.min(0.9, la * breathe * (1 + f * 2.2))); ctx.stroke(); } };
+      for (let i = 1; i < pts.length; i++) {
+        const col = (pts[i].y + pts[i - 1].y) / 2 >= 50 ? st.homeColor : st.awayColor;
+        if (col !== runColor) { strokeRun(); runColor = col; ctx.beginPath(); ctx.moveTo(PX(i - 1), PY(i - 1)); }
+        ctx.lineTo(PX(i), PY(i));
+      }
+      strokeRun();
     }
-    strokeRun();
     ctx.restore();
 
     // bursts at the live dot
