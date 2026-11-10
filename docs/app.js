@@ -5005,6 +5005,9 @@ function renderEspnCard(rows, home, away, allDone) {
   const upsetInfo = getLiveUpsetInfo(rows, home, away, allDone);
   const card = document.createElement('div');
   card.className = 'espn-card' + (upsetInfo ? ' upset-watch' : '');
+  // once the one-time entrance animation has played, mark the card so later class changes (event flash, upset watch on/off) can never replay it
+  card.addEventListener('animationend', (e) => { if (e.target === card && e.animationName === 'cardEnter') card.classList.add('entered'); });
+  setTimeout(() => card.classList.add('entered'), 1500);
   if (upsetInfo) applyUpsetColor(card, upsetInfo.upsetTeam.color);
   card.innerHTML = `
     <div class="pumpkin-corner left">\ud83c\udf83</div>
