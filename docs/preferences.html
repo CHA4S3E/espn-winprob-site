@@ -77,6 +77,19 @@
   </div>
 
   <div class="setting-group">
+    <div class="setting-title">Year in Review cinematic</div>
+    <div class="setting-desc">The Year in Review opens with a short animated recap of the season (the points race, the defining moments, the podium) before the normal page. It plays once per season; you can always replay it from the page.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="showYearCinema">
+      <span>
+        <div class="option-label">Play the Year in Review intro (default: on)</div>
+        <div class="option-example">Skipped automatically if your device is set to reduce motion</div>
+      </span>
+    </label>
+  </div>
+
+  <div class="setting-group">
     <div class="setting-title">Confidence band</div>
     <div class="setting-desc">A shaded band around the win-probability line on ESPN and Timeline charts (not Postcard), showing roughly how much uncertainty the model still has -- wider early, narrower as the game becomes more decided.</div>
 
@@ -279,6 +292,13 @@
   fxCheckbox.checked = localStorage.getItem(FX_KEY) !== 'false';
   fxCheckbox.addEventListener('change', () => {
     localStorage.setItem(FX_KEY, fxCheckbox.checked ? 'true' : 'false');
+  });
+
+  const YC_KEY = 'winProbYearCinema';
+  const ycCheckbox = document.getElementById('showYearCinema');
+  ycCheckbox.checked = localStorage.getItem(YC_KEY) !== 'false';
+  ycCheckbox.addEventListener('change', () => {
+    localStorage.setItem(YC_KEY, ycCheckbox.checked ? 'true' : 'false');
   });
 
   // Defaults OFF -- only 'true' turns it on, the opposite convention from
