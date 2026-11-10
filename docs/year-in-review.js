@@ -388,6 +388,17 @@ async function loadYear(leagueId, year) {
     playoffSpots: league ? league.playoff_spots : null,
   });
 
+  // Cinematic intro (year-cinema.js): built from the same computed data the page just rendered. Attached BEFORE the
+  // content is revealed so its overlay is already covering the page (no flash of the normal view).
+  try {
+    if (window.YearCinema) {
+      window.YearCinema.attach(
+        buildYearCinemaPayload({ year, teamInfo, standings, matchupTimeSeries, podiumResults: (seasonResults || []).map((r) => ({ place: r.place, team_id: r.legacy_team_id || r.live_team_id })) }),
+        { seenKey: `winProbYearCinemaSeen:${leagueSelect.value}:${year}` }
+      );
+    }
+  } catch (err) { console.error('year cinematic skipped', err); }
+
   loadingState.style.display = 'none';
   content.style.display = 'block';
   if (window.siteEnter) { window.siteEnter(document.getElementById('heroContent')?.parentElement, '#heroContent'); window.siteEnter(document.querySelector('.page')); }
@@ -1404,6 +1415,81 @@ function renderEverything({ year, teamInfo, standings, finalRows, matchupTimeSer
   renderLuckAwards(standings, teamInfo);
   renderUpsetLeaderboard(matchupTimeSeries, teamInfo);
   renderSoClose(standings, teamInfo, playoffSpots);
+}
+
+// ============================================================
+// Payload for the year-in-review cinematic (year-cinema.js). Pure data shaping off values this page already computes;
+// anything that can't be derived (lite years have no poll history, so no "moments") is simply left out and the
+// cinematic skips that scene.
+// ============================================================
+function buildYearCinemaPayload({ year, teamInfo, standings, matchupTimeSeries, podiumResults }) {
+  const teams = {};
+  for (const s of standings) {
+    const t = teamInfo[s.teamId] || {};
+    teams[s.teamId] = { id: s.teamId, name: t.name || 'Team', color: t.color || '#9ab0ff', emoji: t.emoji || '', logoUrl: t.logoUrl || '' };
+  }
+  const order = standings.map((s) => s.teamId);
+  const weekNums = [...new Set(standings.flatMap((s) => s.resultsByWeek.map((r) => r.week)))].sort((a, b) => a - b);
+  const run = new Map(order.map((id) => [id, 0]));
+  const cum = weekNums.map((w) => order.map((id) => {
+    const r = standings.find((s) => s.teamId === id).resultsByWeek.find((x) => x.week === w);
+    if (r) run.set(id, run.get(id) + r.ownScore);
+    return run.get(id);
+  }));
+  const totalPts = Math.round(standings.reduce((a, s) => a + s.pointsFor, 0));
+
+  // closest game / biggest blowout (each game appears once, from the winner's side)
+  const games = [];
+  for (const s of standings) for (const r of s.resultsByWeek) {
+    if (r.result === 'W' || (r.result === 'T' && String(s.teamId) < String(r.opponentId))) games.push({ a: s.teamId, b: r.opponentId, sa: r.ownScore, sb: r.oppScore, w: r.week });
+  }
+  const close = games.length ? games.reduce((m, g) => ((g.sa - g.sb) < (m.sa - m.sb) ? g : m), games[0]) : null;
+  const blow = games.length ? games.reduce((m, g) => ((g.sa - g.sb) > (m.sa - m.sb) ? g : m), games[0]) : null;
+
+  // awards
+  const awards = [];
+  const bw = findBestWorstWeek(standings);
+  if (bw.best) awards.push({ label: 'Highest score of the year', t: bw.best.teamId, stat: bw.best.score.toFixed(1), note: `Week ${bw.best.week}` });
+  const streaks = computeLongestStreaks(standings);
+  if (streaks.longestWin && streaks.longestWin.len > 1) awards.push({ label: 'Longest win streak', t: streaks.longestWin.teamId, stat: `${streaks.longestWin.len} straight`, note: 'Nobody could stop them' });
+  const ap = computeAllPlayRecords(standings);
+  const luckDelta = (a) => { const g = a.allPlayWins + a.allPlayLosses; return g ? a.actualWins - (a.allPlayWins / g) * (a.actualWins + a.actualLosses) : 0; };
+  const unl = [...ap].sort((a, b) => luckDelta(a) - luckDelta(b))[0];
+  const luk = [...ap].sort((a, b) => luckDelta(b) - luckDelta(a))[0];
+  if (luk && unl && luk.teamId !== unl.teamId && luckDelta(luk) > 0 && luckDelta(unl) < 0) {
+    awards.push({ label: 'Luckiest team', t: luk.teamId, stat: `${luckDelta(luk) >= 0 ? '+' : ''}${luckDelta(luk).toFixed(1)} wins`, note: 'More wins than their scoring earned' });
+    awards.push({ label: 'Unluckiest team', t: unl.teamId, stat: `${luckDelta(unl) >= 0 ? '+' : ''}${luckDelta(unl).toFixed(1)} wins`, note: 'Scored like a contender, finished like one\u2026 not' });
+  }
+
+  const podium = {};
+  for (const r of podiumResults || []) if (r.team_id != null && teams[r.team_id]) podium[r.place] = r.team_id;
+
+  // the three moments, from the real poll history
+  const resample = (arr, n) => { const out = []; for (let i = 0; i < n; i++) { const f = i / (n - 1) * (arr.length - 1), lo = Math.floor(f), hi = Math.min(arr.length - 1, lo + 1); out.push(arr[lo] + (arr[hi] - arr[lo]) * (f - lo)); } return out; };
+  const series = (matchupTimeSeries || []).map((m) => ({ m, h: (m.homeWinProbs || []).filter((v) => Number.isFinite(v)) })).filter((x) => x.h.length >= 8 && x.m.winnerTeamId != null && teams[x.m.homeTeamId] && teams[x.m.awayTeamId]);
+  const used = new Set(), pick = [];
+  // biggest upset: a real Upset Watch episode where the underdog actually won
+  let up = null;
+  for (const x of series) {
+    for (const ep of walkUpsetState(x.h).episodes) {
+      const favId = ep.favoriteSide === 'home' ? x.m.homeTeamId : x.m.awayTeamId, dogId = favId === x.m.homeTeamId ? x.m.awayTeamId : x.m.homeTeamId;
+      if (x.m.winnerTeamId === dogId && (!up || ep.peakFavoritePct > up.peak)) up = { x, favId, dogId, peak: ep.peakFavoritePct };
+    }
+  }
+  const side = (x, id) => (id === x.m.homeTeamId ? x.h : x.h.map((v) => 100 - v));
+  const key = (x) => x.m.matchupId + '|' + x.m.week;
+  if (up) { used.add(key(up.x)); pick.push({ title: 'The biggest upset', stamp: 'UPSET', col: '#ff5a5f', A: up.favId, B: up.dogId, s: side(up.x, up.favId), note: `Week ${up.x.m.week} \u00b7 a ${Math.round(up.peak)}% favorite. Gone.` }); }
+  // comeback: winner's lowest win probability
+  let cb = null;
+  for (const x of series) { if (used.has(key(x))) continue; const wid = x.m.winnerTeamId, s = side(x, wid), lo = Math.min(...s); if (!cb || lo < cb.lo) cb = { x, wid, lo, s }; }
+  if (cb && cb.lo < 35) { used.add(key(cb.x)); const lid = cb.wid === cb.x.m.homeTeamId ? cb.x.m.awayTeamId : cb.x.m.homeTeamId; pick.unshift({ title: 'The comeback', stamp: 'COMEBACK', col: '#e0b23d', A: cb.wid, B: lid, s: cb.s, note: `Week ${cb.x.m.week} \u00b7 down to ${Math.max(1, Math.round(cb.lo))}% \u2014 and they won anyway.` }); }
+  // heartbreaker: loser's highest win probability
+  let hb = null;
+  for (const x of series) { if (used.has(key(x))) continue; const wid = x.m.winnerTeamId, lid = wid === x.m.homeTeamId ? x.m.awayTeamId : x.m.homeTeamId, s = side(x, lid), hi = Math.max(...s); if (!hb || hi > hb.hi) hb = { x, lid, wid, hi, s }; }
+  if (hb && hb.hi > 65) pick.unshift({ title: 'The heartbreaker', stamp: 'HEARTBREAK', col: '#ff5a5f', A: hb.lid, B: hb.wid, s: hb.s, note: `Week ${hb.x.m.week} \u00b7 led as high as ${Math.round(hb.hi)}%. Lost anyway.` });
+  const moments = pick.map((m, i) => ({ ...m, no: pick.length - i, s: resample(m.s.map((v) => Math.max(1, Math.min(99, v))), 140) }));
+
+  return { year, teams, order, weekNums, cum, totalPts, close, blow, awards, podium, champ: podium[1] != null ? podium[1] : null, moments };
 }
 
 function renderLiteNote(isLite) {
