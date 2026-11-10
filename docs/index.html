@@ -1430,11 +1430,15 @@
   .espn-chartBox { position: relative; height: 220px; width: 100%; margin: 6px 0; }
   /* ---- ESPN chart FX canvas (see initChartFx in app.js) ---- */
   .espn-fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
-  .espn-card.fx-flash:not(.upset-watch) { animation: espnFxFlash 1.2s ease-out 1; }
+  /* The flash plays on the chart box, NOT the card: the card's own base animation is the one-time cardEnter, and replacing it
+     (then removing the flash) would restart cardEnter, which looked like the whole chart reloading on every event. */
+  .espn-card.fx-flash:not(.upset-watch) .espn-chartBox { animation: espnFxFlash 1.2s ease-out 1; border-radius: 8px; }
+  .espn-card.entered:not(.upset-watch) { animation: none; } /* entrance already played; never replay it */
+  .espn-card.entered.upset-watch { animation: upsetPulse 2.4s ease-in-out infinite; } /* pulse only, so turning upset watch on never replays the entrance */
   @keyframes espnFxFlash { 0% { box-shadow: 0 0 0 2px var(--fx), 0 0 30px 3px var(--fx); } 100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; } }
-  @media (prefers-reduced-motion: reduce) { .espn-fx { display: none; } .espn-card.fx-flash { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .espn-fx { display: none; } .espn-card.fx-flash .espn-chartBox { animation: none; } }
   html[data-reduce-motion="true"] .espn-fx { display: none; }
-  html[data-reduce-motion="true"] .espn-card.fx-flash { animation: none; }
+  html[data-reduce-motion="true"] .espn-card.fx-flash .espn-chartBox { animation: none; }
 
 
   /* ======== Festive weeks (Halloween / Thanksgiving / Christmas) ========
@@ -1874,6 +1878,6 @@
 <script src="config.js"></script>
 <button id="festMeteor" type="button" hidden aria-label="Replay the meteor strike" title="Replay the meteor strike"><span class="fm-crater"></span><span class="fm-glow"></span><i></i><i></i><i></i><span class="fm-rock"></span><span class="fm-sleigh">🛷</span><span class="fm-label">Replay the impact</span></button>
 <script src="week-cinema.js?v=1"></script>
-<script src="app.js?v=58"></script>
+<script src="app.js?v=59"></script>
 </body>
 </html>
