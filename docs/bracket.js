@@ -252,7 +252,8 @@
     if (cur) for (const x of cur.games) if (x.winner) fixed.set(`${x.a}|${x.b}`, x.winner);
     const count = new Map();
     const N = 1500;
-    const draw = () => Math.sqrt(-2 * Math.log(Math.random() || 1e-9)) * Math.cos(2 * Math.PI * Math.random());
+    seedRng(`bracket|${state.leagueId}|${state.year}|${W}`);
+    const draw = () => Math.sqrt(-2 * Math.log(rand() || 1e-9)) * Math.cos(2 * Math.PI * rand());
     for (let n = 0; n < N; n++) {
       const m = new Map(state.teamIds.map((id) => [id, mu.get(id) + draw() * se.get(id)]));
       const ko = (a, b) => ((m.get(a) + draw() * SCORE_SD) >= (m.get(b) + draw() * SCORE_SD) ? a : b);
