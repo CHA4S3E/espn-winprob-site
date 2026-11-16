@@ -526,7 +526,11 @@ async function loadLeagueData(leagueId) {
   const playoffSpots = rawSpots == null ? Math.max(1, Math.floor(teamIds.length / 2)) : rawSpots;
   const size = nextPow2(Math.max(2, playoffSpots));
   const rounds = Math.round(Math.log2(size));
-  const reseedWeeks = (currentLeague && currentLeague.reseed_weeks) || [];
+  let reseedWeeks = (currentLeague && currentLeague.reseed_weeks) || [];
+  // Branford: weeks 12-14 are Swiss-style -- every week the standings re-pair neighbors (1v2, 3v4, ...), skipping any pair that
+  // already met in these weeks (1v3 / 2v4 instead). Handled in simulateOutlook via state.swissWeeks.
+  const swissWeeks = currentLeague && /branford/i.test(currentLeague.name || '') ? [12, 13, 14] : [];
+  if (swissWeeks.length) reseedWeeks = [...new Set([...reseedWeeks, ...swissWeeks])].sort((a, b) => a - b);
 
   // Real pairings per week, preferring what actually happened/was posted:
   // matchups already in snapshots, then the saved schedule.
@@ -552,7 +556,7 @@ async function loadLeagueData(leagueId) {
   }
 
   state = {
-    teamIds, cw, playoffSpots, rawSpotsMissing: rawSpots == null, reseedWeeks, size, byes: size - playoffSpots,
+    teamIds, cw, playoffSpots, rawSpotsMissing: rawSpots == null, reseedWeeks, swissWeeks, size, byes: size - playoffSpots,
     regEnd: REG_SEASON_END_DEFAULT_BASE - rounds, // playoff weeks (cw beyond this) are handled by the bracket
     pregameMap: extractPregameWinProb(allRows), pairingsByWeek, scheduleWeeks,
     usedRealSchedule: scheduleRows.length > 0,
@@ -637,6 +641,7 @@ function simulateOutlook(W, numSims) {
   if (outlookCache.has(key)) return outlookCache.get(key);
   const { teamIds, regEnd, playoffSpots, reseedWeeks, size, byes, pairingsByWeek } = state;
   const reseedSet = new Set(reseedWeeks);
+  const swissSet = new Set(state.swissWeeks || []);
   const { ratings, mu } = strengthAsOf(W);
   // Records as of the end of the REGULAR season at most -- playoff games don't count toward seeding.
   const standings = fillMissingTeams(computeStandings(allRows, teamInfo, Math.min(W, regEnd)), teamIds, teamInfo);
@@ -680,11 +685,24 @@ function simulateOutlook(W, numSims) {
     for (const [id, r] of start) rec.set(id, { ...r });
     muSim = new Map();
     for (const id of teamIds) muSim.set(id, mu.get(id) + sampleNormalFast(0, strengthSE.get(id)));
+    // Swiss weeks: pairs that have already met in a Swiss week (real ones through week W, plus any paired earlier in this sim)
+    const met = new Set();
+    const pk = (a, b) => (String(a) < String(b) ? a + '|' + b : b + '|' + a);
+    if (swissSet.size) for (const sw of swissSet) if (sw <= W && pairingsByWeek.has(sw)) for (const [a, b] of pairingsByWeek.get(sw)) met.add(pk(a, b));
     for (let wk = W + 1; wk <= regEnd; wk++) {
       let pairs;
       if (reseedSet.has(wk)) {
         const order = sortRec(rec); pairs = [];
-        for (let i = 0; i + 1 < order.length; i += 2) pairs.push([order[i], order[i + 1]]);
+        if (swissSet.has(wk)) {
+          const left = order.slice();
+          while (left.length > 1) {
+            const a = left.shift();
+            let j = left.findIndex((b) => !met.has(pk(a, b)));
+            if (j < 0) j = 0; // nobody fresh left: accept the rematch
+            const b = left.splice(j, 1)[0];
+            pairs.push([a, b]); met.add(pk(a, b));
+          }
+        } else for (let i = 0; i + 1 < order.length; i += 2) pairs.push([order[i], order[i + 1]]);
         for (const [a, b] of pairs) for (const [x, y] of [[a, b], [b, a]]) {
           const k = wk + '|' + x; let m = oppCounts.get(k); if (!m) { m = new Map(); oppCounts.set(k, m); }
           m.set(y, (m.get(y) || 0) + 1);
@@ -823,7 +841,8 @@ function render(animate) {
   const approx = cur.approxWeeks;
   const bits = [];
   bits.push(`Top ${state.playoffSpots} make the playoffs${state.byes ? `, top ${state.byes} get a first-round bye` : ''}${state.rawSpotsMissing ? ' (playoff spots not set for this league -- assuming half the league)' : ''}. Team strength is the Power Rating from Standings, blended with each team's last three scores; ${sims.toLocaleString()} simulated seasons per week.`);
-  if (state.reseedWeeks.length) bits.push(`Week${state.reseedWeeks.length > 1 ? 's' : ''} ${state.reseedWeeks.join(', ')} ${state.reseedWeeks.length > 1 ? 'are' : 'is'} re-paired by standings inside every simulated season.`);
+  if (state.swissWeeks && state.swissWeeks.length) bits.push(`Weeks ${state.swissWeeks.join(', ')} are Swiss-style: re-seeded by the standings every week (1v2, 3v4, 5v6, …), skipping any pair that already met in those weeks.`);
+  { const rs = state.reseedWeeks.filter((w) => !(state.swissWeeks || []).includes(w)); if (rs.length) bits.push(`Week${rs.length > 1 ? 's' : ''} ${rs.join(', ')} ${rs.length > 1 ? 'are' : 'is'} re-paired by standings inside every simulated season.`); }
   if (approx.length) bits.push(`<b>Week${approx.length > 1 ? 's' : ''} ${approx.join(', ')} use${approx.length > 1 ? '' : 's'} a random-opponent approximation</b> -- the real schedule for ${approx.length > 1 ? 'those weeks hasn’t' : 'that week hasn’t'} been saved yet${state.usedRealSchedule ? '' : ' (the poller saves it on its next run once migration 020 is applied)'}.`);
   bits.push('Odds are a simulation, not a guarantee.');
   noteEl.innerHTML = bits.join(' ');
