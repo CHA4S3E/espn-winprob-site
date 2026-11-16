@@ -575,8 +575,21 @@ async function loadLeagueData(leagueId) {
 }
 
 // ---------- odds engine ----------
+// Seeded RNG (mulberry32): the same league / year / week / sim-count always gives the SAME odds, so a reload never moves them.
+let _rngState = 1;
+function seedRng(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  _rngState = h >>> 0 || 1;
+}
+function rand() {
+  _rngState = (_rngState + 0x6D2B79F5) | 0;
+  let t = Math.imul(_rngState ^ (_rngState >>> 15), 1 | _rngState);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
 function sampleNormalFast(mu, sd) {
-  const u1 = Math.random() || 1e-9, u2 = Math.random();
+  const u1 = rand() || 1e-9, u2 = rand();
   return mu + sd * Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 }
 const winProbFromMu = (mi, mj) => normalCdf((mi - mj) / (SCORE_SD * Math.SQRT2));
@@ -640,6 +653,7 @@ function simulateOutlook(W, numSims) {
   const key = `${W}|${numSims}`;
   if (outlookCache.has(key)) return outlookCache.get(key);
   const { teamIds, regEnd, playoffSpots, reseedWeeks, size, byes, pairingsByWeek } = state;
+  seedRng(`${state.leagueId}|${state.year}|${W}|${numSims}`);
   const reseedSet = new Set(reseedWeeks);
   const swissSet = new Set(state.swissWeeks || []);
   const { ratings, mu } = strengthAsOf(W);
@@ -712,7 +726,7 @@ function simulateOutlook(W, numSims) {
       } else {
         approxWeeks.add(wk);
         const order = teamIds.slice();
-        for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+        for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
         pairs = [];
         for (let i = 0; i + 1 < order.length; i += 2) pairs.push([order[i], order[i + 1]]);
       }
@@ -876,13 +890,16 @@ function fillPanel(item) {
 
   // Remaining schedule with per-game win odds
   const games = [];
+  const swissShown = new Set(); // opponents already shown for this team in earlier Swiss weeks (the sim never repeats them either)
   for (let wk = W + 1; wk <= state.regEnd; wk++) {
     if (state.reseedWeeks.includes(wk)) {
       // Matched by standings inside every simulated season: show the opponent
       // this team most often draws, as a tentative matchup.
       const cnt = simulateOutlook(W, sims).oppCounts.get(wk + '|' + id);
       let best = null, bestN = 0;
-      if (cnt) for (const [o, n] of cnt) if (n > bestN) { best = o; bestN = n; }
+      const isSwiss = (state.swissWeeks || []).includes(wk);
+      if (cnt) for (const [o, n] of cnt) if (n > bestN && !(isSwiss && swissShown.has(o))) { best = o; bestN = n; }
+      if (best && isSwiss) swissShown.add(best);
       if (best) { const o = simulateOutlook(W, sims).get(best); games.push({ wk, opp: best, p: winProbFromMu(x.mu, o.mu), tent: bestN / sims }); }
       else games.push({ wk, label: 'Matched by standings (reseed week)' });
       continue;
