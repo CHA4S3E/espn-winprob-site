@@ -3598,7 +3598,9 @@ function startKickoffImpact(theme, year, week) {
 function setDoom(d) {
   const root = document.documentElement;
   const comet = document.getElementById('comet');
-  if (!comet || !comet.classList.contains('on') || cometSuppressed) d = 0;
+  // The build-up (swelling comet, glow, trembling) is only for a countdown to the HOLIDAY week's own kickoff. A normal week's countdown
+  // while next week's comet is merely approaching must not trigger it.
+  if (!comet || !comet.classList.contains('on') || cometSuppressed || !FEST_METEOR[kcHintTheme]) d = 0;
   d = Math.min(Math.max(d, 0), 1);
   const v = d.toFixed(3);
   if (root.dataset.doom !== v) { root.dataset.doom = v; root.style.setProperty('--comet-d', v); }
