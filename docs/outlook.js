@@ -711,33 +711,39 @@ function simulateOutlook(W, numSims) {
       (ahead >= playoffSpots ? eliminated : contenders).push(id);
     }
     const out = [];
+    // Within a group: among all pairings that are valid (no repeats, partners within `maxGap` places of each other in the standings --
+    // so neighbors, or the next team down swapping in), pick the one that best fits the schedule-luck adjustment: low points-against
+    // (easier schedule so far) -> tougher (higher-ranked) opponent. PA only chooses between valid options; ties keep the plain
+    // neighbor pairing (smallest total gap).
     const pairGroup = (list) => {
-      const left = list.slice();
-      while (left.length > 1) {
-        const a = left.shift();
-        if (left.length >= 3 && met.has(pk2(a, left[0]))) {
-          // the neighbor is a repeat: the next teams down swap in. If two arrangements both work, PA decides who gets the tougher one.
-          const b = left[0], fresh = [];
-          for (let i = 1; i < left.length && fresh.length < 2; i++) if (!met.has(pk2(a, left[i]))) fresh.push(i);
-          if (fresh.length === 2) {
-            const c1 = left[fresh[0]], c2 = left[fresh[1]];
-            const okX = !met.has(pk2(b, c2)), okY = !met.has(pk2(b, c1));
-            let aGetsC1 = true;
-            if (okX && okY) aGetsC1 = rec.get(a).pa <= rec.get(b).pa; // lower PA -> tougher (higher-ranked) opponent
-            else if (!okX && okY) aGetsC1 = false;
-            const pa1 = aGetsC1 ? [a, c1] : [a, c2], pb1 = aGetsC1 ? [b, c2] : [b, c1];
-            if (!met.has(pk2(pb1[0], pb1[1]))) {
-              out.push(pa1, pb1); met.add(pk2(pa1[0], pa1[1])); met.add(pk2(pb1[0], pb1[1]));
-              [b, c1, c2].forEach((t) => left.splice(left.indexOf(t), 1));
-              continue;
-            }
+      const n = list.length; if (n < 2) return;
+      const paOf = list.map((id) => rec.get(id).pa);
+      const solve = (maxGap) => {
+        let best = null;
+        const used = new Array(n).fill(false), cur = [];
+        const rec2 = (score, gapSum) => {
+          let a = 0; while (a < n && used[a]) a++;
+          if (a >= n) { if (!best || score > best.score + 1e-9 || (Math.abs(score - best.score) <= 1e-9 && gapSum < best.gap)) best = { score, gap: gapSum, pairs: cur.slice() }; return; }
+          used[a] = true;
+          for (let b = a + 1; b < n && b - a <= maxGap; b++) {
+            if (used[b] || met.has(pk2(list[a], list[b]))) continue;
+            used[b] = true; cur.push([a, b]);
+            // maximize sum(PA * opponent rank number): low PA paired with a small rank number (tougher), high PA with a large one (easier)
+            rec2(score + paOf[a] * (b + 1) + paOf[b] * (a + 1), gapSum + (b - a));
+            cur.pop(); used[b] = false;
           }
-        }
-        let j = left.findIndex((b) => !met.has(pk2(a, b)));
-        if (j < 0) j = 0; // nobody fresh left: accept the rematch
-        const b = left.splice(j, 1)[0];
-        out.push([a, b]); met.add(pk2(a, b));
+          used[a] = false;
+        };
+        if (n % 2 === 0) rec2(0, 0);
+        return best;
+      };
+      let sol = null;
+      for (let g = 2; g <= n && !sol; g++) sol = solve(g);
+      if (!sol) { // no repeat-free arrangement at all: fall back to plain neighbors
+        for (let k = 0; k + 1 < n; k += 2) { out.push([list[k], list[k + 1]]); met.add(pk2(list[k], list[k + 1])); }
+        return;
       }
+      for (const [a, b] of sol.pairs) { out.push([list[a], list[b]]); met.add(pk2(list[a], list[b])); }
     };
     if (contenders.length % 2 === 1 && eliminated.length) {
       const low = contenders.pop(), top = eliminated.shift();
