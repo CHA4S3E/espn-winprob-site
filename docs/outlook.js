@@ -659,7 +659,7 @@ function simulateOutlook(W, numSims) {
   const { ratings, mu } = strengthAsOf(W);
   // Records as of the end of the REGULAR season at most -- playoff games don't count toward seeding.
   const standings = fillMissingTeams(computeStandings(allRows, teamInfo, Math.min(W, regEnd)), teamIds, teamInfo);
-  const start = new Map(standings.map((s) => [s.teamId, { w: s.wins, l: s.losses, t: s.ties, pf: s.pointsFor }]));
+  const start = new Map(standings.map((s) => [s.teamId, { w: s.wins, l: s.losses, t: s.ties, pf: s.pointsFor, pa: s.pointsAgainst || 0 }]));
   const stats = new Map(teamIds.map((id) => [id, { playoffs: 0, bye: 0, semis: 0, final: 0, title: 0, winSum: 0, wins: new Map(), gamesLeft: 0 }]));
   const approxWeeks = new Set();
   const oppCounts = new Map(); // `${week}|${team}` -> Map(opponent -> sims) for standings-matched weeks
@@ -689,10 +689,63 @@ function simulateOutlook(W, numSims) {
   const game = (a, b, rec) => {
     const sa = sampleNormalFast(muSim.get(a), SCORE_SD), sb2 = sampleNormalFast(muSim.get(b), SCORE_SD);
     const ra = rec.get(a), rb = rec.get(b);
-    ra.pf += sa; rb.pf += sb2;
+    ra.pf += sa; rb.pf += sb2; ra.pa += sb2; rb.pa += sa;
     if (sa > sb2) { ra.w++; rb.l++; } else if (sb2 > sa) { rb.w++; ra.l++; } else { ra.t++; rb.t++; }
   };
   const knockout = (a, b) => (sampleNormalFast(muSim.get(a), SCORE_SD) >= sampleNormalFast(muSim.get(b), SCORE_SD) ? a : b);
+
+  // Branford Swiss weeks (the league's posted rules): standings by record then PF; split into CONTENDERS (can still mathematically
+  // finish in the top `playoffSpots`) and ELIMINATED; neighbors play within each group (1v2, 3v4...); no repeats within these weeks
+  // (the next team down swaps in); an odd contender group sends its lowest team against the top eliminated team; when two
+  // non-repeat arrangements are equally valid, the team with the lower points-against gets the tougher (higher-ranked) opponent.
+  function swissPairs(order, rec, wk, met) {
+    const pk2 = (a, b) => (String(a) < String(b) ? a + '|' + b : b + '|' + a);
+    const wpts = (id) => rec.get(id).w + rec.get(id).t / 2;
+    const gamesLeft = regEnd - wk + 1; // includes this week
+    // Eliminated = at least `playoffSpots` teams are already guaranteed to finish ahead (their current wins beat this team's best case)
+    const contenders = [], eliminated = [];
+    for (const id of order) {
+      const best = wpts(id) + gamesLeft;
+      let ahead = 0;
+      for (const o of order) if (o !== id && wpts(o) > best) ahead++;
+      (ahead >= playoffSpots ? eliminated : contenders).push(id);
+    }
+    const out = [];
+    const pairGroup = (list) => {
+      const left = list.slice();
+      while (left.length > 1) {
+        const a = left.shift();
+        if (left.length >= 3 && met.has(pk2(a, left[0]))) {
+          // the neighbor is a repeat: the next teams down swap in. If two arrangements both work, PA decides who gets the tougher one.
+          const b = left[0], fresh = [];
+          for (let i = 1; i < left.length && fresh.length < 2; i++) if (!met.has(pk2(a, left[i]))) fresh.push(i);
+          if (fresh.length === 2) {
+            const c1 = left[fresh[0]], c2 = left[fresh[1]];
+            const okX = !met.has(pk2(b, c2)), okY = !met.has(pk2(b, c1));
+            let aGetsC1 = true;
+            if (okX && okY) aGetsC1 = rec.get(a).pa <= rec.get(b).pa; // lower PA -> tougher (higher-ranked) opponent
+            else if (!okX && okY) aGetsC1 = false;
+            const pa1 = aGetsC1 ? [a, c1] : [a, c2], pb1 = aGetsC1 ? [b, c2] : [b, c1];
+            if (!met.has(pk2(pb1[0], pb1[1]))) {
+              out.push(pa1, pb1); met.add(pk2(pa1[0], pa1[1])); met.add(pk2(pb1[0], pb1[1]));
+              [b, c1, c2].forEach((t) => left.splice(left.indexOf(t), 1));
+              continue;
+            }
+          }
+        }
+        let j = left.findIndex((b) => !met.has(pk2(a, b)));
+        if (j < 0) j = 0; // nobody fresh left: accept the rematch
+        const b = left.splice(j, 1)[0];
+        out.push([a, b]); met.add(pk2(a, b));
+      }
+    };
+    if (contenders.length % 2 === 1 && eliminated.length) {
+      const low = contenders.pop(), top = eliminated.shift();
+      out.push([low, top]); met.add(pk2(low, top));
+    }
+    pairGroup(contenders); pairGroup(eliminated);
+    return out;
+  }
 
   for (let sim = 0; sim < numSims; sim++) {
     const rec = new Map();
@@ -708,14 +761,7 @@ function simulateOutlook(W, numSims) {
       if (reseedSet.has(wk)) {
         const order = sortRec(rec); pairs = [];
         if (swissSet.has(wk)) {
-          const left = order.slice();
-          while (left.length > 1) {
-            const a = left.shift();
-            let j = left.findIndex((b) => !met.has(pk(a, b)));
-            if (j < 0) j = 0; // nobody fresh left: accept the rematch
-            const b = left.splice(j, 1)[0];
-            pairs.push([a, b]); met.add(pk(a, b));
-          }
+          pairs = swissPairs(order, rec, wk, met);
         } else for (let i = 0; i + 1 < order.length; i += 2) pairs.push([order[i], order[i + 1]]);
         for (const [a, b] of pairs) for (const [x, y] of [[a, b], [b, a]]) {
           const k = wk + '|' + x; let m = oppCounts.get(k); if (!m) { m = new Map(); oppCounts.set(k, m); }
@@ -855,7 +901,7 @@ function render(animate) {
   const approx = cur.approxWeeks;
   const bits = [];
   bits.push(`Top ${state.playoffSpots} make the playoffs${state.byes ? `, top ${state.byes} get a first-round bye` : ''}${state.rawSpotsMissing ? ' (playoff spots not set for this league -- assuming half the league)' : ''}. Team strength is the Power Rating from Standings, blended with each team's last three scores; ${sims.toLocaleString()} simulated seasons per week.`);
-  if (state.swissWeeks && state.swissWeeks.length) bits.push(`Weeks ${state.swissWeeks.join(', ')} are Swiss-style: re-seeded by the standings every week (1v2, 3v4, 5v6, …), skipping any pair that already met in those weeks.`);
+  if (state.swissWeeks && state.swissWeeks.length) bits.push(`Weeks ${state.swissWeeks.join(', ')} are set fresh each week by the posted rules: teams still mathematically alive for the top ${state.playoffSpots} play each other (1v2, 3v4, …), eliminated teams play each other, no repeats within those weeks, an odd group sends its lowest contender against the top eliminated team, and a lower points-against gets the tougher opponent when options are otherwise equal.`);
   { const rs = state.reseedWeeks.filter((w) => !(state.swissWeeks || []).includes(w)); if (rs.length) bits.push(`Week${rs.length > 1 ? 's' : ''} ${rs.join(', ')} ${rs.length > 1 ? 'are' : 'is'} re-paired by standings inside every simulated season.`); }
   if (approx.length) bits.push(`<b>Week${approx.length > 1 ? 's' : ''} ${approx.join(', ')} use${approx.length > 1 ? '' : 's'} a random-opponent approximation</b> -- the real schedule for ${approx.length > 1 ? 'those weeks hasn’t' : 'that week hasn’t'} been saved yet${state.usedRealSchedule ? '' : ' (the poller saves it on its next run once migration 020 is applied)'}.`);
   bits.push('Odds are a simulation, not a guarantee.');
