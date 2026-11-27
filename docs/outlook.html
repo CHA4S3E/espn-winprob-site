@@ -177,6 +177,10 @@
   @media (prefers-reduced-motion: reduce) { .bk-cam { transition: none; } }
 
 
+  .clinch { display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 999px; vertical-align: 2px; }
+  .clinch.x { background: color-mix(in srgb, var(--win) 22%, transparent); color: var(--win); }
+  .clinch.e { background: color-mix(in srgb, var(--loss) 20%, transparent); color: var(--loss); }
+
   /* ---- Playoff tools: what I need / scenario picker / rooting guide ---- */
   .tools { margin-top: 34px; }
   .tl-title { font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl); margin: 0 0 2px; text-align: center; }
@@ -277,7 +281,7 @@
 
 <script src="season-look.js?v=1"></script>
 <script src="config.js"></script>
-<script src="outlook.js?v=10"></script>
+<script src="outlook.js?v=11"></script>
 <script src="bracket.js?v=2"></script>
 </body>
 </html>
