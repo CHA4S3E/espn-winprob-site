@@ -176,6 +176,54 @@
   .bk-stage.cinema .bk-skip { display: block; }
   @media (prefers-reduced-motion: reduce) { .bk-cam { transition: none; } }
 
+
+  /* ---- Playoff tools: what I need / scenario picker / rooting guide ---- */
+  .tools { margin-top: 34px; }
+  .tl-title { font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl); margin: 0 0 2px; text-align: center; }
+  .tl-sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 12px; }
+  .tl-bar { display: flex; justify-content: center; margin-bottom: 16px; font-size: var(--text-sm); color: var(--muted); }
+  .tl-bar select { margin-left: 6px; }
+  .tl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .tl-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px 18px; min-width: 0; }
+  .tl-card.tl-wide { grid-column: 1 / -1; }
+  .tl-card h3 { margin: 0 0 8px; font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl); }
+  .tl-muted { color: var(--muted); font-size: var(--text-sm); }
+  .tl-line { font-size: var(--text-base); margin-bottom: 10px; line-height: 1.4; }
+  .tl-tbl { width: 100%; border-collapse: collapse; font-size: var(--text-base); font-variant-numeric: tabular-nums; margin-bottom: 8px; }
+  .tl-tbl th { text-align: right; font-size: var(--text-xs); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px; }
+  .tl-tbl td { text-align: right; padding: 6px; border-top: 1px solid var(--border); position: relative; }
+  .tl-tbl td:first-child { text-align: left; }
+  .tl-tbl tr.base td { color: var(--muted); }
+  .tl-bar2 { position: absolute; left: 0; bottom: 0; height: 3px; width: calc(var(--p) * 100%); background: var(--accent); opacity: .55; border-radius: 2px; }
+  .tl-games { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+  .tl-g { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; font-size: var(--text-sm); padding: 4px 6px; border-radius: var(--r-md); }
+  .tl-g.mine { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .tl-t { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .tl-t.r { justify-content: flex-end; text-align: right; }
+  .tl-t .n { overflow: hidden; text-overflow: ellipsis; }
+  .tl-ic { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; flex: none; }
+  .tl-ic img { width: 18px; height: 18px; object-fit: contain; border-radius: 50%; }
+  .tl-seg { display: inline-flex; border: 1px solid var(--btn-border); border-radius: var(--r-pill); overflow: hidden; }
+  .tl-seg button { font: inherit; font-size: var(--text-xs); font-weight: 600; background: var(--input-bg); color: var(--fg); border: 0; padding: 5px 10px; cursor: pointer; }
+  .tl-seg button + button { border-left: 1px solid var(--btn-border); }
+  .tl-seg button:hover { background: var(--btn-hover); }
+  .tl-seg button.on { background: var(--accent); color: #fff; }
+  .tl-reset { font: inherit; font-size: var(--text-xs); background: none; border: 1px solid var(--btn-border); color: var(--muted); border-radius: var(--r-pill); padding: 4px 12px; cursor: pointer; margin-top: 8px; }
+  .tl-out { margin-top: 6px; }
+  .tl-ms { display: flex; gap: 10px; margin-bottom: 6px; }
+  .tl-m { flex: 1; background: var(--panel-bg); border-radius: var(--r-md); padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+  .tl-m span { font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .tl-m b { font-size: var(--text-2xl); font-family: var(--font-display); font-weight: 400; line-height: 1.1; }
+  .tl-m em, .up, .dn { font-style: normal; }
+  .tl-m em.up, .up { color: var(--win); } .tl-m em.dn, .dn { color: var(--loss); }
+  .tl-m em { font-size: var(--text-sm); font-weight: 700; }
+  .tl-rows { display: flex; flex-direction: column; margin-top: 8px; }
+  .tl-r { display: grid; grid-template-columns: 1.3fr 1.2fr auto; gap: 12px; align-items: center; padding: 9px 4px; border-top: 1px solid var(--border); font-size: var(--text-base); }
+  .tl-r.mine { background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: var(--r-md); border-top-color: transparent; padding-left: 10px; }
+  .tl-r.flat { opacity: .6; }
+  .tl-rs { font-size: var(--text-xs); font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; text-align: right; }
+  @media (max-width: 780px) { .tl-grid { grid-template-columns: 1fr; } .tl-r { grid-template-columns: 1fr auto; } .tl-rv { grid-column: 1 / -1; order: 3; } }
+
   @media (max-width: 780px) {
     .row, .head { grid-template-columns: 28px 58px minmax(110px,1fr) 52px repeat(3, 54px) !important; }
     .row > :nth-child(5), .head > :nth-child(5) { display: none; }
@@ -227,8 +275,9 @@
   </div>
 </div>
 
+<script src="season-look.js?v=1"></script>
 <script src="config.js"></script>
-<script src="outlook.js?v=9"></script>
+<script src="outlook.js?v=10"></script>
 <script src="bracket.js?v=2"></script>
 </body>
 </html>
