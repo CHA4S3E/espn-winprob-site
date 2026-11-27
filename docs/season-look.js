@@ -28,8 +28,8 @@ html[data-theme="light"][data-seasonal-theme="christmas"] { --fest-bg: radial-gr
   html[data-seasonal-theme="halloween"] body, html[data-seasonal-theme="thanksgiving"] body, html[data-seasonal-theme="christmas"] body { min-height: 100vh; }
   html[data-seasonal-theme] .page-title, html[data-seasonal-theme] h1, html[data-seasonal-theme] h2 { font-family: var(--fest-font, var(--font-display)); }
   html[data-seasonal-theme="christmas"] .page-title { letter-spacing: 0; }
-  #sl_canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; }
-  #sl_fx { --fog-color: rgba(108, 96, 132, 0.4); position: fixed; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 0; opacity: 0; transition: opacity 1.4s ease; height: 22vh; min-height: 140px; max-height: 260px; overflow: hidden; }
+  #sl_canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none; }
+  #sl_fx { --fog-color: rgba(108, 96, 132, 0.4); position: fixed; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: -1; opacity: 0; transition: opacity 1.4s ease; height: 22vh; min-height: 140px; max-height: 260px; overflow: hidden; }
   html[data-theme="dark"] #sl_fx { --fog-color: rgba(176, 164, 205, 0.24); }
   html[data-seasonal-theme="halloween"] #sl_fx { opacity: 1; }
   #sl_fx i { position: absolute; top: 0; left: 0; height: 100%; width: 200%; background-repeat: repeat-x; filter: blur(8px); }
@@ -37,7 +37,7 @@ html[data-theme="light"][data-seasonal-theme="christmas"] { --fest-bg: radial-gr
   #sl_fx i:nth-child(2) { background-image: radial-gradient(ellipse 50% 85% at 70% 100%, var(--fog-color) 0%, transparent 72%); background-size: 50% 100%; opacity: 0.4; animation: slDrift 64s linear infinite reverse; }
   @keyframes slDrift { from { transform: translateX(0); } to { transform: translateX(-50%); } }
   html[data-reduce-motion="true"] #sl_fx i { animation: none !important; }
-  #sl_frost { position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0; transition: opacity .6s ease; }
+  #sl_frost { position: fixed; inset: 0; pointer-events: none; z-index: -1; opacity: 0; transition: opacity .6s ease; }
   html[data-seasonal-theme="coldsnap-pre"] #sl_frost, html[data-seasonal-theme="coldsnap-post"] #sl_frost { opacity: 1; }
   #sl_frost::before, #sl_frost::after { content: ''; position: absolute; bottom: 0; width: 46vw; height: 32vh; background: radial-gradient(ellipse at bottom, rgba(168,216,255,.22), transparent 70%); }
   html[data-theme="dark"] #sl_frost::before, html[data-theme="dark"] #sl_frost::after { background: radial-gradient(ellipse at bottom, rgba(140,190,255,.16), transparent 70%); }
@@ -165,14 +165,17 @@ html[data-theme="light"][data-seasonal-theme="christmas"] { --fest-bg: radial-gr
     startParticles(theme);
   }
 
+  // Runs as early as possible (script lives in <head>): inject the CSS and stamp the cached theme on <html> before first paint,
+  // so there is no flash of the default (blue) look while the page loads.
+  let saved = null; try { saved = JSON.parse(ls('winProbSeasonLook') || 'null'); } catch (e) { /* ignore */ }
+  const fresh = saved && saved.theme && Date.now() - saved.t < 6 * 3600 * 1000;
+  { const st = document.createElement('style'); st.textContent = CSS; (document.head || document.documentElement).appendChild(st); }
+  if (fresh && saved.theme !== 'none') document.documentElement.setAttribute('data-seasonal-theme', saved.theme);
   async function init() {
-    const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
-    // instant paint from the last answer (so the look doesn't pop in late), then confirm against the live schedule
-    let saved = null; try { saved = JSON.parse(ls('winProbSeasonLook') || 'null'); } catch (e) { /* ignore */ }
-    if (saved && saved.theme && Date.now() - saved.t < 6 * 3600 * 1000) apply(saved.theme);
+    if (fresh) apply(saved.theme);
     const theme = await currentTheme();
     try { localStorage.setItem('winProbSeasonLook', JSON.stringify({ theme, t: Date.now() })); } catch (e) { /* ignore */ }
-    if (!saved || saved.theme !== theme || Date.now() - saved.t >= 6 * 3600 * 1000) apply(theme);
+    if (!fresh || saved.theme !== theme) apply(theme);
   }
   if (document.body) init(); else document.addEventListener('DOMContentLoaded', init);
 })();
