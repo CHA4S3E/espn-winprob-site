@@ -649,8 +649,13 @@ function placeGames(games, seedIdx, r, size) {
   });
 }
 
-function simulateOutlook(W, numSims) {
-  const key = `${W}|${numSims}`;
+const pairKey = (a, b) => (String(a) < String(b) ? a + '|' + b : b + '|' + a);
+// scen (optional, used by the playoff tools): { games: Map(pairKey -> winnerId) forces NEXT week's results,
+//   teamWins: { id, wins } forces a team to win exactly `wins` of its remaining regular-season games (random which ones) }.
+// The random seed ignores scen, so scenarios share the same dice and differences between them are signal, not noise.
+function simulateOutlook(W, numSims, scen) {
+  const scenKey = scen ? JSON.stringify([scen.games ? [...scen.games.entries()].sort() : null, scen.teamWins || null]) : '';
+  const key = `${W}|${numSims}|${scenKey}`;
   if (outlookCache.has(key)) return outlookCache.get(key);
   const { teamIds, regEnd, playoffSpots, reseedWeeks, size, byes, pairingsByWeek } = state;
   seedRng(`${state.leagueId}|${state.year}|${W}|${numSims}`);
@@ -686,8 +691,9 @@ function simulateOutlook(W, numSims) {
       return pb - pa || b.pf - a.pf;
     });
   }
-  const game = (a, b, rec) => {
-    const sa = sampleNormalFast(muSim.get(a), SCORE_SD), sb2 = sampleNormalFast(muSim.get(b), SCORE_SD);
+  const game = (a, b, rec, fw) => {
+    let sa = sampleNormalFast(muSim.get(a), SCORE_SD), sb2 = sampleNormalFast(muSim.get(b), SCORE_SD);
+    if (fw && ((fw === a && sa < sb2) || (fw === b && sb2 < sa))) { const t = sa; sa = sb2; sb2 = t; } // forced result: keep realistic scores, flip who won
     const ra = rec.get(a), rb = rec.get(b);
     ra.pf += sa; rb.pf += sb2; ra.pa += sb2; rb.pa += sa;
     if (sa > sb2) { ra.w++; rb.l++; } else if (sb2 > sa) { rb.w++; ra.l++; } else { ra.t++; rb.t++; }
@@ -760,7 +766,13 @@ function simulateOutlook(W, numSims) {
     for (const id of teamIds) muSim.set(id, mu.get(id) + sampleNormalFast(0, strengthSE.get(id)));
     // Swiss weeks: pairs that have already met in a Swiss week (real ones through week W, plus any paired earlier in this sim)
     const met = new Set();
-    const pk = (a, b) => (String(a) < String(b) ? a + '|' + b : b + '|' + a);
+    const pk = pairKey;
+    let tw = null; // scenario: this team wins exactly N of its remaining games (which ones is random per simulated season)
+    if (scen && scen.teamWins) {
+      const wks = []; for (let w = W + 1; w <= regEnd; w++) wks.push(w);
+      for (let i = wks.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [wks[i], wks[j]] = [wks[j], wks[i]]; }
+      tw = { id: scen.teamWins.id, set: new Set(wks.slice(0, scen.teamWins.wins)) };
+    }
     if (swissSet.size) for (const sw of swissSet) if (sw <= W && pairingsByWeek.has(sw)) for (const [a, b] of pairingsByWeek.get(sw)) met.add(pk(a, b));
     for (let wk = W + 1; wk <= regEnd; wk++) {
       let pairs;
@@ -782,7 +794,12 @@ function simulateOutlook(W, numSims) {
         pairs = [];
         for (let i = 0; i + 1 < order.length; i += 2) pairs.push([order[i], order[i + 1]]);
       }
-      for (const [a, b] of pairs) { game(a, b, rec); if (sim === 0) { stats.get(a).gamesLeft++; stats.get(b).gamesLeft++; } }
+      for (const [a, b] of pairs) {
+        let fw = null;
+        if (wk === W + 1 && scen && scen.games) fw = scen.games.get(pairKey(a, b)) || null;
+        if (!fw && tw && (a === tw.id || b === tw.id)) fw = tw.set.has(wk) ? tw.id : (a === tw.id ? b : a);
+        game(a, b, rec, fw);
+        if (sim === 0) { stats.get(a).gamesLeft++; stats.get(b).gamesLeft++; } }
     }
     const order = sortRec(rec);
     order.forEach((id) => { const s = stats.get(id); s.winSum += rec.get(id).w; const wm = s.wins; wm.set(rec.get(id).w, (wm.get(rec.get(id).w) || 0) + 1); });
@@ -933,6 +950,7 @@ function countUp() {
     const step = (t) => { const k = Math.min(1, (t - t0) / 450), e = 1 - Math.pow(1 - k, 3); el.textContent = pct(to * e); if (k < 1) requestAnimationFrame(step); else el.textContent = pct(to); };
     requestAnimationFrame(step);
   });
+  renderTools();
 }
 
 function fillPanel(item) {
@@ -994,6 +1012,151 @@ function fillPanel(item) {
       <div class="legend2"><span><i style="background:${team.color}"></i>Make playoffs</span><span><i style="background:#f4c430"></i>Win title</span><span>marker = week ${W}</span></div>
       <h4 style="margin-top:16px">Final regular-season wins</h4><div class="distwrap"><div class="dist">${dist}</div></div></div>
     <div><h4>Remaining schedule &middot; win odds</h4><div class="sched">${sched}</div></div>`;
+}
+
+
+// ============================== PLAYOFF TOOLS ==============================
+// "What I need" (win-count paths + a scenario picker for next week's games) and the rooting guide (how much each of next
+// week's results moves the chosen team's playoff odds). All of it is the same simulation as the table above, just with
+// chosen results forced -- so the numbers always agree with the board.
+const tools = { team: null, picks: new Map(), W: null, league: null, token: 0, rootCache: new Map() };
+const toolSims = () => Math.min(numSims(), 3000);
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const tName = (id) => (teamInfo[id] ? teamInfo[id].name : '?');
+const tIcon = (id) => (teamInfo[id] ? `<span class="tl-ic">${renderTeamIcon(teamInfo[id])}</span>` : '');
+const tPct = (p) => (p < 0.005 ? '<1%' : p > 0.995 ? '>99%' : Math.round(p * 100) + '%');
+const tDelta = (d) => { const v = Math.round(d * 100); return v === 0 ? '±0' : (v > 0 ? '+' : '') + v; };
+
+function nextWeekGames(W) {
+  const wk = W + 1;
+  if (wk > state.regEnd) return [];
+  const base = simulateOutlook(W, toolSims());
+  const pairs = [];
+  if (state.reseedWeeks.includes(wk)) {
+    const seen = new Set();
+    const rank = state.teamIds.slice().sort((a, b) => base.get(b).power - base.get(a).power);
+    for (const id of rank) {
+      if (seen.has(id)) continue;
+      const cnt = base.oppCounts.get(wk + '|' + id); if (!cnt) continue;
+      let best = null, bn = 0; for (const [o, n] of cnt) if (n > bn) { best = o; bn = n; }
+      if (best && !seen.has(best)) { seen.add(id); seen.add(best); pairs.push([id, best]); }
+    }
+  } else (state.pairingsByWeek.get(wk) || []).forEach((p) => pairs.push(p));
+  return pairs;
+}
+
+function ensureToolsShell() {
+  let el = document.getElementById('tools');
+  if (el) return el;
+  el = document.createElement('section'); el.id = 'tools'; el.className = 'tools';
+  el.innerHTML = `<h2 class="tl-title">Playoff tools</h2><div class="tl-sub" id="tlSub"></div>
+    <div class="tl-bar"><label>Team <select id="tlTeam"></select></label></div>
+    <div class="tl-grid"><div class="tl-card" id="tlPaths"></div><div class="tl-card" id="tlScen"></div><div class="tl-card tl-wide" id="tlRoot"></div></div>`;
+  contentEl.appendChild(el);
+  el.querySelector('#tlTeam').addEventListener('change', (e) => { tools.team = e.target.value; try { localStorage.setItem('winProbToolsTeam:' + leagueSelect.value, tools.team); } catch (err) { /* ignore */ } tools.picks.clear(); renderTools(true); });
+  return el;
+}
+
+function renderTools(force) {
+  const el = ensureToolsShell();
+  const W = asOfWeek, sims = toolSims();
+  const games = nextWeekGames(W);
+  if (W >= state.regEnd || !games.length) { el.hidden = true; return; }
+  el.hidden = false;
+  if (tools.league !== leagueSelect.value || tools.W !== W) { tools.picks.clear(); tools.rootCache.clear(); }
+  tools.league = leagueSelect.value; tools.W = W;
+  const sel = el.querySelector('#tlTeam');
+  if (!tools.team || !state.teamIds.includes(tools.team) || sel.dataset.league !== leagueSelect.value) {
+    let saved = null; try { saved = localStorage.getItem('winProbToolsTeam:' + leagueSelect.value); } catch (e) { /* ignore */ }
+    tools.team = saved && state.teamIds.includes(saved) ? saved : state.teamIds[0];
+    sel.innerHTML = state.teamIds.map((id) => `<option value="${id}">${esc2(tName(id))}</option>`).join('');
+    sel.dataset.league = leagueSelect.value;
+  }
+  sel.value = tools.team;
+  el.querySelector('#tlSub').textContent = `Week ${W + 1} games and your last ${state.regEnd - W} regular-season ${state.regEnd - W === 1 ? 'game' : 'games'} · same simulation as the table above`;
+  renderPaths(W, sims); renderScenario(W, sims, games); renderRoot(W, sims, games);
+}
+const esc2 = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// --- What I need: odds by how many of the remaining games the team wins ---
+async function renderPaths(W, sims) {
+  const box = document.getElementById('tlPaths'), my = ++tools.token, id = tools.team, g = state.regEnd - W;
+  box.innerHTML = `<h3>What ${esc2(tName(id))} needs</h3><div class="tl-muted">Calculating…</div>`;
+  const base = simulateOutlook(W, sims).get(id);
+  const rows = [];
+  for (let j = g; j >= 0; j--) {
+    await tick(); if (my !== tools.token || id !== tools.team) return;
+    rows.push({ j, r: simulateOutlook(W, sims, { teamWins: { id, wins: j } }).get(id) });
+  }
+  const hasBye = state.byes > 0;
+  const label = (j) => (j === g ? `Win all ${g}` : j === 0 ? `Lose all ${g}` : `Win ${j} of ${g}`);
+  const fav = rows.find((x) => x.r.playoffs >= 0.5), safe = rows.find((x) => x.r.playoffs >= 0.9);
+  const line = !fav ? `Even winning out leaves ${esc2(tName(id))} under 50% to make the playoffs.`
+    : `<b>${fav.j === g ? 'Win out' : `${fav.j}+ wins`}</b> makes the playoffs more likely than not${safe ? `; <b>${safe.j === g ? 'winning out' : safe.j + '+ wins'}</b> makes it close to safe (90%+)` : ''}.`;
+  box.innerHTML = `<h3>What ${esc2(tName(id))} needs</h3><div class="tl-line">${line}</div>
+    <table class="tl-tbl"><thead><tr><th></th><th>Playoffs</th>${hasBye ? '<th>Bye</th>' : ''}<th>Title</th></tr></thead><tbody>
+    <tr class="base"><td>Right now</td><td>${tPct(base.playoffs)}</td>${hasBye ? `<td>${tPct(base.bye)}</td>` : ''}<td>${tPct(base.title)}</td></tr>
+    ${rows.map((x) => `<tr><td>${label(x.j)}</td><td><span class="tl-bar2" style="--p:${x.r.playoffs}"></span>${tPct(x.r.playoffs)}</td>${hasBye ? `<td>${tPct(x.r.bye)}</td>` : ''}<td>${tPct(x.r.title)}</td></tr>`).join('')}</tbody></table>
+    <div class="tl-muted">Which games you win is random in each simulated season, so this shows how much the number of wins matters.</div>`;
+}
+
+// --- Scenario: pick results for next week's games ---
+async function renderScenario(W, sims, games) {
+  const box = document.getElementById('tlScen'), id = tools.team;
+  const rowsHtml = games.map(([a, b]) => {
+    const k = pairKey(a, b), pick = tools.picks.get(k) || '';
+    const btn = (val, txt) => `<button type="button" class="${pick === val ? 'on' : ''}" data-k="${k}" data-v="${val}">${txt}</button>`;
+    return `<div class="tl-g ${a === id || b === id ? 'mine' : ''}"><span class="tl-t r"><span class="n">${esc2(tName(a))}</span> ${tIcon(a)}</span><span class="tl-seg">${btn(a, '◀ Win')}${btn('', 'Sim')}${btn(b, 'Win ▶')}</span><span class="tl-t">${tIcon(b)} <span class="n">${esc2(tName(b))}</span></span></div>`;
+  }).join('');
+  box.innerHTML = `<h3>Set week ${W + 1}'s results</h3><div class="tl-muted">Pick winners and see how ${esc2(tName(id))}'s odds move. "Sim" leaves a game to the simulation.</div>
+    <div class="tl-games">${rowsHtml}</div><div id="tlScenOut" class="tl-out"></div><button type="button" class="tl-reset" id="tlReset" ${tools.picks.size ? '' : 'hidden'}>Reset</button>`;
+  box.querySelectorAll('.tl-seg button').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.v) tools.picks.set(b.dataset.k, b.dataset.v); else tools.picks.delete(b.dataset.k);
+    renderScenario(W, sims, games);
+  }));
+  box.querySelector('#tlReset').addEventListener('click', () => { tools.picks.clear(); renderScenario(W, sims, games); });
+  const out = box.querySelector('#tlScenOut');
+  if (!tools.picks.size) { out.innerHTML = '<div class="tl-muted">No results picked yet.</div>'; return; }
+  out.innerHTML = '<div class="tl-muted">Calculating…</div>'; await tick();
+  const base = simulateOutlook(W, sims), sc = simulateOutlook(W, sims, { games: new Map(tools.picks) });
+  if (id !== tools.team) return;
+  const a = base.get(id), b = sc.get(id), hasBye = state.byes > 0;
+  const cell = (lab, x, y) => `<div class="tl-m"><span>${lab}</span><b>${tPct(y)}</b><em class="${y - x > 0.004 ? 'up' : y - x < -0.004 ? 'dn' : ''}">${tDelta(y - x)}</em></div>`;
+  const movers = state.teamIds.filter((t) => t !== id).map((t) => ({ t, d: sc.get(t).playoffs - base.get(t).playoffs })).sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 3).filter((m) => Math.abs(m.d) >= 0.005);
+  out.innerHTML = `<div class="tl-ms">${cell('Playoffs', a.playoffs, b.playoffs)}${hasBye ? cell('Bye', a.bye, b.bye) : ''}${cell('Title', a.title, b.title)}</div>
+    ${movers.length ? `<div class="tl-muted">Also moved: ${movers.map((m) => `${esc2(tName(m.t))} <b class="${m.d > 0 ? 'up' : 'dn'}">${tDelta(m.d)}</b>`).join(' · ')}</div>` : ''}`;
+}
+
+// --- Rooting guide: each game's swing on the chosen team's playoff odds ---
+async function renderRoot(W, sims, games) {
+  const box = document.getElementById('tlRoot'), id = tools.team, my = tools.token;
+  box.innerHTML = `<h3>Rooting guide for ${esc2(tName(id))}</h3><div class="tl-muted">Calculating every result…</div>`;
+  const out = [];
+  const base = simulateOutlook(W, sims).get(id);
+  for (const [a, b] of games) {
+    const ck = `${W}|${sims}|${id}|${pairKey(a, b)}`;
+    let v = tools.rootCache.get(ck);
+    if (!v) {
+      await tick(); if (my !== tools.token || id !== tools.team) return;
+      const A = simulateOutlook(W, sims, { games: new Map([[pairKey(a, b), a]]) }).get(id);
+      await tick(); if (my !== tools.token || id !== tools.team) return;
+      const B = simulateOutlook(W, sims, { games: new Map([[pairKey(a, b), b]]) }).get(id);
+      v = { A, B }; tools.rootCache.set(ck, v);
+    }
+    out.push({ a, b, A: v.A, B: v.B, swing: v.A.playoffs - v.B.playoffs, mine: a === id || b === id });
+  }
+  if (my !== tools.token || id !== tools.team) return;
+  out.sort((x, y) => (y.mine - x.mine) || Math.abs(y.swing) - Math.abs(x.swing));
+  const rows = out.map((g) => {
+    if (g.mine) {
+      const opp = g.a === id ? g.b : g.a, win = g.a === id ? g.A : g.B, lose = g.a === id ? g.B : g.A;
+      return `<div class="tl-r mine"><div class="tl-rl">Your game vs ${esc2(tName(opp))}</div><div class="tl-rv">Win <b class="up">${tPct(win.playoffs)}</b> · Lose <b class="dn">${tPct(lose.playoffs)}</b></div><div class="tl-rs">${Math.round(Math.abs(g.swing) * 100)} pt swing</div></div>`;
+    }
+    const sw = Math.abs(g.swing), fav = g.swing >= 0 ? g.a : g.b, dog = fav === g.a ? g.b : g.a, hi = g.swing >= 0 ? g.A : g.B, lo = g.swing >= 0 ? g.B : g.A;
+    if (sw < 0.005) return `<div class="tl-r flat"><div class="tl-rl">${esc2(tName(g.a))} vs ${esc2(tName(g.b))}</div><div class="tl-rv tl-muted">Doesn't matter for you</div><div class="tl-rs"></div></div>`;
+    return `<div class="tl-r"><div class="tl-rl">Root for <b>${esc2(tName(fav))}</b> <span class="tl-muted">over ${esc2(tName(dog))}</span></div><div class="tl-rv"><b class="up">${tPct(hi.playoffs)}</b> if they win · <b class="dn">${tPct(lo.playoffs)}</b> if not</div><div class="tl-rs">${Math.round(sw * 100)} pt swing</div></div>`;
+  }).join('');
+  box.innerHTML = `<h3>Rooting guide for ${esc2(tName(id))}</h3><div class="tl-muted">Week ${W + 1}, ranked by how much each result changes ${esc2(tName(id))}'s playoff odds (now ${tPct(base.playoffs)}).</div><div class="tl-rows">${rows}</div>`;
 }
 
 // ---------- controls ----------
