@@ -653,6 +653,25 @@ const pairKey = (a, b) => (String(a) < String(b) ? a + '|' + b : b + '|' + a);
 // scen (optional, used by the playoff tools): { games: Map(pairKey -> winnerId) forces NEXT week's results,
 //   teamWins: { id, wins } forces a team to win exactly `wins` of its remaining regular-season games (random which ones) }.
 // The random seed ignores scen, so scenarios share the same dice and differences between them are signal, not noise.
+// Certain-only clinch / elimination, from win counts alone (so it can never be wrong, but it only lights up once the math is airtight --
+// it ignores who plays whom, which the Swiss weeks make unknowable). 'x' = clinched a playoff spot, 'e' = eliminated.
+// Clinched: even if the team loses every remaining game, the other teams don't have enough wins to go around for `spots` of them to
+// reach its win total (ties are assumed to go against it). Eliminated: even winning out, `spots` teams are already strictly ahead.
+function clinchStatus(start, teamIds, g, spots) {
+  const out = new Map(); if (g <= 0) return out;
+  const cap = g * Math.floor(teamIds.length / 2);
+  const wp = (id) => start.get(id).w + start.get(id).t / 2;
+  for (const id of teamIds) {
+    const w = wp(id), need = [];
+    for (const o of teamIds) if (o !== id) { const n = Math.max(0, Math.ceil(w - wp(o))); if (n <= g) need.push(n); }
+    need.sort((a, b) => a - b);
+    let passers = 0, sum = 0;
+    for (const n of need) { if (sum + n > cap) break; sum += n; passers++; }
+    let ahead = 0; for (const o of teamIds) if (o !== id && wp(o) > w + g) ahead++;
+    if (passers < spots) out.set(id, 'x'); else if (ahead >= spots) out.set(id, 'e');
+  }
+  return out;
+}
 function simulateOutlook(W, numSims, scen) {
   const scenKey = scen ? JSON.stringify([scen.games ? [...scen.games.entries()].sort() : null, scen.teamWins || null]) : '';
   const key = `${W}|${numSims}|${scenKey}`;
@@ -853,13 +872,14 @@ function simulateOutlook(W, numSims, scen) {
     stats.get(alive[0]).title++;
   }
 
+  const certain = clinchStatus(start, teamIds, regEnd - Math.min(W, regEnd), playoffSpots);
   const result = new Map();
   const power = new Map(teamIds.map((id) => [id, ratings.get(id)?.score ?? 50]));
   for (const id of teamIds) {
     const s = stats.get(id), cur = start.get(id);
     result.set(id, {
       id, mu: mu.get(id), power: power.get(id), cur,
-      playoffs: s.playoffs / numSims, bye: s.bye / numSims, semis: s.semis / numSims, final: s.final / numSims, title: s.title / numSims,
+      status: certain.get(id) || '', playoffs: certain.get(id) === 'x' ? 1 : certain.get(id) === 'e' ? 0 : s.playoffs / numSims, bye: s.bye / numSims, semis: s.semis / numSims, final: s.final / numSims, title: s.title / numSims,
       exp: s.winSum / numSims, gamesLeft: s.gamesLeft,
       dist: s.wins, numSims,
     });
@@ -908,7 +928,7 @@ function render(animate) {
     return `<div class="item ${openTeams.has(x.id) ? 'open' : ''}" data-id="${x.id}" style="--tc:${team.color}">
       <div class="row" style="grid-template-columns:${gridCols}"><div class="chev">▶</div>
         <div class="rating">${x.power.toFixed(1)}${Math.abs(dPow) >= 0.05 ? `<small class="${dPow > 0 ? 'up' : 'down'}">${dPow > 0 ? '▲' : '▼'}${Math.abs(dPow).toFixed(1)}</small>` : ''}</div>
-        <div class="team"><div class="logo">${team.logoUrl ? `<img src="${team.logoUrl}" alt="">` : (team.emoji || '')}</div><div class="tn"><b>${team.name}</b></div></div>
+        <div class="team"><div class="logo">${team.logoUrl ? `<img src="${team.logoUrl}" alt="">` : (team.emoji || '')}</div><div class="tn"><b>${team.name}</b>${x.status ? `<span class="clinch ${x.status}" title="${x.status === 'x' ? 'Clinched a playoff spot' : 'Eliminated from playoff contention'}">${x.status}</span>` : ''}</div></div>
         <div class="rec">${x.cur.w}-${x.cur.l}${x.cur.t ? '-' + x.cur.t : ''}</div><div class="rec proj">${projW}-${Math.max(0, totalG - projW)}</div>${cells}</div>
       <div class="panel" data-panel></div></div>`;
   }).join('');
