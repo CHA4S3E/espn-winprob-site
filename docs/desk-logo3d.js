@@ -477,17 +477,22 @@
       geo2.computeBoundingBox(); const c0 = new THREE.Vector3(); geo2.boundingBox.getCenter(c0);
       // Stepped layers, front to back: enamel face (0.072) > team-color ring (0.058) > chrome rim (0.045).
       geo.translate(-c0.x, -c0.y, 0); geo3.translate(-c0.x, -c0.y, -0.012); geo2.translate(-c0.x, -c0.y, -0.11);
-      const bandCol = new THREE.Color(team.color || '#2f6bff');
-      const bandMat = T().physical
-        ? new THREE.MeshPhysicalMaterial({ color: bandCol, metalness: 0.55, roughness: 0.26, clearcoat: 0.7, clearcoatRoughness: 0.1, envMapIntensity: 0.9 })
-        : new THREE.MeshStandardMaterial({ color: bandCol, metalness: 0.55, roughness: 0.24, envMapIntensity: 0.9 });
-      const front = new THREE.Mesh(geo, [faceMat(THREE, tex, nrm, look), metal]);
-      const band = new THREE.Mesh(geo3, bandMat);
-      const rim = new THREE.Mesh(geo2, metal);
+      // Outer rim: polished metal in the team's color (anodized look), a touch
+      // lighter so it still catches highlights; a thin silver ring sits inside
+      // it. The champion's rim is gold.
+      const teamCol = new THREE.Color(team.color || '#2f6bff');
+      { const hsl = {}; teamCol.getHSL(hsl); if (hsl.l < 0.36) teamCol.setHSL(hsl.h, hsl.s < 0.08 ? 0 : Math.max(hsl.s, 0.35), 0.36); } // dark colors (navy, black, brown) lifted just enough to read as colored metal
+      teamCol.lerp(new THREE.Color('#ffffff'), 0.12);
+      const rimMat = gold ? null : (T().physical
+        ? new THREE.MeshPhysicalMaterial({ color: teamCol, metalness: 0.9, roughness: 0.28, clearcoat: 0.6, clearcoatRoughness: 0.12, envMapIntensity: 1.1 })
+        : new THREE.MeshStandardMaterial({ color: teamCol, metalness: 0.9, roughness: 0.26, envMapIntensity: 1.1 }));
+      const front = new THREE.Mesh(geo, [faceMat(THREE, tex, nrm, look), E.mats.chrome]);
+      const band = new THREE.Mesh(geo3, E.mats.chrome);
+      const rim = new THREE.Mesh(geo2, rimMat || metal);
       const g = new THREE.Group(); g.add(rim, band, front);
       g.userData.look = look.name;
       // Free this emblem's own GPU memory (the shared metal stays).
-      g.userData.dispose = () => { geo.dispose(); geo2.dispose(); geo3.dispose(); tex.dispose(); nrm.dispose(); front.material[0].dispose(); bandMat.dispose(); };
+      g.userData.dispose = () => { geo.dispose(); geo2.dispose(); geo3.dispose(); tex.dispose(); nrm.dispose(); front.material[0].dispose(); if (rimMat) rimMat.dispose(); };
       if (E.renderer.initTexture) E.renderer.initTexture(tex); // upload now, not on the first frame
       return g;
     })();
