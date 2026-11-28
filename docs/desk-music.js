@@ -66,7 +66,7 @@
       ],
       bass: ['x.......x.......', 'x..x....x..x....', 'x.....x.x.......', 'x...x...x...x...'],
       comp: { inst: 'arp', rhythms: ['xxxxxxxxxxxxxxxx', 'x.x.x.x.x.x.x.x.', 'x.xxx.xxx.xxx.xx'] },
-      lead: { inst: 'bell', density: 0.3, octave: 24 }, pad: 'darkPad', seventh: true, bassInst: 'subBass',
+      lead: { inst: 'softKeys', density: 0.3, octave: 12 }, pad: 'darkPad', seventh: true, bassInst: 'subBass',
     },
     'casual-day': {
       name: 'Front Porch', tempo: [96, 116], swing: 0.12, scales: ['major', 'mixolydian'], roots: [55, 57, 60, 62, 64],
@@ -105,7 +105,7 @@
     musicBus = ctx.createGain(); musicBus.gain.value = 0.8;
     duckGain = ctx.createGain(); duckGain.gain.value = 1;
     musicBus.connect(duckGain); duckGain.connect(master);
-    sfxBus = ctx.createGain(); sfxBus.gain.value = 1; sfxBus.connect(master);
+    sfxBus = ctx.createGain(); sfxBus.gain.value = 0.55; // stings sit under the music, not on top of it sfxBus.connect(master);
     // Reverb from a generated impulse response.
     reverb = ctx.createConvolver();
     const len = ctx.sampleRate * 2.2, ir = ctx.createBuffer(2, len, ctx.sampleRate);
@@ -154,8 +154,9 @@
     uke(t, notes, d, v = 1, bus) { notes.forEach((m, i) => { const tt = t + i * 0.012, o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain(); o.type = 'triangle'; o.frequency.value = mtof(m + 12); f.type = 'lowpass'; f.frequency.value = 3000; env(g, tt, 0.002, 0.06 * v, 0.25, 0.001, 0.05, tt + 0.28); o.connect(f); f.connect(g); out(g, bus, 0.2); o.start(tt); o.stop(tt + 0.45); }); },
     rhodes(t, notes, d, v = 1, bus) { for (const m of notes) { const c = ctx.createOscillator(), mod = ctx.createOscillator(), mg = ctx.createGain(), g = ctx.createGain(); c.type = 'sine'; c.frequency.value = mtof(m); mod.frequency.value = mtof(m) * 2; mg.gain.setValueAtTime(mtof(m) * 1.2, t); mg.gain.exponentialRampToValueAtTime(5, t + 0.6); mod.connect(mg); mg.connect(c.frequency); env(g, t, 0.005, 0.07 * v, 0.9, 0.3, 0.4, t + d); c.connect(g); out(g, bus, 0.45); c.start(t); mod.start(t); c.stop(t + d + 0.6); mod.stop(t + d + 0.6); } },
     marimba(t, m, d, v = 1, bus) { for (const [mult, amp, dec] of [[1, 0.22, 0.5], [4, 0.05, 0.08], [10, 0.015, 0.03]]) { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = mtof(m) * mult; env(g, t, 0.002, amp * v, dec, 0.001, 0.02, t + dec); o.connect(g); out(g, bus, 0.25); o.start(t); o.stop(t + dec + 0.1); } },
-    bell(t, m, d, v = 1, bus) { for (const [mult, amp] of [[1, 0.12], [2.76, 0.04], [5.4, 0.02]]) { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = mtof(m) * mult; env(g, t, 0.002, amp * v, 1.2 / mult, 0.001, 0.1, t + 1.2 / mult); o.connect(g); out(g, bus, 0.6); o.start(t); o.stop(t + 1.6); } },
-    lead(t, m, d, v = 1, bus) { const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain(), lfo = ctx.createOscillator(), lg = ctx.createGain(); o.type = 'square'; o.frequency.value = mtof(m); lfo.frequency.value = 5.5; lg.gain.value = 6; lfo.connect(lg); lg.connect(o.detune); f.type = 'lowpass'; f.frequency.value = 2400 * tone.bright; env(g, t, 0.01, 0.06 * v, 0.1, 0.7, 0.08, t + d); o.connect(f); f.connect(g); out(g, bus, 0.3); o.start(t); lfo.start(t); o.stop(t + d + 0.2); lfo.stop(t + d + 0.2); },
+    softKeys(t, m, d, v = 1, bus) { const o = ctx.createOscillator(), o2 = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain(); o.type = 'sine'; o2.type = 'triangle'; o.frequency.value = mtof(m); o2.frequency.value = mtof(m); o2.detune.value = 4; f.type = 'lowpass'; f.frequency.setValueAtTime(1600, t); f.frequency.exponentialRampToValueAtTime(700, t + Math.max(0.2, d)); env(g, t, 0.015, 0.045 * v, 0.35, 0.45, 0.25, t + d); o.connect(f); o2.connect(f); f.connect(g); out(g, bus, 0.35); o.start(t); o2.start(t); o.stop(t + d + 0.4); o2.stop(t + d + 0.4); },
+    bell(t, m, d, v = 1, bus) { for (const [mult, amp] of [[1, 0.045], [2.76, 0.012], [5.4, 0.005]]) { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = mtof(m) * mult; env(g, t, 0.002, amp * v, 1.2 / mult, 0.001, 0.1, t + 1.2 / mult); o.connect(g); out(g, bus, 0.6); o.start(t); o.stop(t + 1.6); } },
+    lead(t, m, d, v = 1, bus) { const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain(), lfo = ctx.createOscillator(), lg = ctx.createGain(); o.type = 'square'; o.frequency.value = mtof(m); lfo.frequency.value = 5.5; lg.gain.value = 6; lfo.connect(lg); lg.connect(o.detune); f.type = 'lowpass'; f.frequency.value = 1700 * tone.bright; env(g, t, 0.02, 0.04 * v, 0.1, 0.7, 0.1, t + d); o.connect(f); f.connect(g); out(g, bus, 0.3); o.start(t); lfo.start(t); o.stop(t + d + 0.2); lfo.stop(t + d + 0.2); },
     flute(t, m, d, v = 1, bus) { const o = ctx.createOscillator(), g = ctx.createGain(), n = noise(t, d + 0.1), nf = ctx.createBiquadFilter(), ng = ctx.createGain(); o.type = 'sine'; o.frequency.value = mtof(m); env(g, t, 0.06, 0.08 * v, 0.1, 0.8, 0.15, t + d); nf.type = 'bandpass'; nf.frequency.value = mtof(m) * 2; ng.gain.value = 0.01 * v; o.connect(g); out(g, bus, 0.5); n.connect(nf); nf.connect(ng); out(ng, bus); o.start(t); o.stop(t + d + 0.3); },
   };
 
@@ -255,15 +256,15 @@
   function duck(seconds) {
     const t = ctx.currentTime;
     duckGain.gain.cancelScheduledValues(t);
-    duckGain.gain.setTargetAtTime(0.25, t, 0.05);
+    duckGain.gain.setTargetAtTime(0.5, t, 0.08);
     duckGain.gain.setTargetAtTime(1, t + seconds, 0.6);
   }
   function sting(kind) {
     if (!running || !ctx) return;
     const t = ctx.currentTime + 0.03, pro = styleKey.startsWith('pro'), night = styleKey.endsWith('night');
     const root = song ? song.root + 12 : 60, B = sfxBus;
-    const chordHit = (notes, at, d) => (pro ? INST.brass : INST.rhodes)(at, notes, d, 1.6, B);
-    const notePlay = (m, at, d) => (pro ? (night ? INST.bell : INST.lead) : INST.marimba)(at, m, d, 1.4, B);
+    const chordHit = (notes, at, d) => (pro ? INST.brass : INST.rhodes)(at, notes, d, 0.9, B);
+    const notePlay = (m, at, d) => (pro ? INST.softKeys : INST.marimba)(at, m, d * 1.4, pro ? 1.1 : 0.8, B);
     duck({ jingle: 1.6, replay: 1.4, record: 3.4, breaking: 3.2, upset: 3, final: 3.2, td: 1.6, bad: 1.8, lead: 2, handoff: 2.4, alert: 1.2 }[kind] || 1.5);
     switch (kind) {
       case 'breaking':
@@ -289,10 +290,10 @@
         INST.whoosh(t, 0.45, 0.8, B); notePlay(root + 7, t + 0.42, 0.15); notePlay(root + 12, t + 0.56, 0.4); INST.kick(t + 0.56, 0.8, B);
         break;
       case 'handoff':
-        INST.whoosh(t, 0.7, 0.9, B, false); INST.bell(t + 0.6, root + 12, 1, 1.2, B); INST.bell(t + 0.75, root + 19, 1, 1, B);
+        INST.whoosh(t, 0.7, 0.6, B, false); notePlay(root + 12, t + 0.6, 0.5); notePlay(root + 19, t + 0.75, 0.6);
         break;
       case 'jingle': // commercial break: a little 5-note ditty
-        [0, 4, 7, 9, 12].forEach((iv, i) => INST.marimba(t + i * 0.13, root + 12 + iv, 0.2, 1.5, B)); INST.bell(t + 0.7, root + 24, 1, 1.2, B); INST.clap(t + 0.65, 0.8, B);
+        [0, 4, 7, 9, 12].forEach((iv, i) => INST.marimba(t + i * 0.13, root + 12 + iv, 0.2, 1.5, B)); INST.clap(t + 0.65, 0.6, B);
         break;
       case 'replay':
         INST.whoosh(t, 0.5, 0.9, B, false); notePlay(root + 7, t + 0.45, 0.2); notePlay(root, t + 0.62, 0.5);

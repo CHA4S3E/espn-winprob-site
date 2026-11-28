@@ -46,11 +46,14 @@ html[data-studio="casual"][data-daypart="night"] {
   --radius: 22px; --clip: none; --head-style: normal; --glow: 0 0 30px rgba(242,165,74,.25);
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #05070d !important; }
 body { font-family: var(--font-body); color: var(--fg); }
 
 /* The show is laid out at 1920x1080 and scaled to fit any screen. */
-#tv { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: 0 0; background: var(--stage-bg); overflow: hidden; transition: background 1.2s ease; }
+/* #tv fills the whole window (sized in desk.js fit()); #frame is the 1920x1080 layout, centered in it.
+   Backgrounds, the ticker strip, breaking news and the handoff wipe run edge to edge. */
+#tv { position: fixed; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; background: var(--stage-bg); overflow: hidden; transition: background 1.2s ease; }
+#frame { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
 #tv::before { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .5;
   background: repeating-linear-gradient(90deg, transparent 0 119px, var(--line) 119px 120px); -webkit-mask-image: linear-gradient(180deg, #000, transparent 70%); mask-image: linear-gradient(180deg, #000, transparent 70%); }
 html[data-studio="casual"] #tv::before { background: radial-gradient(circle at 10% 20%, var(--line) 0 2px, transparent 3px) 0 0/60px 60px; opacity: .6; }
@@ -103,7 +106,7 @@ html[data-studio="casual"] #tv::before { background: radial-gradient(circle at 1
 #anchorText .cur { display: inline-block; width: 3px; height: 30px; background: var(--accent); margin-left: 4px; animation: blink 1s infinite; vertical-align: middle; }
 
 /* ---- ticker ---- */
-#ticker { position: absolute; left: 0; right: 0; bottom: 0; height: 86px; display: flex; background: #05070d; color: #fff; z-index: 6; }
+#ticker { position: absolute; left: 0; right: 0; bottom: 0; height: 86px; display: flex; background: #05070d; color: #fff; z-index: 6; box-shadow: 0 0 0 100vmax #05070d; clip-path: inset(0 -100vmax -100vmax -100vmax); }
 #tickerLabel { padding: 0 28px; display: grid; place-items: center; background: var(--bar); color: var(--bar-fg); font: italic 800 30px/1 'Barlow Condensed', sans-serif; letter-spacing: .06em; white-space: nowrap; }
 html[data-studio="casual"] #tickerLabel { font-style: normal; font-family: 'Baloo 2', sans-serif; }
 #tickerTrack { flex: 1; overflow: hidden; position: relative; -webkit-mask-image: linear-gradient(90deg, transparent, #000 3%, #000 97%, transparent); mask-image: linear-gradient(90deg, transparent, #000 3%, #000 97%, transparent); }
@@ -215,7 +218,7 @@ body.ui #controls, #controls:focus-within { opacity: 1; }
 #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #fff; font: 700 28px 'Inter', sans-serif; z-index: 70; background: #000; }
 /* ---- holiday sets (season-look.js sets html[data-seasonal-theme]; desk-fx.js sets data-holiday) ---- */
 #sl_canvas, #sl_fx, #sl_frost { display: none !important; } /* the site-wide particles; the desk draws its own inside the TV */
-#holidayFx { position: absolute; inset: 0; width: 1920px; height: 1080px; pointer-events: none; z-index: 0; }
+#holidayFx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
 #top, #stage, #side, #anchor { z-index: 1; }
 html[data-holiday="halloween"] { --accent: #ff8a1f; --accent-2: #9b5cff; --hot: #ff5a1f; --bar: linear-gradient(90deg, #2a1240, #6d28d9 45%, #ff8a1f); }
 html[data-holiday="thanksgiving"] { --accent: #c9772b; --accent-2: #e8a33d; --bar: linear-gradient(90deg, #7a2e12, #b5441c 50%, #e8a33d); }
@@ -277,7 +280,7 @@ table.rec td { padding: 9px 10px; font-size: 20px; } table.rec td small { font-s
 </head>
 <body>
 <div id="loading">Warming up the studio…</div>
-<div id="tv">
+<div id="tv"><div id="frame">
   <div id="top">
     <div id="brand"><div id="brandMark">—</div><div><div id="brandShow"></div><div id="brandSub"></div></div></div>
     <div id="live" class="off"><i></i><span>LIVE</span></div>
@@ -292,6 +295,7 @@ table.rec td { padding: 9px 10px; font-size: 20px; } table.rec td small { font-s
   <div id="anchor"><div id="anchorTag"></div><div id="anchorText"></div></div>
   <div id="alert"><div class="tag"></div><div class="txt"><b></b><span></span></div></div>
   <div id="ticker"><div id="tickerLabel"></div><div id="tickerTrack"><div id="tickerRun"></div></div></div>
+  </div>
   <div id="breaking"><div class="bg"></div><div class="stripes"></div><div class="box"><div class="kick"></div><div class="hd"></div><div class="bd"></div><div class="teams"></div><div class="meter"></div></div></div>
   <div id="wipe"><div><div class="w1"></div><div class="w2"></div></div></div>
 </div>
@@ -307,11 +311,12 @@ table.rec td { padding: 9px 10px; font-size: 20px; } table.rec td small { font-s
 <script src="config.js"></script>
 <script src="season-look.js?v=4"></script>
 <script src="desk-lines.js?v=2"></script>
-<script src="desk-music.js?v=2"></script>
-<script src="desk-fx.js?v=1"></script>
+<script src="desk-music.js?v=3"></script>
+<script src="desk-fx.js?v=2"></script>
 <script src="desk-data.js?v=2"></script>
 <script src="desk-records.js?v=1"></script>
-<script src="recap-video.js?v=1"></script>
-<script src="desk.js?v=2"></script>
+<script src="wp-chart.js?v=1"></script>
+<script src="recap-video.js?v=2"></script>
+<script src="desk.js?v=3"></script>
 </body>
 </html>
