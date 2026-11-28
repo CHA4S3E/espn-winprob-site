@@ -6318,6 +6318,15 @@ async function loadMatchups({ preserveCharts = false } = {}) {
       }
     } catch { /* schedule unavailable -> fall through to the normal behavior */ }
   }
+  // Remember the latest week's look so the next page load (here or on the data
+  // pages via season-look.js) can paint it before any data arrives.
+  if (yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0) {
+    try { localStorage.setItem('winProbSeasonLook', JSON.stringify({ theme: seasonalTheme, t: Date.now() })); } catch { /* storage blocked */ }
+  }
+  // The <head> script may have painted a cached holiday look that no longer applies.
+  if (seasonalTheme === 'none' && currentSeasonalTheme === 'none' && !festCinePlaying) {
+    document.documentElement.removeAttribute('data-seasonal-theme');
+  }
   if (seasonalTheme !== currentSeasonalTheme) {
     currentSeasonalTheme = seasonalTheme;
     seedSeasonalParticles();
