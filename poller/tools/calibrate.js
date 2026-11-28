@@ -10,9 +10,11 @@
 //
 //   node tools/calibrate.js
 //
-// Note: the stored win_prob of matchups played after the calibration went
-// live already includes it, so refit only from weeks before it, or compare
-// against those raw numbers with care.
+// Note: it reads each row's original model output (win_prob_raw, kept by the
+// history recalibration) where there is one. Matchups played after the
+// calibrated model went live have no raw value (their win_prob is already
+// calibrated), so refit from weeks before that, or have the poller start
+// saving win_prob_raw too.
 const fs = require('fs');
 const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, '../../docs/config.js'), 'utf8');
@@ -26,7 +28,7 @@ async function fetchAll() {
     
     let from = 0;
     for (;;) {
-      const rows = await get(`snapshots?select=year,week,matchup_id,team_id,ts,actual_score,expected_score,win_prob,all_starters_done&league_id=eq.${L.id}&order=id.asc&offset=${from}&limit=1000`);
+      const rows = await get(`snapshots?select=*&league_id=eq.${L.id}&order=id.asc&offset=${from}&limit=1000`);
       out.push(...rows.map((r) => ({ lg: L.name, ...r })));
       if (rows.length < 1000) break; from += 1000;
     }
@@ -47,7 +49,7 @@ const games = [];
 for (const [k, rs] of G) {
   const teams = [...new Set(rs.map((r) => r.team_id))].sort(); if (teams.length !== 2) continue;
   const byTs = new Map(); for (const r of rs) { if (!byTs.has(r.ts)) byTs.set(r.ts, {}); byTs.get(r.ts)[r.team_id === teams[0] ? 'A' : 'B'] = r; }
-  const pts = [...byTs.entries()].filter(([, v]) => v.A && v.B).map(([ts, v]) => ({ t: Date.parse(ts), eA: +v.A.expected_score, eB: +v.B.expected_score, aA: +v.A.actual_score, aB: +v.B.actual_score, wp: +v.A.win_prob, done: v.A.all_starters_done && v.B.all_starters_done })).sort((a, b) => a.t - b.t);
+  const pts = [...byTs.entries()].filter(([, v]) => v.A && v.B).map(([ts, v]) => ({ t: Date.parse(ts), eA: +v.A.expected_score, eB: +v.B.expected_score, aA: +v.A.actual_score, aB: +v.B.actual_score, wp: +(v.A.win_prob_raw != null ? v.A.win_prob_raw : v.A.win_prob), done: v.A.all_starters_done && v.B.all_starters_done })).sort((a, b) => a.t - b.t);
   const fin = pts.filter((p) => p.done).pop(); if (!fin) continue;
   games.push({ k, pts, final: fin.aA - fin.aB, week: +k.split('|')[2], lg: k.split('|')[0] });
 }
