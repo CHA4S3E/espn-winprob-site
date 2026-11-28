@@ -37,6 +37,26 @@
   if (localStorage.getItem('winProbReduceMotion') === 'true') {
     document.documentElement.setAttribute('data-reduce-motion', 'true');
   }
+  // Same idea for the holiday look: reuse the last answer (saved by this page or
+  // season-look.js on the other pages, good for 6h) so the page doesn't flash the
+  // default blue while app.js loads. app.js confirms or clears it once data is in.
+  // Skipped when this holiday's meteor intro hasn't played yet on this device --
+  // that intro starts from the plain look on purpose.
+  try {
+    const sl = JSON.parse(localStorage.getItem('winProbSeasonLook') || 'null');
+    if (sl && sl.theme && sl.theme !== 'none' && Date.now() - sl.t < 6 * 3600 * 1000) {
+      let introPending = false;
+      if (/^(halloween|thanksgiving|christmas)$/.test(sl.theme)) {
+        const pre = 'winProbFestCineSeen:v1:' + new Date().getFullYear() + ':', suf = ':' + sl.theme;
+        introPending = true;
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(pre) && k.endsWith(suf)) { introPending = false; break; }
+        }
+      }
+      if (!introPending) document.documentElement.setAttribute('data-seasonal-theme', sl.theme);
+    }
+  } catch (e) { /* storage blocked */ }
 </script>
 <style>
   /* Always reserve space for the vertical scrollbar, whether or not it's
@@ -1878,6 +1898,6 @@
 <script src="config.js"></script>
 <button id="festMeteor" type="button" hidden aria-label="Replay the meteor strike" title="Replay the meteor strike"><span class="fm-crater"></span><span class="fm-glow"></span><i></i><i></i><i></i><span class="fm-rock"></span><span class="fm-sleigh">🛷</span><span class="fm-label">Replay the impact</span></button>
 <script src="week-cinema.js?v=1"></script>
-<script src="app.js?v=61"></script>
+<script src="app.js?v=62"></script>
 </body>
 </html>

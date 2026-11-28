@@ -23,8 +23,11 @@ html[data-theme="light"][data-seasonal-theme="thanksgiving"] { --fest-bg: radial
 html[data-seasonal-theme="christmas"] { --fest-font: 'Cinzel Decorative', Georgia, serif; }
 html[data-theme="dark"][data-seasonal-theme="christmas"] { --fest-bg: radial-gradient(ellipse at 50% -10%, #17603a 0%, #0c3321 40%, #07140d 80%); --fest-vignette: rgba(0,0,0,.5); --fest-frame: #ff4d4d; --fest-glow: rgba(255,77,77,.32); --fest-banner: linear-gradient(90deg,#d62828,#0b6b3a 60%,#d62828); --fest-banner-text: #fff; --accent: #ff4d4d; --accent-glow-a: rgba(255,77,77,0.35); --accent-glow-b: rgba(255,77,77,0.9); }
 html[data-theme="light"][data-seasonal-theme="christmas"] { --fest-bg: radial-gradient(ellipse at 50% -10%, #ffd6d6 0%, #f2fff5 45%, #ffffff 85%); --fest-vignette: rgba(160,20,20,.1); --fest-frame: #d62828; --fest-glow: rgba(214,40,40,.26); --fest-banner: linear-gradient(90deg,#d62828,#0b6b3a 60%,#d62828); --fest-banner-text: #fff; --accent: #d62828; --accent-glow-a: rgba(214,40,40,0.3); --accent-glow-b: rgba(214,40,40,0.8); }
-  html[data-seasonal-theme="halloween"] body, html[data-seasonal-theme="thanksgiving"] body, html[data-seasonal-theme="christmas"] body {
+  /* The holiday background lives on <html> and <body> goes transparent: the particle canvas sits at z-index -1, which paints
+     above the root background but BELOW any body background -- so a painted body would hide the leaves / bats / snow. */
+  html[data-seasonal-theme="halloween"], html[data-seasonal-theme="thanksgiving"], html[data-seasonal-theme="christmas"] {
     background: radial-gradient(ellipse at center, transparent 55%, var(--fest-vignette) 100%), var(--fest-bg), var(--bg); background-attachment: fixed; }
+  html[data-seasonal-theme] body { background: transparent; }
   html[data-seasonal-theme="halloween"] body, html[data-seasonal-theme="thanksgiving"] body, html[data-seasonal-theme="christmas"] body { min-height: 100vh; }
   html[data-seasonal-theme] .page-title, html[data-seasonal-theme] h1, html[data-seasonal-theme] h2 { font-family: var(--fest-font, var(--font-display)); }
   html[data-seasonal-theme="christmas"] .page-title { letter-spacing: 0; }
