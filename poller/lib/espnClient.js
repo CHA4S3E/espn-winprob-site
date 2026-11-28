@@ -24,6 +24,16 @@ async function fetchLeagueWeek({ espnLeagueId, espnS2, swid, year, week }) {
   return res.json();
 }
 
+// The league's matchup periods ({ "16": [16, 17], ... }) -- only needed when a
+// matchup spans more than one NFL week (see lib/multiweek.js).
+async function fetchMatchupPeriods({ espnLeagueId, espnS2, swid, year }) {
+  const url = `${FANTASY_BASE}/${year}/segments/0/leagues/${espnLeagueId}?view=mSettings`;
+  const res = await fetch(url, { headers: { Cookie: `espn_s2=${espnS2}; SWID=${swid}`, Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`ESPN settings ${res.status} ${res.statusText}`);
+  const j = await res.json();
+  return (j && j.settings && j.settings.scheduleSettings && j.settings.scheduleSettings.matchupPeriods) || null;
+}
+
 // League transactions (waivers, free agents, trades) for one scoring period.
 async function fetchTransactions({ espnLeagueId, espnS2, swid, year, week }) {
   const url = `${FANTASY_BASE}/${year}/segments/0/leagues/${espnLeagueId}?view=mTransactions2&scoringPeriodId=${week}`;
@@ -133,4 +143,4 @@ function estimateRemainingFraction(state, period, displayClock) {
   return Math.max(0, Math.min(1, 1 - elapsed / 3600));
 }
 
-module.exports = { fetchLeagueWeek, fetchNflGameStatusMap, fetchTransactions, fetchAthlete };
+module.exports = { fetchLeagueWeek, fetchNflGameStatusMap, fetchTransactions, fetchAthlete, fetchMatchupPeriods };

@@ -69,17 +69,27 @@
     const n = night();
     return L.studio === 'pro' ? (n ? 'Primetime' : 'Live') : (n ? 'Couch Crew' : 'Front Porch');
   }
+  // Playoff phase of a league: projected | playoffs | championship | champion | between | offseason.
+  const bracketOf = (L) => (window.DeskPlayoffs && L && L.year ? DeskPlayoffs.bracket(L) : null);
+  const phaseOf = (L) => { const b = bracketOf(L); return b ? b.phase : 'regular'; };
+  const isChamp = (L) => ['championship', 'champion'].includes(phaseOf(L));
   function applyStudio(L) {
     cur = L;
     const root = document.documentElement;
     root.dataset.studio = L.studio; root.dataset.daypart = night() ? 'night' : 'day';
+    const ph = phaseOf(L), br = bracketOf(L);
+    root.dataset.champ = ph === 'championship' || ph === 'champion' ? 'on' : '';
     $('brandMark').textContent = shortName(L).toUpperCase();
     const tag = window.DeskFx ? DeskFx.holidayTag(L.studio) : '';
-    const mn = modeName(L.studio);
-    $('brandShow').textContent = shortName(L) + ' ' + (mn || showName(L)) + (tag ? ' \u00b7 ' + tag : '');
+    const pro = L.studio === 'pro';
+    const champName = ph === 'championship' ? (pro ? 'Championship Sunday' : 'The Big Game')
+      : ph === 'champion' && br && br.champion ? `${L.year} Champions: ${T(L, br.champion).name}`
+      : ph === 'playoffs' && br.curRound ? (pro ? `Playoffs \u00b7 ${br.curRound.name}` : `Playoff Time! \u00b7 ${br.curRound.name}`) : '';
+    const mn = champName || modeName(L.studio);
+    $('brandShow').textContent = shortName(L) + ' ' + (mn || showName(L)) + (tag && !champName ? ' \u00b7 ' + tag : '');
     $('tickerLabel').textContent = L.studio === 'pro' ? 'SCORES' : 'THE SCOOP';
     $('anchorTag').innerHTML = L.studio === 'pro' ? 'The<br>Desk' : 'Couch<br>Talk';
-    M.setStyle(L.studio, night() ? 'night' : 'day');
+    M.setStyle(L.studio, night() ? 'night' : 'day', root.dataset.champ === 'on');
     renderTop(); renderSide();
   }
   function renderTop() {
@@ -254,6 +264,76 @@
         : (voice(L) === 'pro' ? 'No NFL games live at the moment. Here’s the slate.' : 'No real football on right now. Here’s what’s coming up!');
       return { key: 'nfl', title: Lines.segmentTitle('nfl', voice(L)), html, dur: 15000, line };
     },
+    bracket(L) {
+      const br = bracketOf(L); if (!br) return null;
+      const show = br.phase !== 'projected' || L.regEnd - L.week <= 2;
+      if (!show || br.phase === 'offseason') return null;
+      const pro = voice(L) === 'pro';
+      const slot = (id, sc, win, lose, g) => {
+        if (!id) return `<div class="bk-slot empty"><span class="bk-seed"></span><span class="bk-nm">TBD</span><span class="bk-sc"></span></div>`;
+        const t = T(L, id);
+        return `<div class="bk-slot ${win ? 'win' : ''} ${lose ? 'lose' : ''}" style="--c:${esc(t.color)}"><span class="bk-seed">${br.seedOf.get(id) || ''}</span>${icon(t)}<span class="bk-nm">${esc(t.name)}</span><span class="bk-sc">${sc != null && (g && g.started) ? fmt(sc) : ''}</span></div>`;
+      };
+      const cols = br.rounds.map((rd, ri) => `<div class="bk-col"><div class="bk-rd">${esc(rd.name)}<small>${rd.weeks.length > 1 ? `Weeks ${rd.weeks.join(' + ')}` : `Week ${rd.weeks[0]}`}</small></div>${rd.games.map((g, gi) => {
+        if (g.bye) return `<div class="bk-game bye" data-r="${ri}" data-g="${gi}">${slot(g.a, null, false, false)}<div class="bk-bye">${pro ? 'First-round bye' : 'Bye week!'}</div></div>`;
+        const live = g.live ? `<span class="bk-live">${g.weeks.length > 1 && g.leg ? `LIVE · WEEK ${g.leg} OF ${g.weeks.length}` : 'LIVE'}</span>` : '';
+        return `<div class="bk-game ${g.live ? 'live' : ''}" data-r="${ri}" data-g="${gi}">${live}${slot(g.a, g.sa, g.done && g.winner === g.a, g.done && g.winner !== g.a, g)}${slot(g.b, g.sb, g.done && g.winner === g.b, g.done && g.winner !== g.b, g)}</div>`;
+      }).join('')}</div>`).join('');
+      const ch = br.champion ? T(L, br.champion) : null;
+      const html = `<div class="bk ${br.phase === 'projected' ? 'proj' : ''}">${cols}<div class="bk-col bk-champ"><div class="bk-rd">${pro ? 'Champion' : 'Champ!'}<small>${L.year}</small></div><div class="bk-trophy">${ch ? `${icon(ch)}<b style="color:${esc(ch.color)}">${esc(ch.name)}</b>` : '<span class="bk-cup">🏆</span><b>?</b>'}</div></div><svg class="bk-lines"></svg></div>
+        ${br.phase === 'projected' ? `<div class="bk-note">${pro ? `Projected — if the playoffs started today. ${br.byes ? `Top ${br.byes} seeds get a bye.` : ''}` : `If the playoffs started today… ${br.byes ? `top ${br.byes} get a bye!` : ''}`}</div>` : ''}`;
+      const cr = br.curRound;
+      const line = br.phase === 'projected' ? (pro ? `If the season ended today, ${T(L, br.seeds[0].id).name} would be the top seed.` : `Right now ${T(L, br.seeds[0].id).name} would be the #1 seed!`)
+        : ch ? (pro ? `${ch.name}: your ${L.year} ${L.name} champions.` : `${ch.name} won it all!`)
+        : cr ? (pro ? `${cr.name} ${cr.weeks.length > 1 ? 'weeks' : 'week'} in ${L.name}. ${cr.games.filter((g) => !g.bye).length} game${cr.games.filter((g) => !g.bye).length === 1 ? '' : 's'} on the board.` : `It’s ${cr.name.toLowerCase()} time! Win or go home.`)
+        : (pro ? 'The road to the title.' : 'Here’s the bracket!');
+      return { key: 'bracket', title: br.phase === 'projected' ? (pro ? 'Projected bracket' : 'Playoff picture') : (pro ? 'Playoff bracket' : 'The bracket'), html, dur: 18000, line, after() { drawBracketLines(); } };
+    },
+    tale(L) {
+      const br = bracketOf(L); if (!br || !br.final || !br.final.a || !br.final.b) return null;
+      const a = br.final.a, b = br.final.b, pro = voice(L) === 'pro';
+      const stats = (id) => {
+        const rows = new Map();
+        for (const r of L.summary) { if (r.team_id !== id || !r.all_starters_done) continue; const ex = rows.get(r.week); if (!ex || r.ts > ex.ts) rows.set(r.week, r); }
+        const sc = [...rows.values()].filter((r) => r.week <= L.regEnd).map((r) => Number(r.actual_score));
+        const rec = (L.actualRec && L.actualRec.get(id)) || { w: 0, l: 0, t: 0 };
+        const path = br.rounds.slice(0, -1).map((rd) => rd.games.find((g) => g.a === id || g.b === id)).filter(Boolean).map((g) => g.bye ? 'Bye' : `W ${fmt(g.a === id ? g.sa : g.sb)}–${fmt(g.a === id ? g.sb : g.sa)} vs ${T(L, g.a === id ? g.b : g.a).name}`);
+        return { seed: br.seedOf.get(id), rec: `${rec.w}-${rec.l}${rec.t ? '-' + rec.t : ''}`, avg: sc.length ? sc.reduce((x, y) => x + y, 0) / sc.length : 0, high: sc.length ? Math.max(...sc) : 0, path };
+      };
+      const A = stats(a), B = stats(b), tA = T(L, a), tB = T(L, b);
+      const row = (k, va, vb, better) => `<div class="tt-row"><span class="${better === 1 ? 'tt-w' : ''}">${esc(va)}</span><small>${esc(k)}</small><span class="${better === 2 ? 'tt-w' : ''}">${esc(vb)}</span></div>`;
+      const cmp = (x, y, hi = true) => (x === y ? 0 : (x > y) === hi ? 1 : 2);
+      const hh = h2h(L, a, b);
+      const html = `<div class="tt"><div class="tt-head"><div style="--c:${esc(tA.color)}">${icon(tA)}<b>${esc(tA.name)}</b></div><span class="tt-vs">VS</span><div style="--c:${esc(tB.color)}">${icon(tB)}<b>${esc(tB.name)}</b></div></div>
+        ${row(pro ? 'Seed' : 'Seed', '#' + A.seed, '#' + B.seed, cmp(A.seed, B.seed, false))}
+        ${row(pro ? 'Regular-season record' : 'Record', A.rec, B.rec, 0)}
+        ${row(pro ? 'Points per game' : 'Avg points', fmt(A.avg), fmt(B.avg), cmp(A.avg, B.avg))}
+        ${row(pro ? 'Season high' : 'Best week', fmt(A.high), fmt(B.high), cmp(A.high, B.high))}
+        ${row(pro ? 'Road to the final' : 'How they got here', A.path.join(' · ') || '—', B.path.join(' · ') || '—', 0)}
+        ${hh ? `<div class="tt-h2h">${esc(hh)}</div>` : ''}</div>`;
+      const fav = br.final.wp != null ? (br.final.wp >= 50 ? tA : tB) : (A.avg >= B.avg ? tA : tB);
+      const line = pro ? `Tale of the tape: the ${A.seed}-seed ${tA.name} against the ${B.seed}-seed ${tB.name}. ${hh || ''}` : `It’s ${tA.name} vs ${tB.name} for all the marbles! Our gut says ${fav.name}.`;
+      return { key: 'tale', title: pro ? 'Tale of the tape' : 'The matchup', html, dur: 18000, line };
+    },
+    champLive(L) {
+      const br = bracketOf(L); if (!br || !br.final || !br.final.a) return null;
+      const m = L.matchups.find((x) => (x.home === br.final.a && x.away === br.final.b) || (x.home === br.final.b && x.away === br.final.a));
+      if (!m) return null;
+      const seg = SEGMENTS.spotlight(L, m);
+      seg.key = 'champLive'; seg.title = voice(L) === 'pro' ? `The Championship${br.final.weeks.length > 1 ? ` · Week ${br.final.leg || 1} of ${br.final.weeks.length}` : ''}` : `The Big Game${br.final.weeks.length > 1 ? ` (week ${br.final.leg || 1} of ${br.final.weeks.length})` : ''}`;
+      if (br.final.weeks.length > 1) seg.html += `<div class="h2h">${voice(L) === 'pro' ? `Two-week final: weeks ${br.final.weeks.join(' + ')} combined` : `Two weeks, scores added together!`}</div>`;
+      seg.dur = 20000;
+      return seg;
+    },
+    champion(L) {
+      const br = bracketOf(L); if (!br || !br.champion) return null;
+      const t = T(L, br.champion), f = br.final, opp = T(L, f.winner === f.a ? f.b : f.a), pro = voice(L) === 'pro';
+      const rec = (L.actualRec && L.actualRec.get(br.champion)) || { w: 0, l: 0 };
+      const path = br.rounds.map((rd) => { const g = rd.games.find((x) => x.a === br.champion || x.b === br.champion); if (!g) return ''; if (g.bye) return `<li><b>${esc(rd.name)}</b> Bye</li>`; const me = g.a === br.champion; return `<li><b>${esc(rd.name)}</b> beat ${esc(T(L, me ? g.b : g.a).name)} ${fmt(me ? g.sa : g.sb)}–${fmt(me ? g.sb : g.sa)}</li>`; }).join('');
+      const html = `<div class="ch-card" style="--c:${esc(t.color)}"><div class="ch-cup">🏆</div><div class="ch-logo">${icon(t)}</div><div class="ch-name">${esc(t.name)}</div><div class="ch-sub">${L.year} ${esc(L.name)} ${pro ? 'Champions' : 'Champs!'}</div><ul class="ch-path">${path}</ul><div class="ch-foot">#${br.seedOf.get(br.champion)} seed · ${rec.w}-${rec.l} regular season</div></div>`;
+      const line = pro ? `${t.name} are the ${L.year} ${L.name} champions, beating ${opp.name} in the final.` : `All hail ${t.name}, ${L.year} champs! Sorry, ${opp.name}.`;
+      return { key: 'champion', title: pro ? 'Your champions' : 'The champs', html, dur: 18000, line };
+    },
     whip(L) {
       const live = L.matchups.filter((m) => !m.done).sort((a, b) => drama(b) - drama(a));
       if (!live.length) return null;
@@ -415,6 +495,24 @@
     },
   };
 
+  function drawBracketLines() {
+    const bk = document.querySelector('#segBody .bk'); if (!bk) return;
+    const svg = bk.querySelector('.bk-lines'), box = bk.getBoundingClientRect(), sc = box.width / bk.offsetWidth || 1;
+    const rect = (el) => { const r = el.getBoundingClientRect(); return { l: (r.left - box.left) / sc, r: (r.right - box.left) / sc, cy: (r.top + r.height / 2 - box.top) / sc }; };
+    const cols = [...bk.querySelectorAll('.bk-col:not(.bk-champ)')];
+    let d = '';
+    cols.forEach((col, ci) => {
+      const games = [...col.querySelectorAll('.bk-game')], next = cols[ci + 1] ? [...cols[ci + 1].querySelectorAll('.bk-game')] : [bk.querySelector('.bk-trophy')];
+      games.forEach((g, gi) => {
+        const tgt = next[Math.floor(gi / 2)] || next[0]; if (!tgt) return;
+        const a = rect(g), b = rect(tgt), mx = (a.r + b.l) / 2;
+        d += `M${a.r},${a.cy} H${mx} V${b.cy} H${b.l} `;
+      });
+    });
+    svg.setAttribute('viewBox', `0 0 ${bk.offsetWidth} ${bk.offsetHeight}`);
+    svg.innerHTML = `<path d="${d}" />`;
+  }
+
   function drawChart(cv, m, h, a) {
     if (!cv) return;
     const W = cv.clientWidth, H = cv.clientHeight, dpr = 2;
@@ -507,7 +605,12 @@
       showdown: ['scenarios', 'spotlight', 'scenarios', 'need', 'clinch', 'scoreboard', 'news'],
       awards: ['recap', 'standings', 'clinch', 'leaders', 'records', 'transactions', 'rundown', 'news'],
     };
-    const plan = PLANS[mode] || (live ? ['spotlight', 'scoreboard', 'need', 'players', 'news', 'spotlight', 'standings', 'clinch', 'records', 'transactions', 'nfl', 'rundown'] : ['recap', 'scoreboard', 'standings', 'clinch', 'leaders', 'records', 'transactions', 'news', 'players', 'spotlight', 'rundown', 'nfl']);
+    let plan = PLANS[mode] || (live ? ['spotlight', 'scoreboard', 'need', 'players', 'news', 'spotlight', 'standings', 'clinch', 'records', 'transactions', 'nfl', 'rundown'] : ['recap', 'scoreboard', 'standings', 'clinch', 'leaders', 'records', 'transactions', 'news', 'players', 'spotlight', 'rundown', 'nfl']);
+    const ph = phaseOf(L);
+    if (ph === 'championship') plan = live ? ['champLive', 'tale', 'scenarios', 'champLive', 'bracket', 'need', 'records', 'champLive', 'news'] : ['tale', 'bracket', 'countdown', 'tale', 'records', 'news'];
+    else if (ph === 'champion') plan = ['champion', 'bracket', 'recap', 'leaders', 'records', 'champion', 'standings'];
+    else if (ph === 'playoffs' || ph === 'between') plan = ['bracket'].concat(plan.filter((k) => !['clinch', 'standings'].includes(k)), ['bracket']);
+    else if (ph === 'projected' && L.regEnd - L.week <= 2) { const i = plan.indexOf('standings'); plan.splice(i >= 0 ? i + 1 : 2, 0, 'bracket'); }
     return plan.filter((k) => (k === 'recap' ? !!(window.RecapVideo && L.recapWeek) : SEGMENTS[k](L) !== null));
   }
 
@@ -533,6 +636,7 @@
       segPlan = planFor(cur); segIdx = 0;
       if (!segPlan.length) { showSegment({ title: 'Studio', html: `<div class="empty-seg">No games this week yet.</div>`, line: 'Stand by.' }, true); segTimer = setTimeout(nextSegment, 20000); return; }
     }
+    if (segIdx === 0 && phaseOf(cur) === 'championship') await champIntro(cur);
     const key = segPlan[segIdx++];
     const seg = SEGMENTS[key](cur);
     if (!seg) return nextSegment();
@@ -563,6 +667,52 @@
     await sleep(12000);
     currentSeg = prevSeg;
     busy = false;
+  }
+
+  // ------------------------------------------------------------------ championship takeovers
+  const champIntroAt = new Map();
+  async function champIntro(L) {
+    const br = bracketOf(L); if (!br || !br.final || !br.final.a || !br.final.b) return;
+    if (Date.now() - (champIntroAt.get(L.id) || 0) < 25 * 60 * 1000) return; // at most every 25 minutes per studio
+    champIntroAt.set(L.id, Date.now());
+    busy = true; stopRecap();
+    const a = T(L, br.final.a), b = T(L, br.final.b), pro = L.studio === 'pro';
+    const fx = $('champFx');
+    fx.innerHTML = `<div class="cf-beams"></div><div class="cf-k">${esc(L.name.toUpperCase())} · ${L.year}</div><div class="cf-title">${pro ? 'CHAMPIONSHIP' : 'THE BIG GAME'}</div>
+      <div class="cf-teams"><div class="cf-t l" style="--c:${esc(a.color)}">${icon(a)}<b>${esc(a.name)}</b><small>#${br.seedOf.get(br.final.a)} seed</small></div><div class="cf-vs">VS</div><div class="cf-t r" style="--c:${esc(b.color)}">${icon(b)}<b>${esc(b.name)}</b><small>#${br.seedOf.get(br.final.b)} seed</small></div></div>
+      <div class="cf-sub">${br.final.weeks.length > 1 ? `Weeks ${br.final.weeks.join(' + ')} · scores combined` : `Week ${br.final.weeks[0]}`} · ${pro ? 'one trophy' : 'winner takes all'}</div>`;
+    fx.className = 'show intro';
+    M.sting('champIntro');
+    say(pro ? `This is it. ${a.name} and ${b.name}, for the ${L.year} ${L.name} championship.` : `It all comes down to this: ${a.name} vs ${b.name} for the title!`);
+    await sleep(10500);
+    fx.classList.add('out'); await sleep(800); fx.className = ''; fx.innerHTML = '';
+    busy = false;
+  }
+  let confettiRaf = 0;
+  async function champFinale(L, championId, quiet) {
+    const br = bracketOf(L); if (!br) return;
+    busy = true; stopRecap();
+    if (L !== cur && lock === 'auto') { busy = false; await handoff(L); busy = true; }
+    const t = T(L, championId), f = br.final, pro = L.studio === 'pro';
+    const opp = f ? T(L, f.winner === f.a ? f.b : f.a) : null;
+    const ws = f ? (f.winner === f.a ? f.sa : f.sb) : null, ls = f ? (f.winner === f.a ? f.sb : f.sa) : null;
+    const fx = $('champFx');
+    fx.innerHTML = `<canvas class="cf-confetti"></canvas><div class="cf-beams gold"></div><div class="cf-cup">🏆</div><div class="cf-logo" style="--c:${esc(t.color)}">${icon(t)}</div>
+      <div class="cf-champ" style="color:${esc(t.color)}">${esc(t.name)}</div><div class="cf-title small">${L.year} ${esc(L.name.toUpperCase())} ${pro ? 'CHAMPIONS' : 'CHAMPS!'}</div>
+      ${opp && ws != null ? `<div class="cf-sub">${fmt(ws)} – ${fmt(ls)} over ${esc(opp.name)}</div>` : ''}`;
+    fx.className = 'show finale';
+    if (!quiet) M.sting('champion');
+    say(pro ? `${t.name} are your ${L.year} ${L.name} champions!` : `${t.name} won the whole thing! Champs!`);
+    const cv = fx.querySelector('canvas'), W = cv.width = 1920, H = cv.height = 1080, x = cv.getContext('2d');
+    const cols = [t.color, '#f2c14e', '#ffffff', '#e0b23d', '#ffd98a'];
+    const parts = Array.from({ length: 260 }, () => ({ x: Math.random() * W, y: -Math.random() * H, vx: (Math.random() - 0.5) * 2, vy: 2 + Math.random() * 4, r: 5 + Math.random() * 8, a: Math.random() * 6, va: (Math.random() - 0.5) * 0.3, c: cols[Math.floor(Math.random() * cols.length)] }));
+    cancelAnimationFrame(confettiRaf);
+    const frame = () => { confettiRaf = requestAnimationFrame(frame); x.clearRect(0, 0, W, H); for (const p of parts) { p.x += p.vx; p.y += p.vy; p.a += p.va; if (p.y > H + 20) { p.y = -20; p.x = Math.random() * W; } x.save(); x.translate(p.x, p.y); x.rotate(p.a); x.fillStyle = p.c; x.fillRect(-p.r, -p.r / 2.5, p.r * 2, p.r / 1.25); x.restore(); } };
+    frame();
+    await sleep(quiet ? 9000 : 15000);
+    fx.classList.add('out'); await sleep(800); cancelAnimationFrame(confettiRaf); fx.className = ''; fx.innerHTML = '';
+    busy = false;
+    applyStudio(cur); segPlan = planFor(cur); segIdx = 0;
   }
 
   // ------------------------------------------------------------------ instant replay
@@ -641,6 +791,7 @@
       Y: ev.detail && ev.detail.yards, PROJ: ev.detail && ev.detail.proj != null ? Number(ev.detail.proj).toFixed(1) : '' };
     if (v.P != null) v.OPCT = 100 - Number(v.P);
     if (ev.kind === 'big_swing') { v.T = ev.up.name; v.O = ev.down.name; }
+    if (ev.round) { v.RD = ev.round; v.NX = ev.next || ''; }
     if (ev.kind === 'player_injury') v.S2 = String((ev.detail && ev.detail.status) || 'questionable').replace('_', ' ').toLowerCase();
     if (ev.txn) {
       const d = txnText(L, ev.txn), nm = (i) => i.name || 'a player';
@@ -656,7 +807,7 @@
   function stingFor(kind) {
     if (/upset/.test(kind)) return 'upset';
     if (/^final/.test(kind)) return 'final';
-    if (kind === 'clinched') return 'record';
+    if (kind === 'clinched' || kind === 'advance') return 'record';
     if (kind === 'eliminated' || kind === 'player_injury') return 'bad';
     if (/^txn/.test(kind)) return 'alert';
     if (/^record/.test(kind)) return 'record';
@@ -691,7 +842,7 @@
     const el = $('breaking'), m = ev.matchup;
     const tCol = (ev.team && ev.team.color) || '#e11d2e';
     el.style.setProperty('--bt', tCol);
-    el.querySelector('.kick').textContent = /^final/.test(ev.kind) ? (voice(L) === 'pro' ? 'FINAL' : 'IT’S OVER') : /upset/.test(ev.kind) ? 'UPSET ALERT' : ev.kind === 'record_broken' ? (voice(L) === 'pro' ? 'HISTORY' : 'NEW RECORD') : ev.kind === 'clinched' ? 'CLINCHED' : ev.kind === 'eliminated' ? 'ELIMINATED' : ev.kind === 'txn_trade' ? 'TRADE ALERT' : ev.kind === 'player_injury' ? 'INJURY UPDATE' : ev.kind === 'record_watch' ? 'RECORD WATCH' : /^player_/.test(ev.kind) ? (voice(L) === 'pro' ? 'SCORING PLAY' : 'BIG PLAY') : (voice(L) === 'pro' ? 'BREAKING' : 'BIG NEWS');
+    el.querySelector('.kick').textContent = /^final/.test(ev.kind) ? (voice(L) === 'pro' ? 'FINAL' : 'IT’S OVER') : /upset/.test(ev.kind) ? 'UPSET ALERT' : ev.kind === 'record_broken' ? (voice(L) === 'pro' ? 'HISTORY' : 'NEW RECORD') : ev.kind === 'advance' ? (voice(L) === 'pro' ? 'ADVANCES' : 'MOVING ON') : ev.kind === 'clinched' ? 'CLINCHED' : ev.kind === 'eliminated' ? 'ELIMINATED' : ev.kind === 'txn_trade' ? 'TRADE ALERT' : ev.kind === 'player_injury' ? 'INJURY UPDATE' : ev.kind === 'record_watch' ? 'RECORD WATCH' : /^player_/.test(ev.kind) ? (voice(L) === 'pro' ? 'SCORING PLAY' : 'BIG PLAY') : (voice(L) === 'pro' ? 'BREAKING' : 'BIG NEWS');
     el.querySelector('.hd').textContent = w.head;
     el.querySelector('.bd').textContent = w.body;
     const old = el.querySelector('.bk-hs'); if (old) old.remove();
@@ -712,6 +863,7 @@
     await sleep(650);
     el.classList.remove('show', 'out');
     if (m && L && /lead_change|big_swing|upset|final_close|nail_biter|record_broken/.test(ev.kind)) await playReplay(L, L.matchups.find((x) => x.id === m.id) || m);
+    if (ev.kind === 'advance' && L) { const seg = SEGMENTS.bracket(L); if (seg) { showSegment(seg, true); segTimer && clearTimeout(segTimer); segTimer = setTimeout(nextSegment, 12000); } }
     lastBreakingAt = Date.now();
     busy = false;
     if (currentSeg) { const again = SEGMENTS[currentSeg.key] && SEGMENTS[currentSeg.key](cur); if (again) showSegment(again, true); }
@@ -789,6 +941,15 @@
       onEvent({ league: L, kind: r.kind, priority: r.priority, matchup: r.matchup, team: D.team(L, r.teamId), opp: D.team(L, r.oppId), record: r.record, value: r.value, ts: Date.now(), old: !!quiet });
     }
   }
+  let playoffsReady = false;
+  function checkPlayoffs(quiet) {
+    if (!window.DeskPlayoffs) return;
+    for (const L of leagues) for (const e of DeskPlayoffs.check(L, quiet)) {
+      if (e.kind === 'champion') { champFinale(L, e.teamId); onEvent({ league: L, kind: 'champion', priority: 0, team: D.team(L, e.teamId), opp: D.team(L, e.oppId), score: fmt(e.sa), oppScore: fmt(e.sb), ts: Date.now() }); }
+      else onEvent({ league: L, kind: 'advance', priority: 3, team: D.team(L, e.teamId), opp: D.team(L, e.oppId), score: fmt(e.sa), oppScore: fmt(e.sb), round: e.round, next: e.next, ts: Date.now(), old: !!quiet });
+    }
+    playoffsReady = true;
+  }
   async function refreshAll() {
     let ok = true;
     await Promise.all([D.refreshNfl(), ...leagues.map((L) => D.refreshLeague(L).catch((e) => { ok = false; console.warn('refresh failed', L.slug, e); }))]);
@@ -796,6 +957,7 @@
     D.refreshNews().catch(() => {});
     checkMode(true);
     if (recordsReady) checkRecords(false);
+    if (playoffsReady) checkPlayoffs(false);
     renderTop(); renderSide();
     if (currentSeg && !busy && currentSeg.key !== 'recap' && SEGMENTS[currentSeg.key]) { const s = SEGMENTS[currentSeg.key](cur); if (s) { s.title = currentSeg.title; s.line = currentSeg.line; showSegment(s, false); } }
   }
@@ -814,7 +976,7 @@
     addEventListener('mousemove', () => { document.body.classList.add('ui'); clearTimeout(hideUi); hideUi = setTimeout(() => document.body.classList.remove('ui'), 2500); });
     D.on(onEvent);
     D.__emit = onEvent;
-    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), commercial: () => commercialBreak(), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
+    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), commercial: () => commercialBreak(), champIntro: () => { champIntroAt.clear(); return champIntro(cur); }, champFinale: (id) => champFinale(cur, id || (bracketOf(cur) || {}).champion), bracket: () => bracketOf(cur), restudio: () => applyStudio(cur), checkPlayoffs: (q) => checkPlayoffs(q), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
     try {
       leagues = (await D.init()).filter((L) => L.year);
       await D.refreshNfl();
@@ -837,6 +999,9 @@
     // Record book + last finished week (for the recap show), in the background.
     if (window.DeskRecords) Promise.all(leagues.map((L) => DeskRecords.load(D.sb, L).catch(() => null))).then(() => { checkRecords(true); recordsReady = true; });
     for (const L of leagues) findRecapWeek(L);
+    checkPlayoffs(true);
+    // A crowned champion gets the finale once when the channel starts.
+    setTimeout(() => { for (const L of leagues) { const b = bracketOf(L); if (b && b.phase === 'champion' && (lock === 'auto' || lock === L.id)) { champFinale(L, b.champion, true); break; } } }, 4000);
     if (window.DeskFx) { DeskFx.onOnline = refreshAll; DeskFx.onHoliday = () => cur && applyStudio(cur); }
     rebuildTicker(); requestAnimationFrame(tickerFrame);
     segPlan = planFor(cur); segIdx = 0; nextSegment();
