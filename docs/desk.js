@@ -795,7 +795,11 @@
     el.querySelector('.l3-t').textContent = `${h.name}  vs  ${a.name}`;
     el.classList.add('show');
     M.sting('handoff');
-    try { await Logo3D.play(el, { mode: 'versus', teams: [T3(L, m.home), T3(L, m.away)], ms: 9000 }); } catch (e) { /* flat look */ }
+    // The caption follows the shots: each team's name on its close-up, then the matchup on the wide.
+    const captions = [h.name, a.name, `${h.name}  vs  ${a.name}`], tEl = el.querySelector('.l3-t'), box = el.querySelector('.l3-text');
+    const onShot = (i, c) => { const txt = captions[c] || captions[2]; if (tEl.textContent === txt) return; tEl.textContent = txt; tEl.style.color = c === 0 ? h.color : c === 1 ? a.color : ''; box.classList.remove('swap'); void box.offsetWidth; box.classList.add('swap'); };
+    try { await Logo3D.play(el, { mode: 'versus', teams: [T3(L, m.home), T3(L, m.away)], ms: 9000, onShot }); } catch (e) { /* flat look */ }
+    tEl.style.color = ''; box.classList.remove('swap');
     el.classList.remove('show');
     busy = false;
   }

@@ -558,18 +558,44 @@
     const t0 = performance.now();
     let frames = 0, last = 0, slow = 0; // frame-time watch: too slow -> lite next time
     const ease = (u) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
+    const lerp = (a, b, t) => a + (b - a) * t, V = (x, y, z) => new THREE.Vector3(x, y, z);
+    // A few camera shots, cut together like a broadcast open. Each shot gives
+    // the camera position and aim over its own 0..1, and a light sweep runs
+    // across the metal in every shot.
+    const shots = [];
+    if (mode === 'versus' && groups.length === 2) {
+      const close = (g, side) => (t) => { const p = g.position, e2 = ease(t);
+        return { pos: V(p.x - side * lerp(1.3, -0.5, e2), p.y + lerp(-0.15, 0.35, e2), p.z + lerp(3.9, 3.4, e2)), at: V(p.x + side * 0.15, p.y + 0.05, p.z) }; };
+      shots.push({ len: 0.27, cam: close(groups[0], 1), caption: 0 }, { len: 0.27, cam: close(groups[1], -1), caption: 1 });
+    } else if (groups[0]) {
+      const p = groups[0].position;
+      shots.push(
+        { len: 0.28, cam: (t) => { const e2 = ease(t); return { pos: V(lerp(-1.4, 0.8, e2), p.y + lerp(0.75, 0.55, e2), p.z + 2.7), at: V(lerp(-0.45, 0.35, e2), p.y + 0.45, p.z) }; }, caption: 0 }, // macro sweep across the top
+        { len: 0.26, cam: (t) => { const e2 = ease(t); return { pos: V(lerp(1.1, 0.5, e2), p.y + lerp(-1.25, -0.9, e2), p.z + lerp(4.4, 3.8, e2)), at: V(0, p.y + 0.4, p.z) }; }, caption: 0 }); // low hero angle
+    }
+    const wideLen = 1 - shots.reduce((t, x) => t + x.len, 0);
+    shots.push({ len: wideLen, caption: 2, cam: (t) => { const e2 = ease(t), ang = -0.22 + e2 * 0.44, dist = mode === 'versus' ? 10.2 - e2 * 2.0 : 8.2 - e2 * 1.6; /* one emblem: a closer wide */ return { pos: V(Math.sin(ang) * dist, 0.7 + 0.7 * (1 - e2), Math.cos(ang) * dist), at: V(0, 0.55, -1.2) }; } });
+    let shotIdx = -1, cutAt = 0;
+    const baseExposure = e.renderer.toneMappingExposure;
     await new Promise((resolve) => {
       const frame = (now) => {
         const el = Math.max(0, now - t0), u = Math.min(1, el / ms), k = ease(u), s = el / 1000;
-        // Camera: a slow push-in from low and wide, drifting across the set.
-        const ang = -0.22 + k * 0.44, dist = 10.2 - k * 2.0;
-        camera.position.set(Math.sin(ang) * dist, 0.7 + 0.7 * (1 - k), Math.cos(ang) * dist); camera.lookAt(0, 0.55, -1.2);
+        // Which shot, and how far through it.
+        let acc = 0, si = 0;
+        while (si < shots.length - 1 && u >= acc + shots[si].len) { acc += shots[si].len; si++; }
+        const su = Math.min(1, (u - acc) / shots[si].len);
+        if (si !== shotIdx) { if (shotIdx >= 0) cutAt = now; shotIdx = si; if (opts.onShot) opts.onShot(si, shots[si].caption); }
+        const c = shots[si].cam(su);
+        camera.position.copy(c.pos); camera.lookAt(c.at);
+        // A quick flash on each cut.
+        const fl = cutAt ? Math.exp(-(now - cutAt) / 110) : 0;
+        e.renderer.toneMappingExposure = baseExposure * (1 + 1.6 * fl);
         groups.forEach((g, i) => {
           const base = mode === 'versus' ? (i ? -0.32 : 0.32) : -0.45 + k * 0.9;
           g.rotation.y = base + Math.sin(s * 0.7 + i * 2) * 0.06; g.rotation.x = -0.05 + Math.sin(s * 0.5 + i) * 0.03;
           g.position.y = (mode === 'versus' ? 0.3 : 0.45) + 0.05 * Math.sin(s * 1.1 + i);
         });
-        e.key.position.set(-6 + k * 5, 5, 6); // the highlight drifts slowly across the chrome
+        e.key.position.set(-7 + su * 14, 5, 6); // a light sweep across the metal in every shot
         e.flare.material.opacity = (T().bloom ? 0.42 : 0.55) + 0.06 * Math.sin(s * 1.3);
         const fade = Math.min(1, el / 500, (ms - el) / 600); cv.style.opacity = Math.max(0, fade);
         e.draw();
@@ -581,6 +607,7 @@
       requestAnimationFrame(frame);
     });
     cv.remove();
+    e.renderer.toneMappingExposure = baseExposure;
     e.emblems.clear(); e.mirrorEmblems.clear();
     playing = false;
     setBusy(false);
