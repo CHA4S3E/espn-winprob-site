@@ -5934,9 +5934,10 @@ function whatIfWinProbability({ expectedA, expectedB, actualA, actualB, aDone, b
     if (actualA < actualB) return 0;
     return 50;
   }
-  if (aDone && !bDone && actualA < actualB) return 1;
-  if (bDone && !aDone && actualB < actualA) return 99;
   const stddev = whatIfDynamicStddev(expectedA, actualA, expectedB, actualB);
+  // One side finished and behind: the other is a strong favorite, not a lock (see winProb.js).
+  if (aDone && !bDone && actualA < actualB) return Math.min(50, whatIfCalibrated(actualA, Math.max(expectedB, actualB), actualA, actualB, stddev));
+  if (bDone && !aDone && actualB < actualA) return Math.max(50, whatIfCalibrated(Math.max(expectedA, actualA), actualB, actualA, actualB, stddev));
   return whatIfCalibrated(expectedA, expectedB, actualA, actualB, stddev);
 }
 

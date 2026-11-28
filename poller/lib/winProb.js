@@ -304,9 +304,10 @@ function calibratedWinProbability({ homeExpected, awayExpected, homeActual, away
 // wrong: a concluded matchup should show the actual winner at (essentially)
 // 100%, not "very likely."
 //
-// A subtler case: if only ONE team is locked in and that team's actual
-// score is already BELOW the other (still-playing) team's current actual,
-// the still-playing team can't be caught -- the locked team has no players
+// A subtler case (now handled by the calibrated formula, see below): if only
+// ONE team is locked in and that team's actual score is already BELOW the
+// other (still-playing) team's current actual, the still-playing team can
+// usually not be caught -- the locked team has no players
 // left to add any points, and a team's own actual score essentially never
 // decreases (see the DB-level guard on implausible decreases for why).
 // Without this check, that situation still runs through the same
@@ -332,8 +333,16 @@ function matchupWinProbability({
     return 50; // exact tie, no more randomness left, and no rule to break it here
   }
 
-  if (homeAllDone && !awayAllDone && homeActual < awayActual) return 1; // home locked & already behind -> away can't be caught
-  if (awayAllDone && !homeAllDone && awayActual < homeActual) return 99; // away locked & already behind -> home can't be caught
+  // One side locked in and behind: the side still playing is a strong
+  // favorite, but NOT 99% regardless of the margin -- a team still playing can
+  // lose points (negative D/ST or kicker plays, fumbles, stat corrections).
+  // Week 5 2026: a 0.04-point lead over a finished team was shown at 99% and
+  // ended in a 7-point loss. The calibrated formula already handles this
+  // correctly: the finished side adds nothing, the other side's remaining
+  // projection only widens its lead, and the spread floor keeps a tiny lead
+  // from reading as a sure thing. Never let it favor the team that's behind.
+  if (homeAllDone && !awayAllDone && homeActual < awayActual) return Math.min(50, calibratedWinProbability({ homeExpected: homeActual, awayExpected: Math.max(awayExpected, awayActual), homeActual, awayActual, stddev }));
+  if (awayAllDone && !homeAllDone && awayActual < homeActual) return Math.max(50, calibratedWinProbability({ homeExpected: Math.max(homeExpected, homeActual), awayExpected: awayActual, homeActual, awayActual, stddev }));
 
   return calibratedWinProbability({ homeExpected, awayExpected, homeActual, awayActual, stddev });
 }

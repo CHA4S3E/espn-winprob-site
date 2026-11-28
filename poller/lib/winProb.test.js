@@ -33,4 +33,12 @@ assert(cal(120, 100, 60, 40, 15) > cal(120, 100, 0, 0, 15), 'real points count m
 // Locked-in cases unchanged.
 assert(matchupWinProbability({ homeExpected: 90, awayExpected: 100, homeActual: 90, awayActual: 100, allDone: true, stddev: 2 }) === 0, 'final is final');
 
+// One side finished and behind: tiny lead is NOT 99% (week 5 2026), a big one still is.
+const tiny = matchupWinProbability({ homeExpected: 133, awayExpected: 130, homeActual: 130.04, awayActual: 130.0, allDone: false, homeAllDone: false, awayAllDone: true, stddev: 1.5 });
+assert(tiny > 50 && tiny < 95, `tiny lead over a finished team should be uncertain, got ${tiny}`);
+const big = matchupWinProbability({ homeExpected: 133, awayExpected: 110, homeActual: 130, awayActual: 110, allDone: false, homeAllDone: false, awayAllDone: true, stddev: 1.5 });
+assert(big > 99, `20-point lead over a finished team should be near-certain, got ${big}`);
+const behind = matchupWinProbability({ homeExpected: 100, awayExpected: 125, homeActual: 100, awayActual: 120, allDone: false, homeAllDone: true, awayAllDone: false, stddev: 3 });
+assert(behind < 1, `finished and 20 behind should be near zero, got ${behind}`);
+
 console.log('All winProb tests passed.');
