@@ -139,12 +139,17 @@
     x.fillStyle = '#fff'; x.font = F(P.head, 52); x.textBaseline = 'middle'; x.fillText(label.toUpperCase(), 60, 101);
     x.restore();
   }
+  // Team logo (or emoji) drawn as-is, fit inside a 2r box -- no circle behind it.
+  // Only a team with neither gets a small colored initials badge.
   function teamBadge(x, show, id, cx, cy, r) {
     const t = show.teams[id] || {}, img = show.imgs[id];
-    x.save(); x.beginPath(); x.arc(cx, cy, r, 0, 7); x.closePath();
-    x.fillStyle = t.color || '#888'; x.fill(); x.clip();
-    if (img) x.drawImage(img, cx - r, cy - r, r * 2, r * 2);
-    else { x.fillStyle = '#fff'; x.font = `800 ${Math.round(r * 0.8)}px sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(t.emoji || String(t.name || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase(), cx, cy + 2); }
+    x.save(); x.textAlign = 'center'; x.textBaseline = 'middle';
+    if (img) { const k = Math.min((r * 2) / img.width, (r * 2) / img.height); const w = img.width * k, h = img.height * k; x.drawImage(img, cx - w / 2, cy - h / 2, w, h); }
+    else if (t.emoji) { x.font = `${Math.round(r * 1.7)}px sans-serif`; x.fillText(t.emoji, cx, cy + r * 0.08); }
+    else {
+      x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fillStyle = t.color || '#888'; x.fill();
+      x.fillStyle = '#fff'; x.font = `800 ${Math.round(r * 0.8)}px sans-serif`; x.fillText(String(t.name || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase(), cx, cy + 2);
+    }
     x.restore();
   }
   function fitText(x, text, maxW, tpl, size) {
