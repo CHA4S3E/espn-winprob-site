@@ -2764,13 +2764,13 @@ function nearestByTs(sortedRows, targetTs) {
 // in the database -- it reads win_prob history, it never writes anything,
 // so it cannot create, duplicate, or otherwise affect any real snapshot
 // row, and has no interaction with the poller at all.
-// Retuned for the calibrated win % (Nov 2026): the calibrated numbers swing
-// less, so the old 85% arm caught half as many real upsets (13 vs 29 over
-// weeks 1-11). Arming at 72% with the same 25-point drop flags 53 games and
-// catches 35 real upsets (66%), vs 49 and 29 (59%) before.
-const UPSET_ARM = 72; // was 85 on the old (overconfident) scale. lowered from 90 -- a team peaking at 85-89% was previously excluded entirely, even from a genuine, dramatic collapse, since arming never happened at all below 90
-const UPSET_ARM_TRIGGER_GAP = 25; // same gap size as the old fixed 90-to-65 pairing, now measured from wherever the armed side ACTUALLY peaked rather than always from a flat 90 -- so a 99% peak needs to fall further to trigger than an 85% peak does, matching how much more dominant it actually was
-const UPSET_CLEAR = 65; // was 70 on the old scale; the challenger's OWN threshold reaching this clears the watch -- unchanged, this is about the NEW favorite's own established dominance, unrelated to the original favorite's peak
+// Retuned for the calibrated win % (Nov 2026), kept deliberately rare: over
+// weeks 1-11, arming at 82% and triggering on a 33-point drop flags 23 games,
+// and the underdog won 15 of them (65%). The old 85%/25 settings on the
+// calibrated numbers flag about as many (24) but only 13 come true (54%).
+const UPSET_ARM = 82; // was 85 on the old (overconfident) scale. lowered from 90 -- a team peaking at 85-89% was previously excluded entirely, even from a genuine, dramatic collapse, since arming never happened at all below 90
+const UPSET_ARM_TRIGGER_GAP = 33; // was 25 on the old scale; same gap size as the old fixed 90-to-65 pairing, now measured from wherever the armed side ACTUALLY peaked rather than always from a flat 90 -- so a 99% peak needs to fall further to trigger than an 85% peak does, matching how much more dominant it actually was
+const UPSET_CLEAR = 70; // the challenger's OWN threshold reaching this clears the watch -- unchanged, this is about the NEW favorite's own established dominance, unrelated to the original favorite's peak
 const UPSET_CLEAR_HYSTERESIS_BUFFER = 5; // the old system's own implicit 65-to-70 gap. With a FIXED trigger floor this fell out automatically; with a dynamic one it doesn't -- a peak above 95% pushes the dynamic trigger floor (peak-25) ABOVE the flat 70% clear line, which would let the alert clear while still technically below its own trigger threshold and flicker on ordinary noise. This buffer guarantees the gap between trigger and the favorite's own reclaim floor is always at least 5 points, at any peak height.
 
 // A big win-probability jump that comes from a LINEUP CHANGE (a kicker with no
