@@ -6,6 +6,18 @@
 // swings, touchdowns... which desk.js puts on air. Read-only, public key only.
 (function () {
   'use strict';
+  // Event thresholds on the calibrated win % scale (Nov 2026). The calibrated
+  // numbers are less extreme, so each old threshold was moved to the value
+  // that fires about as often on this season's games (old value in brackets).
+  const WP = {
+    upsetDog: 43,      // pregame underdog at or below this (35)
+    upsetLead: 61,     // ...and now leading at or above this (65)
+    finalUpsetDog: 46, // a final counts as an upset (40)
+    scareFav: 59,      // pregame favorite at or above this (70)
+    scareLead: 53,     // ...now down to this (55)
+    lock: 91,          // "lock" (97)
+    nail: 57,          // nail-biter: leader at or below this (60)
+  };
   const { url, anonKey } = window.SUPABASE_CONFIG;
   const sb = window.supabase.createClient(url, anonKey);
   const NFL_SB = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
@@ -327,12 +339,12 @@
         // First time we see this game: whatever is already true is old news.
         // Mark it as seen (so it never "breaks" later) and put it in the rundown quietly.
         const flags = new Set();
-        if (m.done) { const upset = lead === dogPre && dogPrePct <= 40; out.push({ ...base, kind: upset ? 'final_upset' : 'final', priority: 1, score: sc(lead).toFixed(1), oppScore: sc(trail).toFixed(1), margin: Math.abs(m.hs - m.as).toFixed(1), prePct: dogPrePct, old: true, ts: m.updated }); }
+        if (m.done) { const upset = lead === dogPre && dogPrePct <= WP.finalUpsetDog; out.push({ ...base, kind: upset ? 'final_upset' : 'final', priority: 1, score: sc(lead).toFixed(1), oppScore: sc(trail).toFixed(1), margin: Math.abs(m.hs - m.as).toFixed(1), prePct: dogPrePct, old: true, ts: m.updated }); }
         else {
-          if (lead === dogPre && dogPrePct <= 35 && leadPct >= 65) { flags.add('upset'); out.push({ ...base, kind: 'upset_watch', priority: 2, prePct: dogPrePct, old: true, ts: m.updated }); }
-          if (lead === favPre && Math.round(Math.max(m.pre, 100 - m.pre)) >= 70 && leadPct <= 55) { flags.add('scare'); }
-          if (leadPct >= 97) { flags.add('lock'); out.push({ ...base, kind: 'lock', priority: 1, old: true, ts: m.updated }); }
-          if (leadPct <= 60 && Math.max(m.hx - m.hs, 0) + Math.max(m.ax - m.as, 0) < 25) flags.add('nail');
+          if (lead === dogPre && dogPrePct <= WP.upsetDog && leadPct >= WP.upsetLead) { flags.add('upset'); out.push({ ...base, kind: 'upset_watch', priority: 2, prePct: dogPrePct, old: true, ts: m.updated }); }
+          if (lead === favPre && Math.round(Math.max(m.pre, 100 - m.pre)) >= WP.scareFav && leadPct <= WP.scareLead) { flags.add('scare'); }
+          if (leadPct >= WP.lock) { flags.add('lock'); out.push({ ...base, kind: 'lock', priority: 1, old: true, ts: m.updated }); }
+          if (leadPct <= WP.nail && Math.max(m.hx - m.hs, 0) + Math.max(m.ax - m.as, 0) < 25) flags.add('nail');
           for (const [id, s] of [[m.home, m.hs], [m.away, m.as]]) for (const mark of [100, 125, 150, 175]) if (s >= mark) flags.add(id + mark);
         }
         L.seen.set(m.id, { wp: m.wp, done: m.done, hs: m.hs, as: m.as, t: Date.now(), flags });
@@ -340,7 +352,7 @@
       }
       const flags = prev.flags;
       if (m.done && !prev.done) {
-        const upset = lead === dogPre && dogPrePct <= 40;
+        const upset = lead === dogPre && dogPrePct <= WP.finalUpsetDog;
         out.push({ ...base, kind: upset ? 'final_upset' : (Math.abs(m.hs - m.as) < 5 ? 'final_close' : (Math.abs(m.hs - m.as) > 40 ? 'final_blowout' : 'final')), priority: upset ? 3 : 2,
           score: sc(lead).toFixed(1), oppScore: sc(trail).toFixed(1), margin: Math.abs(m.hs - m.as).toFixed(1), prePct: dogPrePct });
       } else if (!m.done) {
@@ -348,10 +360,10 @@
         if (crossed) out.push({ ...base, kind: 'lead_change', priority: 2, from: Math.round(prev.wp >= 50 ? prev.wp : 100 - prev.wp) });
         const swing = Math.abs(m.wp - prev.wp);
         if (!crossed && swing >= 18) out.push({ ...base, kind: 'big_swing', priority: 2, swing: Math.round(swing), up: m.wp > prev.wp ? T(m.home) : T(m.away), down: m.wp > prev.wp ? T(m.away) : T(m.home) });
-        if (lead === dogPre && dogPrePct <= 35 && leadPct >= 65 && !flags.has('upset')) { flags.add('upset'); out.push({ ...base, kind: 'upset_watch', priority: 2, prePct: dogPrePct }); }
-        if (lead === favPre && Math.round(Math.max(m.pre, 100 - m.pre)) >= 70 && leadPct <= 55 && !flags.has('scare')) { flags.add('scare'); out.push({ ...base, kind: 'favorite_scare', priority: 1, prePct: Math.round(Math.max(m.pre, 100 - m.pre)) }); }
-        if (leadPct >= 97 && !flags.has('lock')) { flags.add('lock'); out.push({ ...base, kind: 'lock', priority: 1 }); }
-        const close = leadPct <= 60 && Math.max(m.hx - m.hs, 0) + Math.max(m.ax - m.as, 0) < 25;
+        if (lead === dogPre && dogPrePct <= WP.upsetDog && leadPct >= WP.upsetLead && !flags.has('upset')) { flags.add('upset'); out.push({ ...base, kind: 'upset_watch', priority: 2, prePct: dogPrePct }); }
+        if (lead === favPre && Math.round(Math.max(m.pre, 100 - m.pre)) >= WP.scareFav && leadPct <= WP.scareLead && !flags.has('scare')) { flags.add('scare'); out.push({ ...base, kind: 'favorite_scare', priority: 1, prePct: Math.round(Math.max(m.pre, 100 - m.pre)) }); }
+        if (leadPct >= WP.lock && !flags.has('lock')) { flags.add('lock'); out.push({ ...base, kind: 'lock', priority: 1 }); }
+        const close = leadPct <= WP.nail && Math.max(m.hx - m.hs, 0) + Math.max(m.ax - m.as, 0) < 25;
         if (close && !flags.has('nail')) { flags.add('nail'); out.push({ ...base, kind: 'nail_biter', priority: 2, gap: Math.abs(m.hs - m.as).toFixed(1) }); }
         for (const [id, s, ps] of [[m.home, m.hs, prev.hs], [m.away, m.as, prev.as]]) {
           for (const mark of [100, 125, 150, 175]) if (ps < mark && s >= mark && !flags.has(id + mark)) { flags.add(id + mark); out.push({ ...base, kind: 'score_mark', priority: 1, team: T(id), opp: T(id === m.home ? m.away : m.home), mark, score: s.toFixed(1) }); }
