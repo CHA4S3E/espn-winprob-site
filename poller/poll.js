@@ -15,6 +15,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { fetchLeagueWeek, fetchNflGameStatusMap } = require('./lib/espnClient');
 const { teamExpected, computeDynamicStddev, matchupWinProbability, DEFAULT_STDDEV } = require('./lib/winProb');
 const PRO_TEAM_MAP = require('./lib/proTeamMap');
+const { buildPlayers, diffEvents } = require('./lib/lineups');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -365,6 +366,7 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
   let insertedCount = 0;
   let skippedCount = 0;
   let rejectedCount = 0;
+  const lineupByTeam = new Map(); // team uuid -> buildPlayers() output, for the News Desk
 
   for (const matchup of schedule) {
     const sides = [
@@ -379,6 +381,8 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
       const {
         expected, actual, allDone, totalCount, doneCount, remainingFractionSum, lineupFingerprint, hasPendingPregamePlayer,
       } = teamExpected(side.rosterForCurrentScoringPeriod?.entries, nflStatusMap);
+      const teamUuidForLineup = teamIdByEspnId[side.teamId];
+      if (teamUuidForLineup) lineupByTeam.set(teamUuidForLineup, buildPlayers(side.rosterForCurrentScoringPeriod?.entries, nflStatusMap));
       return { side, isHome, expected, allDone, actual, totalCount, doneCount, remainingFractionSum, lineupFingerprint, hasPendingPregamePlayer };
     });
 
@@ -523,6 +527,17 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
     if (result.away_inserted) insertedCount++; else skippedCount++;
   }
 
+  // Player lineups + player events for the News Desk. Current week only (not
+  // the quiet stat-correction look-backs), and never allowed to break the
+  // snapshot polling above: any failure is logged and the run carries on.
+  if (plottingOpen && !quiet && lineupByTeam.size) {
+    try {
+      await saveLineupsAndEvents(league, year, week, lineupByTeam);
+    } catch (err) {
+      console.warn(`[${league.slug}] news desk lineups not saved: ${err.message || err}`);
+    }
+  }
+
   // For a normal current-week poll this always logs (quiet=false, the
   // default). For a stat-correction look-back week (see pollLeague below)
   // it's called with quiet=true, so the routine "nothing changed" cases
@@ -545,6 +560,47 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
   }
 
   return { insertedCount, skippedCount, rejectedCount };
+}
+
+// ============================================================
+// News Desk player data (see lib/lineups.js and
+// db/migrations/002_news_desk_player_data.sql). One row per team per week in
+// `lineups` holds the latest per-player summary; whatever changed since the
+// previous poll is appended to `player_events`. If the tables don't exist yet
+// (migration not run), this turns itself off for the rest of the run.
+// ============================================================
+let lineupTablesMissing = false;
+const isMissingTable = (e) => e && (e.code === '42P01' || e.code === 'PGRST205' || /does not exist|schema cache/i.test(e.message || ''));
+
+async function saveLineupsAndEvents(league, year, week, lineupByTeam) {
+  if (lineupTablesMissing) return;
+  const { data: prevRows, error: prevErr } = await supabase
+    .from('lineups').select('team_id, players')
+    .eq('league_id', league.id).eq('year', year).eq('week', week);
+  if (prevErr) {
+    if (isMissingTable(prevErr)) { lineupTablesMissing = true; console.log('news desk tables not found -- run db/migrations/002_news_desk_player_data.sql to enable player coverage'); return; }
+    throw prevErr;
+  }
+  const prevByTeam = new Map((prevRows || []).map((r) => [r.team_id, r.players]));
+
+  const upserts = [], events = [];
+  for (const [teamId, players] of lineupByTeam) {
+    const prev = prevByTeam.get(teamId);
+    if (prev && JSON.stringify(prev) === JSON.stringify(players)) continue;
+    upserts.push({ league_id: league.id, year, week, team_id: teamId, players, updated_at: new Date().toISOString() });
+    for (const ev of diffEvents(prev, players)) events.push({ league_id: league.id, year, week, team_id: teamId, ...ev });
+  }
+  if (upserts.length) {
+    const { error } = await supabase.from('lineups').upsert(upserts, { onConflict: 'league_id,year,week,team_id' });
+    if (error) throw error;
+  }
+  if (events.length) {
+    const { error } = await supabase.from('player_events').insert(events);
+    if (error) throw error;
+  }
+  if (upserts.length || events.length) {
+    console.log(`[${league.slug}] week ${week}: news desk -- ${upserts.length} lineup(s) updated, ${events.length} player event(s)`);
+  }
 }
 
 // The actual per-league entry point main() calls. Computes the current
