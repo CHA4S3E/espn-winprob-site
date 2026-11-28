@@ -99,8 +99,14 @@
     if (newer && newer.length) { L.week = newer[0].week; L.series.clear(); L.lastTs = null; L.lineups.clear(); L.events = []; L.lastEventId = 0; L.seen.clear(); L.firstLoad = true; return refreshLeague(L); }
 
     buildMatchups(L);
-    await Promise.all([refreshPlayers(L), refreshSummaryForStandings(L)]);
+    await Promise.all([refreshPlayers(L), refreshSummaryForStandings(L), refreshTransactions(L).catch(() => {})]);
+    const prevStatus = new Map([...(L.odds || new Map())].map(([id, o]) => [id, o.status]));
     computeStandings(L);
+    // Clinched / eliminated: announce when a team's status changes to it (never on first load).
+    if (!L.firstLoad) for (const [id, o] of L.odds) {
+      const was = prevStatus.get(id);
+      if (o.status && was && o.status !== was && (o.status === 'clinched' || o.status === 'eliminated')) emit({ kind: o.status, priority: o.status === 'clinched' ? 3 : 2, league: L, team: L.teams[id], ts: Date.now() });
+    }
     detect(L);
     L.firstLoad = false;
   }
@@ -217,8 +223,8 @@
     const ids = Object.keys(L.teams); if (!ids.length) return new Map();
     const mean = new Map(ids.map((id) => { const r = rec.get(id); const g = r && r.games.length ? r.games : [110]; return [id, g.reduce((s, x) => s + x, 0) / g.length]; }));
     const future = L.schedule.filter((s) => s.week > L.week && s.week <= L.regEnd);
-    const N = 1500, P = L.playoffSpots;
-    const run = (usePregame) => {
+    const P = L.playoffSpots;
+    const run = (usePregame, force, N = 1500) => {
       const made = new Map(ids.map((id) => [id, 0]));
       let seed = 12345 + L.week;
       const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -227,7 +233,8 @@
         const w = new Map(ids.map((id) => [id, (rec.get(id) || { w: 0 }).w + (rec.get(id) || { t: 0 }).t / 2]));
         const pf = new Map(ids.map((id) => [id, (rec.get(id) || { pf: 0 }).pf]));
         for (const m of L.matchups) {
-          const p = (usePregame ? m.pre : m.wp) / 100;
+          let p = (usePregame ? m.pre : m.wp) / 100;
+          if (force && (m.home === force.id || m.away === force.id)) p = (m.home === force.id) === force.win ? 1 : 0;
           const homeWins = rnd() < p;
           w.set(homeWins ? m.home : m.away, w.get(homeWins ? m.home : m.away) + 1);
           pf.set(m.home, pf.get(m.home) + m.hx); pf.set(m.away, pf.get(m.away) + m.ax);
@@ -244,7 +251,23 @@
       return new Map(ids.map((id) => [id, made.get(id) / N]));
     };
     const live = run(false), pre = run(true);
-    return new Map(ids.map((id) => [id, { now: live.get(id), pre: pre.get(id) }]));
+    const odds = new Map(ids.map((id) => [id, { now: live.get(id), pre: pre.get(id) }]));
+    // Clinch / elimination watch for the last few regular-season weeks: rerun
+    // with each team's game this week forced to a win and to a loss.
+    if (L.regEnd - L.week <= 3) {
+      for (const id of ids) {
+        const o = odds.get(id), playing = L.matchups.some((m) => (m.home === id || m.away === id) && !m.done);
+        let status = o.now >= 0.999 ? 'clinched' : o.now <= 0.001 ? 'eliminated' : 'alive';
+        if (status === 'alive' && playing) {
+          const ifWin = run(false, { id, win: true }, 500).get(id), ifLoss = run(false, { id, win: false }, 500).get(id);
+          if (ifWin >= 0.999) status = 'clinch_with_win';
+          else if (ifLoss <= 0.001) status = ifWin <= 0.001 ? 'eliminated' : 'win_or_out';
+          o.ifWin = ifWin; o.ifLoss = ifLoss;
+        }
+        o.status = status;
+      }
+    }
+    return odds;
   }
 
   // ------------------------------------------------------------------ event detection
@@ -304,13 +327,50 @@
       const m = L.matchups.find((x) => x.home === e.team_id || x.away === e.team_id);
       const team = T(e.team_id), opp = m ? T(m.home === e.team_id ? m.away : m.home) : null;
       const wpNow = m ? Math.round(m.home === e.team_id ? m.wp : 100 - m.wp) : null;
-      const pri = { pass_td: 2, rush_td: 2, rec_td: 2, dst_score: 2, interception: 1, fumble: 1, big_day: 2, boom_final: 2, dud: 1, bench_boom: 1, big_play: 1, fg_50: 1, stat_correction: 0 }[e.kind];
+      const pri = { injury: e.detail && e.detail.status === 'OUT' ? 2 : 1, pass_td: 2, rush_td: 2, rec_td: 2, dst_score: 2, interception: 1, fumble: 1, big_day: 2, boom_final: 2, dud: 1, bench_boom: 1, big_play: 1, fg_50: 1, stat_correction: 0 }[e.kind];
       out.push({ league: L, kind: 'player_' + e.kind, priority: pri == null ? 1 : pri, team, opp, matchup: m, player: e.player_name, pid: e.player_id, pos: e.position, pro: e.pro_team,
         pts: Number(e.points || 0).toFixed(1), delta: Math.abs(Number(e.delta || 0)).toFixed(1), detail: e.detail || {}, wp: wpNow, ts: Date.parse(e.ts), old: quiet || Date.now() - Date.parse(e.ts) > 20 * 60 * 1000 });
     }
     L._newPlayerEvents = [];
     out.sort((a, b) => (a.ts || 0) - (b.ts || 0));
     for (const ev of out) { ev.ts = ev.ts || Date.now(); if (quiet) ev.old = true; emit(ev); }
+  }
+
+  // ------------------------------------------------------------------ news + transactions
+  // ESPN's public NFL news, kept only when it's about a player on one of the
+  // leagues' rosters. Checked every 10 minutes.
+  const news = { items: [], at: 0, seen: new Set(), first: true };
+  async function refreshNews() {
+    if (Date.now() - news.at < 10 * 60 * 1000) return news;
+    news.at = Date.now();
+    try {
+      const j = await (await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/news?limit=50')).json();
+      const rostered = new Map();
+      for (const L of leagues) for (const [tid, ps] of L.lineups) for (const p of ps) { if (!rostered.has(p.id)) rostered.set(p.id, []); rostered.get(p.id).push({ L, teamId: tid, starter: !p.bench, p }); }
+      const items = [];
+      for (const a of j.articles || []) {
+        const ath = (a.categories || []).filter((c) => c.type === 'athlete' && c.athleteId);
+        const hits = ath.flatMap((c) => rostered.get(c.athleteId) || []);
+        if (!hits.length) continue;
+        const it = { id: String(a.id || a.headline), head: a.headline, desc: a.description || '', ts: Date.parse(a.published || a.lastModified || Date.now()), hits, pid: hits[0].p.id, pro: hits[0].p.tm };
+        items.push(it);
+        if (!news.first && !news.seen.has(it.id)) emit({ kind: 'news', priority: hits.some((h) => h.starter) ? 1 : 0, league: hits[0].L, newsItem: it, ts: it.ts });
+        news.seen.add(it.id);
+      }
+      news.items = items.sort((x, y) => y.ts - x.ts); news.first = false;
+    } catch (e) { /* keep the last good list */ }
+    return news;
+  }
+  async function refreshTransactions(L) {
+    if (L.txnOk === false) return;
+    if (L._txnAt && Date.now() - L._txnAt < 2 * 60 * 1000) return;
+    L._txnAt = Date.now();
+    const r = await sb.from('transactions').select('espn_id, ts, kind, team_id, items').eq('league_id', L.id).order('ts', { ascending: false }).limit(30);
+    if (r.error) { if (r.error.code === 'PGRST205' || r.error.code === '42P01') L.txnOk = false; return; }
+    const first = !L.txns;
+    const known = new Set((L.txns || []).map((t) => t.espn_id));
+    L.txns = r.data || [];
+    if (!first) for (const t of L.txns.slice().reverse()) if (!known.has(t.espn_id)) emit({ kind: t.kind === 'trade' ? 'txn_trade' : 'txn_add', priority: t.kind === 'trade' ? 2 : 1, league: L, txn: t, ts: Date.parse(t.ts) });
   }
 
   // ------------------------------------------------------------------ NFL scoreboard
@@ -341,7 +401,7 @@
   const anyLive = () => nfl.games.some((g) => g.state === 'in') || leagues.some((L) => L.matchups.some((m) => !m.done && m.series.length > 1 && Date.now() - m.updated < 30 * 60 * 1000));
 
   window.DeskData = {
-    sb, init, leagues, refreshLeague, refreshNfl, nfl, isNight, anyLive,
+    sb, init, leagues, refreshLeague, refreshNfl, refreshNews, news, nfl, isNight, anyLive,
     on: (fn) => listeners.push(fn),
     team: (L, id) => L.teams[id] || { name: 'Unknown', color: '#888' },
   };

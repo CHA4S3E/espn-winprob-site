@@ -28,6 +28,11 @@ assert.strictEqual(p0.length, 2);
 assert.deepStrictEqual(p0[0], { id: 1, n: 'Pat QB', pos: 'QB', tm: 'KC', bench: false, pts: 10, proj: 20, g: 'in', st: { passYds: 180, passTd: 1 } });
 assert.strictEqual(p0[1].bench, true);
 assert.strictEqual(buildPlayers([entry({ id: 3, name: 'X', team: 'NYJ' })], live)[0].g, 'bye');
+// Injury status is kept only when the player isn't healthy.
+const hurt = entry({ id: 4, name: 'Hurt' }); hurt.playerPoolEntry.player.injuryStatus = 'QUESTIONABLE';
+const fine = entry({ id: 6, name: 'Fine' }); fine.playerPoolEntry.player.injuryStatus = 'ACTIVE';
+assert.strictEqual(buildPlayers([hurt], live)[0].inj, 'QUESTIONABLE');
+assert.strictEqual(buildPlayers([fine], live)[0].inj, undefined);
 
 // First poll of the week: nothing to compare, no events.
 assert.deepStrictEqual(diffEvents(null, p0), []);
@@ -71,5 +76,13 @@ assert.deepStrictEqual(diffEvents(before, after).map((e) => e.kind).sort(), ['be
 const benchA = buildPlayers([entry({ id: 9, name: 'Bench TD', slot: 20, pts: 2, stats: { 25: 0 } })], live);
 const benchB = buildPlayers([entry({ id: 9, name: 'Bench TD', slot: 20, pts: 14, stats: { 25: 1 } })], live);
 assert.deepStrictEqual(diffEvents(benchA, benchB), []);
+
+// A starter downgraded to OUT before kickoff is news; an unchanged status isn't.
+const pre = { KC: { state: 'pre' } };
+const q1 = entry({ id: 11, name: 'Star WR', pos: 3 }); q1.playerPoolEntry.player.injuryStatus = 'QUESTIONABLE';
+const q2 = entry({ id: 11, name: 'Star WR', pos: 3 }); q2.playerPoolEntry.player.injuryStatus = 'OUT';
+const inj = diffEvents(buildPlayers([q1], pre), buildPlayers([q2], pre));
+assert.deepStrictEqual(inj.map((e) => [e.kind, e.detail.status]), [['injury', 'OUT']]);
+assert.deepStrictEqual(diffEvents(buildPlayers([q2], pre), buildPlayers([q2], pre)), []);
 
 console.log('All lineups tests passed.');

@@ -56,6 +56,8 @@ function buildPlayers(entries, nflStatusMap) {
       g: status ? status.state : 'bye', // 'pre' | 'in' | 'post' | 'bye'
       st,
     });
+    const inj = player.injuryStatus;
+    if (inj && inj !== 'ACTIVE' && inj !== 'NORMAL') out[out.length - 1].inj = inj; // QUESTIONABLE, DOUBTFUL, OUT, INJURY_RESERVE...
   }
   return out;
 }
@@ -92,6 +94,10 @@ function diffEvents(prevPlayers, players) {
       if (q.g !== 'post' && p.g === 'post' && p.pts >= 20) push(p, 'bench_boom', d, { proj: p.proj });
       continue;
     }
+
+    // Injury news for a starter whose game hasn't started (e.g. ruled OUT).
+    const INJ_RANK = { QUESTIONABLE: 1, DOUBTFUL: 2, OUT: 3, INJURY_RESERVE: 3, SUSPENSION: 3 };
+    if (p.g === 'pre' && p.inj && p.inj !== q.inj && (INJ_RANK[p.inj] || 0) > (INJ_RANK[q.inj] || 0)) push(p, 'injury', 0, { status: p.inj, proj: p.proj });
 
     let scored = false;
     for (const [k, kind] of [['passTd', 'pass_td'], ['rushTd', 'rush_td'], ['recTd', 'rec_td']]) {

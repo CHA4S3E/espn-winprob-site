@@ -12,7 +12,8 @@
 //      (b) the values actually changed since that team's last snapshot.
 
 const { createClient } = require('@supabase/supabase-js');
-const { fetchLeagueWeek, fetchNflGameStatusMap } = require('./lib/espnClient');
+const { fetchLeagueWeek, fetchNflGameStatusMap, fetchTransactions, fetchAthlete } = require('./lib/espnClient');
+const { parseTransactions } = require('./lib/transactions');
 const { teamExpected, computeDynamicStddev, matchupWinProbability, DEFAULT_STDDEV } = require('./lib/winProb');
 const PRO_TEAM_MAP = require('./lib/proTeamMap');
 const { buildPlayers, diffEvents } = require('./lib/lineups');
@@ -603,6 +604,52 @@ async function saveLineupsAndEvents(league, year, week, lineupByTeam) {
   }
 }
 
+// ============================================================
+// News Desk transaction wire (lib/transactions.js,
+// db/migrations/003_news_desk_transactions.sql). Executed waiver claims,
+// free-agent pickups, drops and trades for this week and last, each saved
+// once (unique on league + ESPN transaction id), with player names looked up
+// from saved lineups first and ESPN's public athlete endpoint otherwise.
+// Turns itself off for the run if the table doesn't exist yet.
+// ============================================================
+let transactionsTableMissing = false;
+const athleteCache = new Map();
+async function playerInfo(id, lineupIndex) {
+  if (lineupIndex.has(id)) return lineupIndex.get(id);
+  if (athleteCache.has(id)) return athleteCache.get(id);
+  let info = null;
+  if (Number(id) < 0) { const abbr = PRO_TEAM_MAP[-16000 - Number(id)]; info = abbr ? { name: `${abbr} D/ST`, pos: 'D/ST', pro: abbr } : null; }
+  else { try { info = await fetchAthlete(id); } catch (e) { info = null; } }
+  athleteCache.set(id, info);
+  return info;
+}
+async function saveTransactions(league, year, week, teamIdByEspnId) {
+  if (transactionsTableMissing) return;
+  const rows = [];
+  for (const wk of [week, week - 1]) {
+    if (wk < 1) continue;
+    const json = await fetchTransactions({ espnLeagueId: league.espn_league_id, espnS2: league.espn_s2, swid: league.swid, year, week: wk });
+    rows.push(...parseTransactions(json, teamIdByEspnId));
+  }
+  if (!rows.length) return;
+  const { data: have, error: haveErr } = await supabase.from('transactions').select('espn_id').eq('league_id', league.id).in('espn_id', rows.map((r) => r.espn_id));
+  if (haveErr) {
+    if (isMissingTable(haveErr)) { transactionsTableMissing = true; console.log('transactions table not found -- run db/migrations/003_news_desk_transactions.sql to enable the transaction wire'); return; }
+    throw haveErr;
+  }
+  const known = new Set((have || []).map((r) => r.espn_id));
+  const fresh = rows.filter((r) => !known.has(r.espn_id));
+  if (!fresh.length) return;
+  // Names from this league's saved lineups when possible (no extra requests).
+  const lineupIndex = new Map();
+  const { data: lu } = await supabase.from('lineups').select('players').eq('league_id', league.id).eq('year', year).gte('week', week - 1);
+  for (const r of lu || []) for (const p of r.players || []) lineupIndex.set(p.id, { name: p.n, pos: p.pos, pro: p.tm });
+  for (const r of fresh) for (const it of r.items) { const info = await playerInfo(it.player_id, lineupIndex); if (info) Object.assign(it, info); }
+  const { error } = await supabase.from('transactions').upsert(fresh.map((r) => ({ league_id: league.id, year, week, ...r })), { onConflict: 'league_id,espn_id', ignoreDuplicates: true });
+  if (error) throw error;
+  console.log(`[${league.slug}] news desk -- ${fresh.length} new transaction(s)`);
+}
+
 // The actual per-league entry point main() calls. Computes the current
 // week + Power Picks plotting gate exactly as before, polls it, then also
 // re-polls the last few weeks (see STAT_CORRECTION_LOOKBACK_WEEKS above)
@@ -648,6 +695,13 @@ async function pollLeague(league) {
 
   const current = await pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen, saveSchedule: RUN_SLOW_TASKS });
   totalInserted += current.insertedCount;
+
+  // Transaction wire: on the 15-minute catch-up runs (waivers and trades
+  // happen midweek too). Never allowed to break the rest of the poll.
+  if (RUN_SLOW_TASKS || CATCH_UP_RUN) {
+    try { await saveTransactions(league, year, week, teamIdByEspnId); }
+    catch (err) { console.warn(`[${league.slug}] transactions not saved: ${err.message || err}`); }
+  }
 
   for (let back = 1; RUN_SLOW_TASKS && back <= STAT_CORRECTION_LOOKBACK_WEEKS; back++) {
     const lookbackWeek = week - back;

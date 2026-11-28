@@ -343,6 +343,53 @@
       ['{WHO} JUST GOT DETHRONED', '{T} broke {WHO}’s {REC} record! {V} vs {OLD}.'],
       ['HISTORY, BABY!', 'New league record for {REC}: {T}, {V}!'],
     ] },
+    // ----- clinch watch
+    clinched: { mood: 'hype', pro: [
+      ['{T} CLINCH', '{T} have clinched a playoff spot in {L}.'],
+      ['{T} ARE IN', 'Punch the ticket: {T} are headed to the {L} playoffs.'],
+      ['POSTSEASON BOUND: {T}', '{T} lock up a playoff berth.'],
+    ], casual: [
+      ['{T} ARE IN!!', '{T} made the playoffs! Party at their place!'],
+      ['PLAYOFF BOUND!', '{T} just clinched! Somebody get the streamers.'],
+      ['{T} PUNCHED THEIR TICKET', '{T} are officially playoff bound. Woo!'],
+    ] },
+    eliminated: { mood: 'bad', pro: [
+      ['{T} ELIMINATED', '{T} have been eliminated from playoff contention.'],
+      ['{T}\u2019S SEASON IS OVER', 'The math is final: {T} can no longer make the playoffs.'],
+      ['NO POSTSEASON FOR {T}', '{T} are out of the playoff race.'],
+    ], casual: [
+      ['{T} ARE OUT', '{T} are officially out of the playoffs. There\u2019s always next year!'],
+      ['NOOO {T}', '{T} got eliminated. Pour one out.'],
+      ['{T}: SPOILER SEASON', '{T} can\u2019t make the playoffs, but they can still ruin someone else\u2019s week.'],
+    ] },
+    // ----- injuries + transactions ({S2} injury status, {PL} player, {A} add, {DR} drop, {T2} trade partner, {GET} received)
+    player_injury: { mood: 'bad', pro: [
+      ['INJURY: {PL} {S2}', '{PL} is listed {S2} \u2014 a starter for {T}, projected for {PROJ}.'],
+      ['{T} LINEUP ALERT', '{T} starter {PL} is now {S2}.'],
+      ['{PL} DOWNGRADED', '{PL} downgraded to {S2}. {T} will need a plan.'],
+    ], casual: [
+      ['UH OH: {PL} IS {S2}', '{PL} is {S2}! {T}, check your lineup!'],
+      ['{T}, CHECK YOUR LINEUP', '{PL} just got listed {S2}. Swap him out!'],
+      ['{PL} INJURY NEWS', '{PL} is {S2}. Fingers crossed, {T}.'],
+    ] },
+    txn_add: { mood: 'calm', pro: [
+      ['{T} ADD {A}', '{T} pick up {A}{DROPTXT}.'],
+      ['ROSTER MOVE: {T}', '{T} add {A}{DROPTXT}.'],
+      ['WAIVER WIRE: {A} TO {T}', '{A} lands with {T}{DROPTXT}.'],
+    ], casual: [
+      ['{T} GRABBED {A}', '{T} picked up {A}{DROPTXT}. Sneaky!'],
+      ['NEW GUY ALERT', '{A} joins {T}{DROPTXT}. Welcome to the family!'],
+      ['{T} WENT SHOPPING', '{T} added {A}{DROPTXT}.'],
+    ] },
+    txn_trade: { mood: 'hype', pro: [
+      ['TRADE: {T} AND {T2}', '{T} send {A} to {T2} for {GET}.'],
+      ['BLOCKBUSTER IN {L}', 'Trade alert: {T} get {GET} from {T2} for {A}.'],
+      ['THE DEAL IS DONE', '{T} and {T2} complete a trade \u2014 {A} for {GET}.'],
+    ], casual: [
+      ['TRADE!!', '{T} and {T2} made a trade! {A} for {GET}. Who won?'],
+      ['DEAL OR NO DEAL? DEAL!', '{T} traded {A} to {T2} for {GET}.'],
+      ['SWAP MEET', '{T} and {T2} swapped players: {A} for {GET}. Hmm.'],
+    ] },
     // ----- NFL
     nfl_kickoff: { mood: 'calm', pro: [
       ['KICKOFF: {G}', '{G} is underway.'],
@@ -373,6 +420,15 @@
     players: { pro: ['Top performers', 'Player watch', 'Who’s carrying their teams', 'The stat sheet', 'Stars of the week'], casual: ['Who’s balling', 'MVP watch', 'Players of the day', 'The heroes (and zeros)', 'Who’s doing what'] },
     nfl: { pro: ['Around the NFL', 'The real games', 'NFL scoreboard', 'Live from the league'], casual: ['Real football', 'The actual NFL', 'What the pros are doing', 'NFL check-in'] },
     rundown: { pro: ['The rundown', 'Top stories', 'Latest headlines', 'What you missed'], casual: ['The latest gossip', 'What’s happening', 'News roundup', 'Catch me up'] },
+    preview: { pro: ['Matchup preview', 'This week\u2019s slate', 'Tale of the tape', 'The card'], casual: ['This week\u2019s games', 'Who\u2019s playing who', 'The lineup', 'Coming up'] },
+    picks: { pro: ['Desk picks', 'Our picks', 'The predictions', 'Lock it in'], casual: ['Our picks', 'Bold predictions', 'Who we got', 'Crystal ball'] },
+    countdown: { pro: ['Countdown to kickoff', 'Kickoff clock', 'Almost game time'], casual: ['Almost time!', 'Kickoff countdown', 'Get your snacks ready'] },
+    scenarios: { pro: ['Showdown scenarios', 'What has to happen', 'It comes down to this', 'The final drive'], casual: ['Here\u2019s the deal', 'What needs to happen', 'It all comes down to\u2026', 'Nail-biter math'] },
+    clinch: { pro: ['Clinch watch', 'Playoff math', 'Magic numbers', 'Race to the postseason'], casual: ['Who\u2019s in, who\u2019s out', 'Playoff math', 'Clinch watch', 'The playoff race'] },
+    news: { pro: ['Injury & news wire', 'Injury report', 'News desk', 'Around the roster'], casual: ['Injury report', 'News and boo-boos', 'Who\u2019s hurt', 'The latest'] },
+    transactions: { pro: ['Transaction wire', 'Roster moves', 'Waiver wire report', 'Front office'], casual: ['Who picked up who', 'Roster shuffles', 'Waiver wire', 'Trades & pickups'] },
+    leaders: { pro: ['Stat leaders', 'Luck & consistency', 'The numbers behind the standings', 'Analytics desk'], casual: ['Lucky & unlucky', 'Fun stats', 'The nerd corner', 'Numbers that matter'] },
+    whip: { pro: ['Whip-around', 'Live look-in', 'Around the horn', 'Quick hits'], casual: ['Checking in!', 'Quick peek', 'Look-in', 'Speed round'] },
     need: { pro: ['What they need', 'Path to victory', 'The comeback math', 'Do the math', 'Still alive'], casual: ['What it’s gonna take', 'Can they do it?', 'Comeback math', 'Still got a shot?', 'Hope-o-meter'] },
     records: { pro: ['The record book', 'League history', 'All-time marks', 'By the numbers: all time'], casual: ['The family record book', 'Hall of fame (and shame)', 'Who holds the records', 'Bragging rights forever'] },
     recap: { pro: ['Weekly recap', 'The week in review', 'Last week’s highlights'], casual: ['Last week, real quick', 'Previously on…', 'The week that was'] },

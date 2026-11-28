@@ -24,6 +24,22 @@ async function fetchLeagueWeek({ espnLeagueId, espnS2, swid, year, week }) {
   return res.json();
 }
 
+// League transactions (waivers, free agents, trades) for one scoring period.
+async function fetchTransactions({ espnLeagueId, espnS2, swid, year, week }) {
+  const url = `${FANTASY_BASE}/${year}/segments/0/leagues/${espnLeagueId}?view=mTransactions2&scoringPeriodId=${week}`;
+  const res = await fetch(url, { headers: { Cookie: `espn_s2=${espnS2}; SWID=${swid}`, Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`ESPN transactions ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+// Name/position/team for a player id, from ESPN's public athlete endpoint.
+async function fetchAthlete(id) {
+  const res = await fetch(`https://site.api.espn.com/apis/common/v3/sports/football/nfl/athletes/${id}`, { headers: { Accept: 'application/json' } });
+  if (!res.ok) return null;
+  const j = await res.json(); const a = j && j.athlete;
+  return a ? { name: a.displayName || a.fullName, pos: a.position && a.position.abbreviation, pro: a.team && a.team.abbreviation } : null;
+}
+
 // Returns:
 //   statusMap  -- NFL team abbreviation -> { state, remainingFraction }.
 //                 state is 'pre' | 'in' | 'post', same as before.
@@ -117,4 +133,4 @@ function estimateRemainingFraction(state, period, displayClock) {
   return Math.max(0, Math.min(1, 1 - elapsed / 3600));
 }
 
-module.exports = { fetchLeagueWeek, fetchNflGameStatusMap };
+module.exports = { fetchLeagueWeek, fetchNflGameStatusMap, fetchTransactions, fetchAthlete };
