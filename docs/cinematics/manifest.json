@@ -1,0 +1,190 @@
+{
+ "teams": {
+  "aebd2919-749d-458b-9d6c-036d819c79e8": {
+   "name": "Joe Buck Yourself",
+   "stamp": "1790200135794",
+   "color": "#e6192a",
+   "closeup": "cinematics/aebd2919-closeup.mp4",
+   "wide": "cinematics/aebd2919-wide.mp4",
+   "champion": "cinematics/aebd2919-champion.mp4"
+  },
+  "dc7c7d80-3271-41d1-8f98-5bbf58357de8": {
+   "name": "The Howling Hurricanes",
+   "stamp": "1790198316830",
+   "color": "#007ec8",
+   "closeup": "cinematics/dc7c7d80-closeup.mp4",
+   "wide": "cinematics/dc7c7d80-wide.mp4",
+   "champion": "cinematics/dc7c7d80-champion.mp4"
+  },
+  "fbde0d2f-7bcb-4219-b2a1-7eb157542ce6": {
+   "name": "Raiderz",
+   "stamp": "1790198897054",
+   "color": "#804747",
+   "closeup": "cinematics/fbde0d2f-closeup.mp4",
+   "wide": "cinematics/fbde0d2f-wide.mp4",
+   "champion": "cinematics/fbde0d2f-champion.mp4"
+  },
+  "352d6490-241a-4ffa-afa6-b0b1c9fdf76d": {
+   "name": "Lady and the Champs",
+   "stamp": "1790201129464",
+   "color": "#daa520",
+   "closeup": "cinematics/352d6490-closeup.mp4",
+   "wide": "cinematics/352d6490-wide.mp4",
+   "champion": "cinematics/352d6490-champion.mp4"
+  },
+  "073f8314-44b2-40de-9a55-6eed53e0760d": {
+   "name": "Bababooey",
+   "stamp": "1790201266056",
+   "color": "#ff6600",
+   "closeup": "cinematics/073f8314-closeup.mp4",
+   "wide": "cinematics/073f8314-wide.mp4",
+   "champion": "cinematics/073f8314-champion.mp4"
+  },
+  "db198b3c-3fcf-490a-aa50-2d46ae131a93": {
+   "name": "Branford Crabs",
+   "stamp": "1790200423731",
+   "color": "#00695c",
+   "closeup": "cinematics/db198b3c-closeup.mp4",
+   "wide": "cinematics/db198b3c-wide.mp4",
+   "champion": "cinematics/db198b3c-champion.mp4"
+  },
+  "55c0d10f-eda9-42cd-bd42-21e61c4497e9": {
+   "name": "The All-Star Aces",
+   "stamp": "1790198426449",
+   "color": "#a5141e",
+   "closeup": "cinematics/55c0d10f-closeup.mp4",
+   "wide": "cinematics/55c0d10f-wide.mp4",
+   "champion": "cinematics/55c0d10f-champion.mp4"
+  },
+  "edc07345-d0d6-41e4-81f9-0442bc551fa0": {
+   "name": "Stony Creek Gunners",
+   "stamp": "1790200220574",
+   "color": "#808080",
+   "closeup": "cinematics/edc07345-closeup.mp4",
+   "wide": "cinematics/edc07345-wide.mp4",
+   "champion": "cinematics/edc07345-champion.mp4"
+  },
+  "8c5ba255-5d31-4c83-951f-2231b7c99615": {
+   "name": "Just End The Season",
+   "stamp": "1790199761917",
+   "color": "#00ff80",
+   "closeup": "cinematics/8c5ba255-closeup.mp4",
+   "wide": "cinematics/8c5ba255-wide.mp4",
+   "champion": "cinematics/8c5ba255-champion.mp4"
+  },
+  "05d9258f-2155-4c9a-9f98-4e2491b1f892": {
+   "name": "Gary and the Conquerors",
+   "stamp": "1790198673494",
+   "color": "#33eb00",
+   "closeup": "cinematics/05d9258f-closeup.mp4",
+   "wide": "cinematics/05d9258f-wide.mp4",
+   "champion": "cinematics/05d9258f-champion.mp4"
+  },
+  "5ec4a999-403b-441d-a72b-9bc701575813": {
+   "name": "Jamie's Finest Team",
+   "stamp": "1790200545904",
+   "color": "#d27314",
+   "closeup": "cinematics/5ec4a999-closeup.mp4",
+   "wide": "cinematics/5ec4a999-wide.mp4",
+   "champion": "cinematics/5ec4a999-champion.mp4"
+  },
+  "13fb241e-c998-4099-9649-da5216e7be0e": {
+   "name": "The Oscar Dynasty",
+   "stamp": "1790198997717",
+   "color": "#8b4501",
+   "closeup": "cinematics/13fb241e-closeup.mp4",
+   "wide": "cinematics/13fb241e-wide.mp4",
+   "champion": "cinematics/13fb241e-champion.mp4"
+  },
+  "2da5771f-a699-4238-b681-07d782a82bb2": {
+   "name": "Chase's Crusaders",
+   "stamp": "1790207552672",
+   "color": "#19375a",
+   "closeup": "cinematics/2da5771f-closeup.mp4",
+   "wide": "cinematics/2da5771f-wide.mp4",
+   "champion": "cinematics/2da5771f-champion.mp4"
+  },
+  "b1369e7b-b342-4e08-b808-3e0023b240fb": {
+   "name": "Brittany's Ball Stealers",
+   "stamp": "1790208287602",
+   "color": "#eb7d14",
+   "closeup": "cinematics/b1369e7b-closeup.mp4",
+   "wide": "cinematics/b1369e7b-wide.mp4",
+   "champion": "cinematics/b1369e7b-champion.mp4"
+  },
+  "1795509a-ea3e-43c4-a50f-d5a281505fb1": {
+   "name": "Branford Blast",
+   "stamp": "1790208309093",
+   "color": "#eb2323",
+   "closeup": "cinematics/1795509a-closeup.mp4",
+   "wide": "cinematics/1795509a-wide.mp4",
+   "champion": "cinematics/1795509a-champion.mp4"
+  },
+  "6056e782-0461-4c74-b573-11ebb4889c19": {
+   "name": "Tina's Touchdown",
+   "stamp": "1790208342224",
+   "color": "#e13791",
+   "closeup": "cinematics/6056e782-closeup.mp4",
+   "wide": "cinematics/6056e782-wide.mp4",
+   "champion": "cinematics/6056e782-champion.mp4"
+  },
+  "35d9e167-7240-45e4-933e-9de053301446": {
+   "name": "Little Jommy and the Jackasses",
+   "stamp": "1790208410581",
+   "color": "#b99b37",
+   "closeup": "cinematics/35d9e167-closeup.mp4",
+   "wide": "cinematics/35d9e167-wide.mp4",
+   "champion": "cinematics/35d9e167-champion.mp4"
+  },
+  "ba590964-bb97-4bbd-8729-58794906404d": {
+   "name": "Megatron's Army",
+   "stamp": "1790208470902",
+   "color": "#464646",
+   "closeup": "cinematics/ba590964-closeup.mp4",
+   "wide": "cinematics/ba590964-wide.mp4",
+   "champion": "cinematics/ba590964-champion.mp4"
+  },
+  "14ea4df2-3e82-419d-bb36-0804275cf8c1": {
+   "name": "Eff's Ball Saxs",
+   "stamp": "1790208030365",
+   "color": "#693c19",
+   "closeup": "cinematics/14ea4df2-closeup.mp4",
+   "wide": "cinematics/14ea4df2-wide.mp4",
+   "champion": "cinematics/14ea4df2-champion.mp4"
+  },
+  "79cf7a97-3adb-41b8-b913-2b6abdd3c26a": {
+   "name": "Abby's Aqua Army",
+   "stamp": "1790208073170",
+   "color": "#00afd7",
+   "closeup": "cinematics/79cf7a97-closeup.mp4",
+   "wide": "cinematics/79cf7a97-wide.mp4",
+   "champion": "cinematics/79cf7a97-champion.mp4"
+  },
+  "e62a85d6-148d-4960-93a4-89a28ab02f9a": {
+   "name": "Sasa's Stormtroopers",
+   "stamp": "1790208149331",
+   "color": "#6491be",
+   "closeup": "cinematics/e62a85d6-closeup.mp4",
+   "wide": "cinematics/e62a85d6-wide.mp4",
+   "champion": "cinematics/e62a85d6-champion.mp4"
+  },
+  "d1646220-c854-492b-98c3-c1624f443074": {
+   "name": "Jason's Scary Team",
+   "stamp": "1790208241619",
+   "color": "#732891",
+   "closeup": "cinematics/d1646220-closeup.mp4",
+   "wide": "cinematics/d1646220-wide.mp4",
+   "champion": "cinematics/d1646220-champion.mp4"
+  }
+ },
+ "size": [
+  1280,
+  720
+ ],
+ "fps": 24,
+ "ms": {
+  "closeup": 2600,
+  "wide": 3800,
+  "champion": 6000
+ }
+}
