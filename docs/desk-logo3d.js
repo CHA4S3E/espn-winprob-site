@@ -1,17 +1,22 @@
 // desk-logo3d.js -- 3D metallic team-logo cinematics for the News Desk.
 //
 // Each team's logo is traced (its transparent pixels give the outline) and
-// extruded into a solid emblem: the logo art is the glossy front face, the
-// edges and a slightly larger back plate are polished chrome. Logos on a solid
-// square background become a rounded chrome badge; emoji logos work too. The
-// emblem sits over a dark grid floor with glowing light lines, with studio
-// reflections, a soft glow (bloom) and slow camera moves.
+// extruded into a solid emblem: the logo art is the front face, the edges and a
+// slightly larger back plate are brushed chrome. Logos on a solid square
+// background become a rounded chrome badge; emoji logos work too.
 //
-//   await Logo3D.play(hostEl, { mode: 'single' | 'versus' | 'champion', teams: [{ name, color, logoUrl, emoji }], ms })
-//   Logo3D.supported()  -> false where WebGL isn't available (callers keep the flat look)
+// The set is a split stage: two angled walls meeting in the middle, each one
+// striped in its team's color with marquee bulbs along the top, light rays
+// from above, and a glossy floor that reflects it all.
 //
-// Three.js loads on first use (cdn.jsdelivr.net, via the import map in
-// desk.html) and nothing renders except during a cinematic.
+//   Logo3D.warm()              -> builds the renderer and stage ahead of time (call when idle)
+//   Logo3D.prepare(teams)      -> traces and builds those teams' emblems ahead of time
+//   await Logo3D.play(hostEl, { mode: 'single' | 'versus' | 'champion', teams: [{ id, name, color, logoUrl, emoji }], ms })
+//   Logo3D.supported()         -> false where WebGL isn't available (callers keep the flat look)
+//
+// Everything heavy (loading Three.js, building the renderer, compiling
+// shaders, tracing logos) happens once, in small pieces while the page is
+// idle, and is reused. Nothing renders except during a cinematic.
 (function () {
   'use strict';
   let libs = null;
@@ -28,9 +33,14 @@
     libs = { THREE, RoomEnvironment, EffectComposer, RenderPass, UnrealBloomPass, OutputPass };
     return libs;
   }
+  let canGL = null;
   function supported() {
-    try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (e) { return false; }
+    if (canGL !== null) return canGL;
+    try { const c = document.createElement('canvas'); canGL = !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (e) { canGL = false; }
+    return canGL;
   }
+  // Wait for a quiet moment so building things never interrupts an animation.
+  const idle = () => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 1500 }) : setTimeout(r, 60)));
 
   // ---------------------------------------------------------------- logo -> outline
   const N = 192; // trace resolution
@@ -52,7 +62,7 @@
   }
   // Binary mask at N x N from alpha; if the logo has no transparent border (a square photo/badge) use a rounded square.
   function mask(cv) {
-    const s = document.createElement('canvas'); s.width = s.height = N; const x = s.getContext('2d');
+    const s = document.createElement('canvas'); s.width = s.height = N; const x = s.getContext('2d', { willReadFrequently: true });
     x.drawImage(cv, 0, 0, N, N);
     const d = x.getImageData(0, 0, N, N).data, m = new Uint8Array(N * N);
     let opaqueEdge = 0, edge = 0;
@@ -71,16 +81,15 @@
     }
     return { m: cur, square: false };
   }
-  // Largest outer contour by marching squares, simplified (Ramer-Douglas-Peucker).
+  // Largest outer contour (Moore-neighbour trace), simplified (Ramer-Douglas-Peucker).
   function contour(m) {
     const at = (x, y) => (x >= 0 && y >= 0 && x < N && y < N ? m[y * N + x] : 0);
-    const seen = new Set(); let best = null;
+    const seen = new Uint8Array(N * N); let best = null;
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      if (!at(x, y) || at(x - 1, y)) continue; const key = y * N + x; if (seen.has(key)) continue;
-      // Moore-neighbour boundary trace from this left-edge pixel.
+      if (!at(x, y) || at(x - 1, y)) continue; const key = y * N + x; if (seen[key]) continue;
       const pts = []; let cx = x, cy = y, dir = 0; const DX = [1, 1, 0, -1, -1, -1, 0, 1], DY = [0, 1, 1, 1, 0, -1, -1, -1];
       for (let step = 0; step < N * N * 2; step++) {
-        pts.push([cx, cy]); seen.add(cy * N + cx);
+        pts.push([cx, cy]); seen[cy * N + cx] = 1;
         let found = false;
         for (let k = 0; k < 8; k++) { const d = (dir + 6 + k) % 8, nx = cx + DX[d], ny = cy + DY[d]; if (at(nx, ny)) { cx = nx; cy = ny; dir = d; found = true; break; } }
         if (!found || (cx === x && cy === y && pts.length > 2)) break;
@@ -95,106 +104,245 @@
       if (dmax > eps) { const l = rdp(pts.slice(0, idx + 1), eps), r = rdp(pts.slice(idx), eps); return l.slice(0, -1).concat(r); }
       return [a, b];
     };
-    return rdp(best, 0.9);
+    let out = rdp(best, 1.1);
+    // Round off the pixel steps (Chaikin corner cutting, twice) so edges read as smooth curves.
+    for (let it = 0; it < 2; it++) {
+      const sm = [];
+      for (let i = 0; i < out.length; i++) { const a = out[i], b = out[(i + 1) % out.length]; sm.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]); }
+      out = sm;
+    }
+    return out;
   }
 
-  // ---------------------------------------------------------------- emblem mesh
-  async function emblem(L3, team, opts) {
+  // ---------------------------------------------------------------- engine (built once)
+  let E = null, warming = null;
+  // Shared materials: brushed chrome (soft highlights, not mirror-bright), gold for the champion.
+  function makeMaterials(THREE) {
+    return {
+      chrome: new THREE.MeshPhysicalMaterial({ color: 0xc9d1de, metalness: 1, roughness: 0.32, clearcoat: 0.35, clearcoatRoughness: 0.25, envMapIntensity: 0.75 }),
+      gold: new THREE.MeshPhysicalMaterial({ color: 0xd9a843, metalness: 1, roughness: 0.3, clearcoat: 0.35, clearcoatRoughness: 0.25, envMapIntensity: 0.8 }),
+    };
+  }
+  const faceMat = (THREE, tex) => new THREE.MeshPhysicalMaterial({ map: tex, metalness: 0.2, roughness: 0.42, clearcoat: 0.3, clearcoatRoughness: 0.2, envMapIntensity: 0.6, transparent: true, alphaTest: 0.05 });
+  const glassMat = (THREE, color) => new THREE.MeshStandardMaterial({ color: new THREE.Color(color || '#3a6cff'), emissive: new THREE.Color(color || '#3a6cff'), emissiveIntensity: 0.25, metalness: 0.4, roughness: 0.35, envMapIntensity: 0.6 });
+
+  // Grayscale wall art: diagonal stripes + panel lines. The wall material tints it with the team color.
+  function stripeTexture(THREE) {
+    const cv = document.createElement('canvas'); cv.width = 512; cv.height = 512; const x = cv.getContext('2d');
+    const g = x.createLinearGradient(0, 0, 0, 512); g.addColorStop(0, '#9a9a9a'); g.addColorStop(1, '#4a4a4a'); x.fillStyle = g; x.fillRect(0, 0, 512, 512);
+    x.save(); x.translate(256, 256); x.rotate(-0.62); x.translate(-512, -512);
+    const bands = [[120, 70, '#ffffff'], [230, 36, '#d8d8d8'], [330, 110, '#2a2a2a'], [520, 64, '#f0f0f0'], [620, 24, '#ffffff'], [700, 120, '#3a3a3a'], [880, 50, '#e6e6e6']];
+    for (const [y, h, c] of bands) { x.fillStyle = c; x.globalAlpha = 0.85; x.fillRect(0, y, 1024, h); }
+    x.restore(); x.globalAlpha = 1;
+    x.strokeStyle = 'rgba(0,0,0,.35)'; x.lineWidth = 3; for (let i = 64; i < 512; i += 128) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 512); x.stroke(); }
+    x.strokeStyle = 'rgba(255,255,255,.5)'; x.lineWidth = 10; x.strokeRect(5, 5, 502, 502);
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+  }
+  function glowTexture(THREE, kind) {
+    const cv = document.createElement('canvas'); cv.width = 128; cv.height = kind === 'ray' ? 512 : 128; const x = cv.getContext('2d');
+    if (kind === 'ray') { const g = x.createLinearGradient(0, 0, 0, 512); g.addColorStop(0, 'rgba(255,255,255,.9)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 128, 512); const h = x.createLinearGradient(0, 0, 128, 0); h.addColorStop(0, 'rgba(0,0,0,1)'); h.addColorStop(0.5, 'rgba(0,0,0,0)'); h.addColorStop(1, 'rgba(0,0,0,1)'); x.globalCompositeOperation = 'destination-out'; x.fillStyle = h; x.fillRect(0, 0, 128, 512); }
+    else { const g = x.createRadialGradient(64, 64, 0, 64, 64, 64); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,240,210,.55)'); g.addColorStop(1, 'rgba(255,220,180,0)'); x.fillStyle = g; x.fillRect(0, 0, 128, 128); }
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
+  }
+
+  function buildStage(L3, mats) {
     const { THREE } = L3;
-    const cv = await logoCanvas(team), mk = mask(cv);
-    const shape = new THREE.Shape();
-    const pts = mk.square ? null : contour(mk.m);
-    if (pts) { pts.forEach(([x, y], i) => { const u = x / N, v = 1 - y / N; if (i) shape.lineTo(u, v); else shape.moveTo(u, v); }); }
-    else { const r = 0.12; shape.moveTo(r, 0); shape.lineTo(1 - r, 0); shape.quadraticCurveTo(1, 0, 1, r); shape.lineTo(1, 1 - r); shape.quadraticCurveTo(1, 1, 1 - r, 1); shape.lineTo(r, 1); shape.quadraticCurveTo(0, 1, 0, 1 - r); shape.lineTo(0, r); shape.quadraticCurveTo(0, 0, r, 0); }
-    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
-    const gold = opts.gold;
-    const chrome = new THREE.MeshPhysicalMaterial({ color: gold ? 0xe8b84a : 0xdfe6f2, metalness: 1, roughness: 0.16, clearcoat: 1, clearcoatRoughness: 0.08 });
-    const face = new THREE.MeshPhysicalMaterial({ map: tex, metalness: 0.35, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.05, transparent: true, alphaTest: 0.05 });
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.022, bevelSegments: 6, curveSegments: 6 });
-    geo.center();
-    const front = new THREE.Mesh(geo, [face, chrome]);
-    // Back plate: the same outline, a bit larger and deeper, all chrome (the layered look).
-    const geo2 = new THREE.ExtrudeGeometry(shape, { depth: 0.14, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.035, bevelSegments: 6, curveSegments: 6 });
-    geo2.center();
-    const back = new THREE.Mesh(geo2, chrome); back.scale.set(1.08, 1.08, 1); back.position.z = -0.17;
-    // Thin colored glass layer between them, tinted with the team color.
-    const glass = new THREE.Mesh(geo2, new THREE.MeshPhysicalMaterial({ color: new THREE.Color(team.color || '#3a6cff'), metalness: 0.2, roughness: 0.1, transmission: 0.6, thickness: 0.2, clearcoat: 1 }));
-    glass.scale.set(1.04, 1.04, 0.7); glass.position.z = -0.07;
-    const g = new THREE.Group(); g.add(back, glass, front);
-    g.userData.dispose = () => { [geo, geo2].forEach((x) => x.dispose()); [chrome, face].forEach((x) => x.dispose()); tex.dispose(); };
-    return g;
+    const FLOOR = -1.15;
+    const stage = new THREE.Group();     // walls, frames, bulbs (reflected in the floor)
+    const stripe = stripeTexture(THREE);
+    const walls = [];
+    const wallGeo = new THREE.PlaneGeometry(6.4, 4.0);
+    const frameGeoV = new THREE.BoxGeometry(0.1, 4.1, 0.1), frameGeoH = new THREE.BoxGeometry(6.5, 0.1, 0.1);
+    const bulbGeo = new THREE.SphereGeometry(0.045, 10, 8);
+    const bulbMats = [new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.4, 1.0) }), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.6, 0.5, 0.35) })];
+    for (const side of [-1, 1]) {
+      const th = side < 0 ? 0.62 : -0.62; // the two walls form a V, meeting at the back
+      const holder = new THREE.Group(); holder.position.set(side * 2.9, FLOOR + 2.0, -2.6); holder.rotation.y = th;
+      const mat = new THREE.MeshStandardMaterial({ map: stripe, emissiveMap: stripe, color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.4, roughness: 0.55, metalness: 0.15 });
+      const wall = new THREE.Mesh(wallGeo, mat); holder.add(wall); walls.push(wall);
+      for (const fx of [-3.22, 3.22]) { const f = new THREE.Mesh(frameGeoV, mats.chrome); f.position.set(fx, 0, 0.05); holder.add(f); }
+      for (const fy of [-2.02, 2.02]) { const f = new THREE.Mesh(frameGeoH, mats.chrome); f.position.set(0, fy, 0.05); holder.add(f); }
+      // Two rows of marquee bulbs along the top; every other bulb lights in turn (a chase).
+      const n = 13, sets = bulbMats.map((mt) => new THREE.InstancedMesh(bulbGeo, mt, n * 2)), m = new THREE.Matrix4();
+      for (let row = 0; row < 2; row++) for (let k = 0; k < n * 2; k++) { m.setPosition(-3.0 + k * 0.233, 1.5 + row * 0.24, 0.1); sets[(k + row) % 2].setMatrixAt(row * n + (k >> 1), m); }
+      holder.add(...sets);
+      stage.add(holder);
+    }
+    // Center seam: a glowing pillar where the walls meet.
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(0.14, 4.0, 0.14), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.3, 1.25, 1.2) })); seam.position.set(0, FLOOR + 2.0, -4.5); stage.add(seam);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x02040c, 0.05);
+    { const bg = document.createElement('canvas'); bg.width = 2; bg.height = 256; const bx = bg.getContext('2d'); const gr = bx.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, '#16244a'); gr.addColorStop(0.5, '#060b1c'); gr.addColorStop(1, '#010208'); bx.fillStyle = gr; bx.fillRect(0, 0, 2, 256); const bt = new THREE.CanvasTexture(bg); bt.colorSpace = THREE.SRGBColorSpace; scene.background = bt; }
+    scene.add(stage);
+    const emblems = new THREE.Group(); scene.add(emblems);
+    // The floor reflection: a mirrored copy of the set under a glossy, partly see-through floor.
+    const mirror = new THREE.Group(); mirror.scale.y = -1; mirror.position.y = 2 * FLOOR; scene.add(mirror);
+    mirror.add(stage.clone());
+    const mirrorEmblems = new THREE.Group(); mirror.add(mirrorEmblems);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x04060d, metalness: 0.4, roughness: 0.35, transparent: true, opacity: 0.8, envMapIntensity: 0.4 }));
+    floor.rotation.x = -Math.PI / 2; floor.position.y = FLOOR; scene.add(floor);
+    const grid = new THREE.GridHelper(60, 90, 0x2b56b8, 0x14306e); grid.material.transparent = true; grid.material.opacity = 0.28; grid.material.depthWrite = false; grid.position.y = FLOOR + 0.004; scene.add(grid);
+    // Light streaks swirling on the floor (team colors) and rays from above.
+    const streaks = [];
+    for (let i = 0; i < 6; i++) {
+      const s = new THREE.Mesh(new THREE.TorusGeometry(2.2 + i * 0.55, 0.012, 6, 90, 1.1 + (i % 3) * 0.35), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+      s.rotation.x = -Math.PI / 2; s.position.y = FLOOR + 0.01; s.userData = { side: i % 2 ? 1 : -1, sp: 0.12 + i * 0.03, ph: i * 1.3 }; scene.add(s); streaks.push(s);
+    }
+    const rayTex = glowTexture(THREE, 'ray'), rays = [];
+    for (let i = 0; i < 7; i++) {
+      const r = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 9), new THREE.MeshBasicMaterial({ map: rayTex, color: new THREE.Color(0.55, 0.5, 0.45), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      r.geometry.translate(0, -4.5, 0); r.position.set(0, FLOOR + 5.0, -4.3); r.rotation.z = (i - 3) * 0.2; r.userData = { base: (i - 3) * 0.2, ph: i * 0.9 }; scene.add(r); rays.push(r);
+    }
+    const flare = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(THREE, 'flare'), color: 0xfff2dd, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); flare.scale.set(2.6, 2.6, 1); flare.position.set(0, FLOOR + 4.4, -4.4); scene.add(flare);
+    // Lights: a soft key light that glides across, team-colored fills on each side.
+    const key = new THREE.SpotLight(0xffffff, 12, 30, 0.55, 0.85); key.position.set(-4, 4, 6); scene.add(key, key.target);
+    const fills = [-1, 1].map((s) => { const l = new THREE.PointLight(0xffffff, 10, 9); l.position.set(s * 2.4, 1.2, 1.2); scene.add(l); return l; });
+    scene.add(new THREE.HemisphereLight(0x5a6c9a, 0x0a0a14, 0.5));
+    return { scene, stage, emblems, mirrorEmblems, walls, bulbMats, streaks, rays, flare, key, fills, seam };
   }
 
-  // ---------------------------------------------------------------- scene
-  async function play(host, opts) {
-    if (!supported()) return false;
-    let L3;
-    try { L3 = await loadLibs(); } catch (e) { console.warn('3D logos unavailable', e); return false; }
-    const { THREE, RoomEnvironment, EffectComposer, RenderPass, UnrealBloomPass, OutputPass } = L3;
-    const mode = opts.mode || 'single', teams = opts.teams || [], ms = opts.ms || 6000;
-    const W = host.clientWidth || 1920, H = host.clientHeight || 1080;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1)); renderer.setSize(W, H);
-    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.95; renderer.outputColorSpace = THREE.SRGBColorSpace;
-    const cv = renderer.domElement; cv.className = 'logo3d-canvas'; host.appendChild(cv);
-    const scene = new THREE.Scene();
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.fog = new THREE.FogExp2(0x030a1f, 0.045);
-    { const bg = document.createElement('canvas'); bg.width = 2; bg.height = 256; const bx = bg.getContext('2d'); const gr = bx.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, '#0b1d4a'); gr.addColorStop(0.55, '#040b22'); gr.addColorStop(1, '#01030a'); bx.fillStyle = gr; bx.fillRect(0, 0, 2, 256); const bt = new THREE.CanvasTexture(bg); bt.colorSpace = THREE.SRGBColorSpace; scene.background = bt; }
-    const accent = new THREE.Color(mode === 'champion' ? '#ffcf5a' : (teams[0] && teams[0].color) || '#2f6bff');
-    const blue = new THREE.Color('#2f6bff');
-    // Floor grid + glowing light lines
-    const grid = new THREE.GridHelper(80, 120, 0x3a6fd8, 0x1a3a85); grid.material.transparent = true; grid.material.opacity = 0.7; grid.position.y = -1.15; scene.add(grid);
-    const dots = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(Array.from({ length: 1200 * 3 }, (_, i) => (i % 3 === 1 ? -1.14 : (Math.random() - 0.5) * 30)), 3)), new THREE.PointsMaterial({ color: 0x8fb4ff, size: 0.03, transparent: true, opacity: 0.8 }));
-    scene.add(dots);
-    const lines = [];
-    for (let i = 0; i < 9; i++) {
-      const c = i % 3 === 0 ? new THREE.Color('#ffffff') : i % 2 ? accent : blue;
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.012, 40), new THREE.MeshBasicMaterial({ color: c }));
-      bar.position.set(-6 + i * 1.6 + (Math.random() - 0.5), -1.13, -8); bar.rotation.y = 0.35 + (Math.random() - 0.5) * 0.08; scene.add(bar); lines.push(bar);
-    }
-    // Emblems
-    const groups = [];
-    if (mode === 'versus' && teams.length >= 2) {
-      const [a, b] = await Promise.all([emblem(L3, teams[0], {}), emblem(L3, teams[1], {})]);
-      a.position.set(-1.25, 0, 0); b.position.set(1.25, 0, 0); a.rotation.y = 0.45; b.rotation.y = -0.45; a.scale.setScalar(1.55); b.scale.setScalar(1.55);
-      scene.add(a, b); groups.push(a, b);
-    } else if (teams[0]) {
-      const e = await emblem(L3, teams[0], { gold: mode === 'champion' }); e.scale.setScalar(2.2); scene.add(e); groups.push(e);
-    }
-    // Lights: a key light that sweeps across (moving highlights on the chrome) + team-colored rim.
-    const key = new THREE.SpotLight(0xffffff, 32, 30, 0.5, 0.7); key.position.set(-4, 4, 5); scene.add(key, key.target);
-    const rim = new THREE.PointLight(accent, 25, 12); rim.position.set(3, 1.5, -2.5); scene.add(rim);
-    scene.add(new THREE.AmbientLight(0x223355, 0.6));
-    const camera = new THREE.PerspectiveCamera(32, W / H, 0.1, 100);
-    const composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(scene, camera));
-    composer.addPass(new UnrealBloomPass(new THREE.Vector2(W, H), 0.38, 0.45, 0.9));
-    composer.addPass(new OutputPass());
+  async function warm() {
+    if (E) return E;
+    if (warming) return warming;
+    warming = (async () => {
+      if (!supported()) return null;
+      const L3 = await loadLibs();
+      const { THREE, RoomEnvironment, EffectComposer, RenderPass, UnrealBloomPass, OutputPass } = L3;
+      await idle();
+      const W = 1920, H = 1080;
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+      renderer.setPixelRatio(1); renderer.setSize(W, H, false);
+      renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.85; renderer.outputColorSpace = THREE.SRGBColorSpace;
+      const cv = renderer.domElement; cv.className = 'logo3d-canvas';
+      cv.addEventListener('webglcontextlost', () => { E = null; warming = null; cache.clear(); });
+      await idle();
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; pmrem.dispose();
+      await idle();
+      const mats = makeMaterials(THREE);
+      const S = buildStage(L3, mats); S.scene.environment = env;
+      const camera = new THREE.PerspectiveCamera(36, W / H, 0.1, 100); camera.position.set(0, 1, 8); camera.lookAt(0, 0.3, -0.5);
+      const composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(S.scene, camera));
+      const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 0.24, 0.4, 0.92); composer.addPass(bloom);
+      composer.addPass(new OutputPass());
+      // Compile every shader now (a stand-in emblem carries the emblem materials).
+      const dummyTex = new THREE.CanvasTexture(document.createElement('canvas'));
+      const box = new THREE.BoxGeometry(0.01, 0.01, 0.01);
+      const stand = [mats.chrome, mats.gold, faceMat(THREE, dummyTex), glassMat(THREE, '#3366ff')].map((m) => new THREE.Mesh(box, m));
+      S.emblems.add(...stand);
+      await idle();
+      if (renderer.compileAsync) await renderer.compileAsync(S.scene, camera); else renderer.compile(S.scene, camera);
+      await idle();
+      composer.render(); // first frame also sets up the glow passes
+      S.emblems.remove(...stand);
+      E = { L3, renderer, composer, camera, bloom, mats, cv, ...S };
+      return E;
+    })().catch((e) => { console.warn('3D logos unavailable', e); warming = null; return null; });
+    return warming;
+  }
 
+  // ---------------------------------------------------------------- emblems (cached per team)
+  const cache = new Map();
+  const keyOf = (t, gold) => [t.id || t.name, t.logoUrl || t.emoji || '', t.color || '', gold ? 'g' : ''].join('|');
+  async function emblem(team, gold) {
+    const k = keyOf(team, gold);
+    if (cache.has(k)) return cache.get(k);
+    const p = (async () => {
+      const { THREE } = E.L3;
+      const cv = await logoCanvas(team);
+      await idle();
+      const mk = mask(cv);
+      const pts = mk.square ? null : contour(mk.m);
+      await idle();
+      const shape = new THREE.Shape();
+      if (pts) { pts.forEach(([x, y], i) => { const u = x / N, v = 1 - y / N; if (i) shape.lineTo(u, v); else shape.moveTo(u, v); }); }
+      else { const r = 0.12; shape.moveTo(r, 0); shape.lineTo(1 - r, 0); shape.quadraticCurveTo(1, 0, 1, r); shape.lineTo(1, 1 - r); shape.quadraticCurveTo(1, 1, 1 - r, 1); shape.lineTo(r, 1); shape.quadraticCurveTo(0, 1, 0, 1 - r); shape.lineTo(0, r); shape.quadraticCurveTo(0, 0, r, 0); }
+      const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+      const metal = gold ? E.mats.gold : E.mats.chrome;
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.02, bevelSegments: 4, curveSegments: 6 }); geo.center();
+      await idle();
+      const geo2 = new THREE.ExtrudeGeometry(shape, { depth: 0.14, bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.032, bevelSegments: 4, curveSegments: 6 }); geo2.center();
+      const front = new THREE.Mesh(geo, [faceMat(THREE, tex), metal]);
+      const back = new THREE.Mesh(geo2, metal); back.scale.set(1.08, 1.08, 1); back.position.z = -0.17;
+      const glass = new THREE.Mesh(geo2, glassMat(THREE, team.color)); glass.scale.set(1.04, 1.04, 0.7); glass.position.z = -0.07;
+      const g = new THREE.Group(); g.add(back, glass, front);
+      if (E.renderer.initTexture) E.renderer.initTexture(tex); // upload now, not on the first frame
+      return g;
+    })();
+    cache.set(k, p);
+    p.catch(() => cache.delete(k));
+    return p;
+  }
+  // Build emblems for these teams in the background (one at a time, when idle).
+  async function prepare(teams, gold) {
+    if (!(await warm())) return false;
+    for (const t of teams || []) if (t) { try { await emblem(t, gold); } catch (e) { /* skip */ } await idle(); }
+    return true;
+  }
+
+  // ---------------------------------------------------------------- play
+  let playing = false;
+  async function play(host, opts) {
+    if (!supported() || playing) return false;
+    const e = await warm(); if (!e) return false;
+    const { THREE } = e.L3;
+    const mode = opts.mode || 'single', teams = (opts.teams || []).filter(Boolean), ms = opts.ms || 8000;
+    const gold = mode === 'champion';
+    const list = mode === 'versus' ? teams.slice(0, 2) : teams.slice(0, 1);
+    const groups = [];
+    for (const t of list) groups.push(await emblem(t, gold));
+    playing = true;
+    // Team colors on the set.
+    const col = (i) => new THREE.Color(gold ? '#e0a93a' : ((list[i] || list[0] || {}).color || '#2f6bff'));
+    const cL = col(0), cR = mode === 'versus' ? col(1) : gold ? new THREE.Color((list[0] || {}).color || '#e0a93a') : col(0);
+    e.walls[0].material.color.copy(cL); e.walls[0].material.emissive.copy(cL);
+    e.walls[1].material.color.copy(cR); e.walls[1].material.emissive.copy(cR);
+    e.fills[0].color.copy(cL); e.fills[1].color.copy(cR);
+    e.streaks.forEach((s) => s.material.color.copy(s.userData.side < 0 ? cL : cR));
+    // Place the emblems (and their reflections).
+    e.emblems.clear(); e.mirrorEmblems.clear();
+    if (mode === 'versus' && groups.length === 2) {
+      groups[0].position.set(-1.95, 0.3, 1.0); groups[0].scale.setScalar(2.0);
+      groups[1].position.set(1.95, 0.3, 1.0); groups[1].scale.setScalar(2.0);
+    } else if (groups[0]) { groups[0].position.set(0, 0.45, 1.0); groups[0].scale.setScalar(2.5); }
+    groups.forEach((g) => g.rotation.set(0, 0, 0));
+    e.emblems.add(...groups); // (the set is reflected in the floor; the floating emblems aren't, which reads cleaner)
+
+    const { renderer, composer, camera, cv } = e;
+    cv.style.opacity = 0; host.appendChild(cv);
     const t0 = performance.now();
     const ease = (u) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
     await new Promise((resolve) => {
       const frame = (now) => {
-        const u = Math.min(1, (now - t0) / ms), e = ease(u);
-        // Camera: a slow push-in and orbit from a low angle (like the reference).
-        const ang = -0.55 + e * 0.75, dist = 7.2 - e * 2.2;
-        camera.position.set(Math.sin(ang) * dist, 1.9 + 1.0 * (1 - e), Math.cos(ang) * dist); camera.lookAt(0, -0.25, 0);
-        groups.forEach((g, i) => { g.rotation.x = -0.32 + Math.sin(now / 2400 + i) * 0.03; if (mode !== 'versus') g.rotation.y = -0.5 + e * 0.9; g.position.y = 0.06 * Math.sin(now / 900 + i); });
-        key.position.set(-5 + e * 10, 4, 5); // the highlight glides across the chrome
-        lines.forEach((b, i) => { b.position.z = -8 + ((now / 1000 * (1.6 + i * 0.2)) % 16) - 8; });
-        const fade = Math.min(1, (now - t0) / 500, (ms - (now - t0)) / 600); cv.style.opacity = Math.max(0, fade);
+        const el = Math.max(0, now - t0), u = Math.min(1, el / ms), k = ease(u), s = el / 1000;
+        // Camera: a slow push-in from low and wide, drifting across the set.
+        const ang = -0.22 + k * 0.44, dist = 10.2 - k * 2.0;
+        camera.position.set(Math.sin(ang) * dist, 0.7 + 0.7 * (1 - k), Math.cos(ang) * dist); camera.lookAt(0, 0.55, -1.2);
+        groups.forEach((g, i) => {
+          const base = mode === 'versus' ? (i ? -0.32 : 0.32) : -0.45 + k * 0.9;
+          g.rotation.y = base + Math.sin(s * 0.7 + i * 2) * 0.06; g.rotation.x = -0.05 + Math.sin(s * 0.5 + i) * 0.03;
+          g.position.y = (mode === 'versus' ? 0.3 : 0.45) + 0.05 * Math.sin(s * 1.1 + i);
+        });
+        e.key.position.set(-6 + k * 12, 4, 6);
+        e.streaks.forEach((st) => { st.rotation.z = st.userData.ph + s * st.userData.sp * st.userData.side; });
+        e.rays.forEach((r) => { r.rotation.z = r.userData.base + Math.sin(s * 0.4 + r.userData.ph) * 0.05; r.material.opacity = 0.55 + 0.3 * Math.sin(s * 0.9 + r.userData.ph); });
+        e.flare.material.opacity = 0.8 + 0.2 * Math.sin(s * 2.1);
+        const chase = Math.floor(s * 4) % 2; // marquee bulbs chase
+        e.bulbMats[chase].color.setRGB(1.6, 1.4, 1.0); e.bulbMats[1 - chase].color.setRGB(0.6, 0.5, 0.35);
+        const fade = Math.min(1, el / 500, (ms - el) / 600); cv.style.opacity = Math.max(0, fade);
         composer.render();
         if (opts.onFrame) opts.onFrame(u, cv); // test hook (read the canvas right after rendering)
         if (u < 1) requestAnimationFrame(frame); else resolve();
       };
       requestAnimationFrame(frame);
     });
-    groups.forEach((g) => g.userData.dispose && g.userData.dispose());
-    pmrem.dispose(); composer.dispose && composer.dispose(); renderer.dispose(); cv.remove();
+    cv.remove();
+    e.emblems.clear(); e.mirrorEmblems.clear();
+    playing = false;
     return true;
   }
 
-  window.Logo3D = { play, supported };
+  window.Logo3D = { play, supported, warm, prepare };
 })();

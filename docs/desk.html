@@ -114,7 +114,9 @@ html[data-studio="casual"] #tickerLabel { font-style: normal; font-family: 'Balo
 #tickerRun { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; white-space: nowrap; will-change: transform; }
 .tk { display: inline-flex; align-items: center; gap: 12px; padding: 0 34px; font: 600 27px/1 'Inter', sans-serif; border-right: 1px solid rgba(255,255,255,.15); }
 .tk .lg { font: 800 18px/1 'Barlow Condensed', sans-serif; letter-spacing: .12em; padding: 6px 10px; border-radius: 4px; background: rgba(255,255,255,.12); }
-.tk .w { color: #7ee2a8; } .tk .pct { color: #9fb6ff; font-weight: 700; } .tk .hl { color: #ffd166; font-weight: 800; }
+.tk .tm { display: inline-flex; align-items: center; gap: 9px; color: var(--c); opacity: .82; } .tk .tm.w { opacity: 1; font-weight: 800; }
+.tk .tm i { width: 6px; height: 26px; border-radius: 2px; background: var(--c); }
+.tk .pct { color: #c9d6f2; font-weight: 800; } .tk .hl { color: #fff; font-weight: 800; border-left: 6px solid var(--c, #ffd166); padding-left: 12px; }
 
 /* ---- alert (minor) ---- */
 #alert { position: absolute; left: 48px; top: 852px; width: 1824px; height: 112px; display: flex; align-items: center; gap: 22px; padding: 0 26px; z-index: 7; border-radius: var(--radius);
@@ -486,8 +488,8 @@ html[data-champ="on"] #tv::after { content: ''; position: absolute; inset: -30%;
 <script src="wp-chart.js?v=1"></script>
 <script src="desk-playoffs.js?v=2"></script>
 <script src="desk-analytics.js?v=4"></script>
-<script src="desk-logo3d.js?v=1"></script>
+<script src="desk-logo3d.js?v=2"></script>
 <script src="recap-video.js?v=4"></script>
-<script src="desk.js?v=10"></script>
+<script src="desk.js?v=11"></script>
 </body>
 </html>

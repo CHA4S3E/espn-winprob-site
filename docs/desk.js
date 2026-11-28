@@ -113,7 +113,7 @@
     if (!cur) return;
     const list = (rundown.get(cur.id) || []).slice(0, 5);
     $('rundownSub').textContent = shortName(cur);
-    $('rundownList').innerHTML = list.length ? list.map((r, i) => `<div class="rd p${r.priority}${r.fresh && i === 0 ? ' new' : ''}"><i class="dot"></i><div><b>${esc(r.head)}</b><span>${esc(r.body)}</span></div><time>${ago(r.ts)}</time></div>`).join('')
+    $('rundownList').innerHTML = list.length ? list.map((r, i) => `<div class="rd p${r.priority}${r.fresh && i === 0 ? ' new' : ''}"><i class="dot"${r.color ? ` style="background:${esc(r.color)}"` : ''}></i><div><b>${esc(r.head)}</b><span>${esc(r.body)}</span></div><time>${ago(r.ts)}</time></div>`).join('')
       : `<div class="rd"><i class="dot"></i><div><b>${voice(cur) === 'pro' ? 'QUIET ON THE WIRE' : 'NOTHING YET'}</b><span>${voice(cur) === 'pro' ? 'Headlines appear here as games move.' : 'We’ll holler when something happens.'}</span></div><time></time></div>`;
     list.forEach((r) => { r.fresh = false; });
     const other = leagues.find((L) => L !== cur && L.matchups.length);
@@ -757,7 +757,7 @@
     el.querySelector('.l3-t').textContent = `${h.name}  vs  ${a.name}`;
     el.classList.add('show');
     M.sting('handoff');
-    try { await Logo3D.play(el, { mode: 'versus', teams: [D.team(L, m.home), D.team(L, m.away)], ms: 5200 }); } catch (e) { /* flat look */ }
+    try { await Logo3D.play(el, { mode: 'versus', teams: [D.team(L, m.home), D.team(L, m.away)], ms: 9000 }); } catch (e) { /* flat look */ }
     el.classList.remove('show');
     busy = false;
   }
@@ -919,10 +919,11 @@
       : Lines.write(ev.kind, voice(L), varsFor(ev));
     if (ev.kind === 'news') { ev.pid = ev.newsItem.pid; ev.pro = ev.newsItem.pro; }
     if (!w) return;
-    const item = { head: w.head, body: w.body, line: w.line, ts: ev.ts || Date.now(), priority: ev.priority, fresh: !ev.old };
+    const tc = ev.team && ev.team.color ? vis(ev.team.color) : null; // the story's team color (dots, ticker)
+    const item = { head: w.head, body: w.body, line: w.line, ts: ev.ts || Date.now(), priority: ev.priority, fresh: !ev.old, color: tc };
     const targets = L ? [L] : leagues;
     for (const t of targets) { const arr = rundown.get(t.id) || []; arr.unshift(item); rundown.set(t.id, arr.slice(0, 30)); }
-    if (!ev.old) { tickerHeads.unshift((L ? shortName(L).toUpperCase() + ': ' : '') + w.head); tickerHeads.length = Math.min(tickerHeads.length, 12); }
+    if (!ev.old) { tickerHeads.unshift({ lg: L ? shortName(L).toUpperCase() : '', text: w.head, color: ev.team && ev.team.color ? WPChart.teamColor(ev.team.color, true) : null }); tickerHeads.length = Math.min(tickerHeads.length, 12); }
     if (ev.old) { renderSide(); return; }
     if (lock !== 'auto' && L && L.id !== lock) return;
     if (ev.priority >= 2) breakingQ.push({ ev, w }); else if (ev.priority === 1) alertQ.push({ ev, w });
@@ -991,11 +992,14 @@
     const out = [];
     for (const L of leagues) {
       for (const m of L.matchups) {
-        const h = T(L, m.home), a = T(L, m.away), lead = m.wp >= 50 ? h : a;
-        out.push(`<span class="tk"><span class="lg">${esc(shortName(L).toUpperCase())}</span><span class="${m.hs >= m.as ? 'w' : ''}">${esc(h.name)} ${fmt(m.hs)}</span>–<span class="${m.as > m.hs ? 'w' : ''}">${fmt(m.as)} ${esc(a.name)}</span>${m.done ? '<span class="pct">FINAL</span>' : `<span class="pct">${esc(lead.name)} ${Math.round(Math.max(m.wp, 100 - m.wp))}%</span>`}</span>`);
+        const dk = (id) => Object.assign({}, D.team(L, id), { color: WPChart.teamColor(D.team(L, id).color, true) }); // the ticker bar is always dark
+        const h = dk(m.home), a = dk(m.away), lead = m.wp >= 50 ? h : a;
+        // Each team in its own color (the leader bold), the odds in the leader's color.
+        const side = (t, s, up, right) => `<span class="tm${up ? ' w' : ''}" style="--c:${esc(t.color)}">${right ? '' : '<i></i>'}${right ? fmt(s) + ' ' + esc(t.name) : esc(t.name) + ' ' + fmt(s)}${right ? '<i></i>' : ''}</span>`;
+        out.push(`<span class="tk"><span class="lg">${esc(shortName(L).toUpperCase())}</span>${side(h, m.hs, m.hs >= m.as)}–${side(a, m.as, m.as > m.hs, true)}${m.done ? '<span class="pct">FINAL</span>' : `<span class="pct" style="color:${esc(lead.color)}">${esc(lead.name)} ${Math.round(Math.max(m.wp, 100 - m.wp))}%</span>`}</span>`);
       }
     }
-    for (const h of tickerHeads.slice(0, 6)) out.push(`<span class="tk"><span class="hl">${esc(h)}</span></span>`);
+    for (const h of tickerHeads.slice(0, 6)) out.push(`<span class="tk">${h.lg ? `<span class="lg">${esc(h.lg)}</span>` : ''}<span class="hl"${h.color ? ` style="--c:${esc(h.color)}"` : ''}>${esc(h.text)}</span></span>`);
     for (const g of D.nfl.games.filter((x) => x.state === 'in')) out.push(`<span class="tk"><span class="lg">NFL</span>${esc(g.away.abbr)} ${g.away.score} – ${g.home.score} ${esc(g.home.abbr)} <span class="pct">${esc(g.detail)}</span></span>`);
     return out.length ? out.join('') : '<span class="tk">Stand by for scores</span>';
   }
@@ -1023,7 +1027,7 @@
     const tm = T(L, m.home), op = T(L, m.away);
     const names = [['Josh Allen', 3918298, 'BUF'], ['Bijan Robinson', 4430807, 'ATL'], ['Ja\u2019Marr Chase', 4362628, 'CIN'], ['CeeDee Lamb', 4241389, 'DAL'], ['Saquon Barkley', 3929630, 'PHI'], ['Travis Kelce', 15847, 'KC'], ['Amon-Ra St. Brown', 4374302, 'DET'], ['Puka Nacua', 4426515, 'LAR']];
     const pl = names[demoI % names.length];
-    D.__emit({ league: L, kind, priority: /^player_(dud|interception|bench)/.test(kind) ? 1 : 2, matchup: m, team: tm, opp: op, pct: 68, wp: 68, score: fmt(m.hs), oppScore: fmt(m.as), margin: Math.abs(m.hs - m.as).toFixed(1),
+    D.__emit({ league: L, kind, priority: /^player_(dud|interception|bench)/.test(kind) ? 1 : 2, matchup: m, team: tm, opp: op, up: tm, down: op, pct: 68, wp: 68, score: fmt(m.hs), oppScore: fmt(m.as), margin: Math.abs(m.hs - m.as).toFixed(1),
       record: kind === 'record_watch' ? { key: 'high', label: 'Highest score', text: '187.4', who: 'The Oscar Dynasty', when: 'Wk 9, 2025' } : undefined, value: 191.2,
       prePct: 27, swing: 24, gap: '2.4', player: pl[0], pid: pl[1], pos: 'RB', pro: pl[2], pts: '24.6', delta: '6.0', detail: { proj: 16.5, yards: 112, mark: 100 }, ts: Date.now() });
   }
@@ -1097,6 +1101,13 @@
     const loadAnalytics = async () => { if (!window.DeskAnalytics) return; for (const L of leagues) { try { await DeskAnalytics.load(D.sb, L); } catch (e) { console.warn('analysis unavailable', L.slug, e); } } };
     setTimeout(loadAnalytics, 6000); setInterval(loadAnalytics, 30 * 60 * 1000);
     checkPlayoffs(true);
+    // 3D logos: build the renderer and every team's emblem ahead of time, a
+    // piece at a time while the page is idle, so a cinematic never stalls the show.
+    if (window.Logo3D && Logo3D.supported()) setTimeout(async () => {
+      if (!(await Logo3D.warm())) return;
+      for (const L of leagues) await Logo3D.prepare(Object.keys(L.teams).map((id) => D.team(L, id)));
+      for (const L of leagues) { const b = bracketOf(L); if (b && b.champion) await Logo3D.prepare([D.team(L, b.champion)], true); }
+    }, 9000);
     // A crowned champion gets the finale once when the channel starts.
     setTimeout(() => { for (const L of leagues) { const b = bracketOf(L); if (b && b.phase === 'champion' && (lock === 'auto' || lock === L.id)) { champFinale(L, b.champion, true); break; } } }, 4000);
     if (window.DeskFx) { DeskFx.onOnline = refreshAll; DeskFx.onHoliday = () => cur && applyStudio(cur); }
