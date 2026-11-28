@@ -139,19 +139,22 @@
   // ---------------------------------------------------------------- per-logo design
   // Not every logo should be sculpted the same way. Four looks:
   //   emblem -- bold flat logos (solid color blocks with clean outlines): every
-  //             color area is raised with a rounded bevel, like a TV-package logo.
-  //   badge  -- a strong shape with lots of fine drawing inside: only the big
-  //             shapes are raised (fine detail is smoothed away first), plus a
-  //             gentle overall dome, so beards / palm leaves / fur don't turn
-  //             into a field of little bumps.
-  //   art    -- painted cartoons: the artwork is left untouched and the whole
-  //             piece is domed under a clear coat, like an enamel pin.
-  //   photo  -- photos: a round medallion, photo under glass, barely domed.
+  //             color area is raised with a sharp chiseled bevel, like a
+  //             TV-package logo.
+  //   badge  -- a strong shape with lots of fine drawing inside: simplified to
+  //             fewer colors with stronger cleanup, so only the big shapes get
+  //             chiseled and beards / palm leaves / fur don't make artifacts.
+  //   art    -- painted cartoons: artwork untouched, a crisp chiseled edge
+  //             around the outline and a flat glossy face (a hard enamel badge).
+  //   photo  -- photos: a round medallion, photo flat under glass.
   const LOOKS = {
-    emblem: { colorEdges: true, thresh: 80, preBlur: 0.6, bevel: 0.024, wR: 1, wD: 0.25, domeR: 0.1, str: 1, faceMetal: 0.3, rough: 0.32, coat: 0.8 },
-    badge: { colorEdges: true, thresh: 120, preBlur: 2.4, bevel: 0.03, wR: 0.55, wD: 0.55, domeR: 0.12, str: 0.9, faceMetal: 0.22, rough: 0.32, coat: 0.85 },
-    art: { colorEdges: false, wR: 0, wD: 1, domeR: 0.16, str: 0.85, faceMetal: 0.06, rough: 0.34, coat: 1 },
-    photo: { colorEdges: false, wR: 0, wD: 1, domeR: 0.3, str: 0.35, faceMetal: 0, rough: 0.5, coat: 1, circle: true },
+    // k: how many main colors the logo is simplified to before finding its
+    // shapes; clean: stray-pixel cleanup radius; minArea: specks smaller than
+    // this share of the logo never get an edge; bevel: chisel width.
+    emblem: { colorEdges: true, k: 8, merge: 70, clean: 2, minArea: 0.0012, bevel: 0.012, faceMetal: 0.3, rough: 0.3, coat: 0.8 },
+    badge: { colorEdges: true, k: 6, merge: 85, clean: 3, minArea: 0.004, bevel: 0.012, faceMetal: 0.22, rough: 0.3, coat: 0.85 },
+    art: { colorEdges: false, bevel: 0.02, faceMetal: 0.06, rough: 0.3, coat: 1 },
+    photo: { colorEdges: false, bevel: 0.01, faceMetal: 0, rough: 0.45, coat: 1, circle: true },
   };
   // Reviewed one by one (Nov 2026). Keyed by team id and the logo's upload
   // stamp, so a newly uploaded logo falls back to the automatic guess below.
@@ -208,39 +211,83 @@
       if (xx < S - 1) v = Math.min(v, dist[i + 1] + 1); if (y < S - 1) { v = Math.min(v, dist[i + S] + 1); if (xx < S - 1) v = Math.min(v, dist[i + S + 1] + D); if (xx > 0) v = Math.min(v, dist[i + S - 1] + D); } dist[i] = v; }
     return dist;
   }
-  // Height = (rounded bevel up from each color border) and/or (a smooth dome
-  // up from the logo's outline), mixed per look, blurred so every slope is
-  // soft, then turned into a normal map.
+  // Sharp relief without artifacts. The logo is simplified to its k main
+  // colors (k-means), stray pixels are cleaned up (a majority filter), and
+  // regions smaller than minArea are ignored -- so edges only form where real
+  // shapes meet. Each shape then rises on a straight chiseled bevel to a flat
+  // top (no rounding, no blur beyond 1px anti-aliasing), like cut metal.
   function reliefNormal(cv, S, look) {
     const c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d', { willReadFrequently: true });
     x.imageSmoothingQuality = 'high';
-    if (look.colorEdges && look.preBlur && 'filter' in x) x.filter = `blur(${(look.preBlur * S / 256).toFixed(2)}px)`; // fine detail isn't a "region"
     x.drawImage(cv, 0, 0, S, S);
-    x.filter = 'none';
     const d = x.getImageData(0, 0, S, S).data, n = S * S, INF = 1e6;
-    const diff = (i, j) => Math.abs(d[i * 4] - d[j * 4]) + Math.abs(d[i * 4 + 1] - d[j * 4 + 1]) + Math.abs(d[i * 4 + 2] - d[j * 4 + 2]);
-    const distA = new Float32Array(n), distC = look.wR ? new Float32Array(n) : null;
+    const opaque = (i) => d[i * 4 + 3] >= 128;
+    let lab = null;
+    if (look.colorEdges) {
+      // k-means on a sample of opaque pixels
+      const samp = []; for (let i = 0; i < n; i += 7) if (opaque(i)) samp.push(i);
+      const K = Math.min(look.k, Math.max(2, samp.length));
+      samp.sort((a, b) => (d[a * 4] + d[a * 4 + 1] + d[a * 4 + 2]) - (d[b * 4] + d[b * 4 + 1] + d[b * 4 + 2]));
+      let cen = Array.from({ length: K }, (_, q) => { const p = samp[Math.floor((q + 0.5) / K * samp.length)]; return [d[p * 4], d[p * 4 + 1], d[p * 4 + 2]]; });
+      const near = (p) => { let best = 0, bd = Infinity; for (let q = 0; q < cen.length; q++) { const a = d[p * 4] - cen[q][0], b = d[p * 4 + 1] - cen[q][1], e = d[p * 4 + 2] - cen[q][2], v = a * a + b * b + e * e; if (v < bd) { bd = v; best = q; } } return best; };
+      for (let it = 0; it < 8; it++) {
+        const sum = cen.map(() => [0, 0, 0, 0]);
+        for (const p of samp) { const q = near(p), z = sum[q]; z[0] += d[p * 4]; z[1] += d[p * 4 + 1]; z[2] += d[p * 4 + 2]; z[3]++; }
+        cen = cen.map((cc, q) => (sum[q][3] ? [sum[q][0] / sum[q][3], sum[q][1] / sum[q][3], sum[q][2] / sum[q][3]] : cc));
+      }
+      // Shades of one color (a gradient, light shading) are one region: merge
+      // centers closer than look.merge, so no seam is drawn through them.
+      const root = cen.map((_, q) => q), find = (q) => (root[q] === q ? q : (root[q] = find(root[q])));
+      for (let a = 0; a < cen.length; a++) for (let b = a + 1; b < cen.length; b++) {
+        const dr = cen[a][0] - cen[b][0], dg = cen[a][1] - cen[b][1], db = cen[a][2] - cen[b][2];
+        if (Math.sqrt(dr * dr + dg * dg + db * db) < look.merge) root[find(b)] = find(a);
+      }
+      lab = new Int16Array(n); for (let i = 0; i < n; i++) lab[i] = opaque(i) ? find(near(i)) : -1;
+      // majority filter: each pixel takes the most common color label around it
+      const r = Math.max(1, Math.round(look.clean * S / 256)), out = new Int16Array(n), cnt = new Int32Array(K);
+      const col = (xx, y0, y1, sign) => { if (xx < 0 || xx >= S) return; for (let yy = y0; yy <= y1; yy++) { const v = lab[yy * S + xx]; if (v >= 0) cnt[v] += sign; } };
+      for (let y = 0; y < S; y++) {
+        const y0 = Math.max(0, y - r), y1 = Math.min(S - 1, y + r);
+        cnt.fill(0); for (let xx = 0; xx <= r; xx++) col(xx, y0, y1, 1); // sliding window along the row
+        for (let xx = 0; xx < S; xx++) {
+          const i = y * S + xx;
+          if (lab[i] < 0) out[i] = -1;
+          else { let best = lab[i]; for (let q = 0; q < K; q++) if (cnt[q] > cnt[best]) best = q; out[i] = best; }
+          col(xx + r + 1, y0, y1, 1); col(xx - r, y0, y1, -1);
+        }
+      }
+      lab = out;
+      // connected regions; tiny ones never get an edge
+      const comp = new Int32Array(n).fill(-1), size = []; const stack = [];
+      for (let i = 0; i < n; i++) {
+        if (lab[i] < 0 || comp[i] >= 0) continue;
+        const id = size.length; let sz = 0; comp[i] = id; stack.push(i);
+        while (stack.length) { const p = stack.pop(); sz++; const px = p % S;
+          for (const q of [p - 1, p + 1, p - S, p + S]) { if (q < 0 || q >= n || (q === p - 1 && px === 0) || (q === p + 1 && px === S - 1)) continue; if (comp[q] < 0 && lab[q] === lab[p]) { comp[q] = id; stack.push(q); } } }
+        size.push(sz);
+      }
+      const minPx = look.minArea * n;
+      lab.big = (i) => size[comp[i]] >= minPx;
+    }
+    const dist = new Float32Array(n);
     for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) {
       const i = y * S + xx;
-      if (d[i * 4 + 3] < 128) { distA[i] = 0; if (distC) distC[i] = 0; continue; }
-      let a = xx === 0 || y === 0 || xx === S - 1 || y === S - 1, col = false;
-      if (!a) for (const j of [i - 1, i + 1, i - S, i + S]) { if (d[j * 4 + 3] < 128) { a = true; break; } if (distC && diff(i, j) > look.thresh) col = true; }
-      distA[i] = a ? 0 : INF; if (distC) distC[i] = a || col ? 0 : INF;
+      if (!opaque(i)) { dist[i] = 0; continue; }
+      let edge = xx === 0 || y === 0 || xx === S - 1 || y === S - 1;
+      if (!edge) for (const j of [i - 1, i + 1, i - S, i + S]) {
+        if (!opaque(j)) { edge = true; break; }
+        if (lab && lab[j] !== lab[i] && lab.big(i) && lab.big(j)) { edge = true; break; }
+      }
+      dist[i] = edge ? 0 : INF;
     }
-    chamfer(distA, S); if (distC) chamfer(distC, S);
-    const R = Math.max(2, S * (look.bevel || 0.02)), RD = S * look.domeR, h = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      let v = 0;
-      if (distC) { const t = Math.min(1, distC[i] / R); v += look.wR * (1 - (1 - t) * (1 - t)); }
-      if (look.wD) { const t = Math.min(1, distA[i] / RD); v += look.wD * Math.sqrt(1 - (1 - t) * (1 - t)); }
-      h[i] = v;
-    }
-    const rad = Math.max(1, Math.round(S * 0.006)), tmp = new Float32Array(n);
-    for (let pass = 0; pass < 2; pass++) {
-      for (let y = 0; y < S; y++) { let acc = 0; for (let k = -rad; k <= rad; k++) acc += h[y * S + Math.min(S - 1, Math.max(0, k))]; for (let xx = 0; xx < S; xx++) { tmp[y * S + xx] = acc / (2 * rad + 1); acc += h[y * S + Math.min(S - 1, xx + rad + 1)] - h[y * S + Math.max(0, xx - rad)]; } }
-      for (let xx = 0; xx < S; xx++) { let acc = 0; for (let k = -rad; k <= rad; k++) acc += tmp[Math.min(S - 1, Math.max(0, k)) * S + xx]; for (let y = 0; y < S; y++) { h[y * S + xx] = acc / (2 * rad + 1); acc += tmp[Math.min(S - 1, y + rad + 1) * S + xx] - tmp[Math.max(0, y - rad) * S + xx]; } }
-    }
-    const out = x.createImageData(S, S), o = out.data, str = look.str * S * 0.02;
+    chamfer(dist, S);
+    const R = Math.max(2, S * look.bevel), h = new Float32Array(n);
+    for (let i = 0; i < n; i++) h[i] = Math.min(1, dist[i] / R); // straight chisel up to a flat top
+    // 1px anti-aliasing only
+    const tmp = new Float32Array(n);
+    for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) { const i = y * S + xx; tmp[i] = (h[i] * 2 + h[xx > 0 ? i - 1 : i] + h[xx < S - 1 ? i + 1 : i]) / 4; }
+    for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) { const i = y * S + xx; h[i] = (tmp[i] * 2 + tmp[y > 0 ? i - S : i] + tmp[y < S - 1 ? i + S : i]) / 4; }
+    const out = x.createImageData(S, S), o = out.data, str = R * 0.9; // ~42 degree bevel
     for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) {
       const i = y * S + xx;
       const dx = (h[xx < S - 1 ? i + 1 : i] - h[xx > 0 ? i - 1 : i]) / 2, dy = (h[y < S - 1 ? i + S : i] - h[y > 0 ? i - S : i]) / 2;
@@ -463,10 +510,9 @@
       let texCv = cv;
       if (size < cv.width) { texCv = document.createElement('canvas'); texCv.width = texCv.height = size; const tx2 = texCv.getContext('2d'); tx2.imageSmoothingQuality = 'high'; tx2.drawImage(cv, 0, 0, size, size); }
       const tex = new THREE.CanvasTexture(texCv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = T().bloom ? 4 : 1;
-      // Logos are stored at 200px, so the relief is worked out near that size and
-      // the graphics card smooths it -- working it out on a stretched copy is
-      // what made edges look messy.
-      const nrm = new THREE.CanvasTexture(reliefNormal(cv, 256, look)); nrm.anisotropy = tex.anisotropy; // linear data, not a color
+      // The relief comes from the simplified color regions, so it can be worked
+      // out at full texture size and stay crisp.
+      const nrm = new THREE.CanvasTexture(reliefNormal(cv, T().bloom ? 512 : 256, look)); nrm.anisotropy = tex.anisotropy; // linear data, not a color
       await idle();
       const metal = gold ? E.mats.gold : E.mats.chrome;
       const seg = { bevelSegments: T().bevel, curveSegments: look.circle && mk.m ? (T().bloom ? 64 : 40) : T().curve }; // circles need many segments to stay round
