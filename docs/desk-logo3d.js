@@ -95,7 +95,7 @@
   }
   async function logoCanvas(team) {
     const cv = document.createElement('canvas'); cv.width = cv.height = 512;
-    const x = cv.getContext('2d');
+    const x = cv.getContext('2d'); x.imageSmoothingQuality = 'high'; // logos are 200px: upscale as cleanly as possible
     const img = await loadImage(team.logoUrl);
     if (img) { const k = Math.min(480 / img.width, 480 / img.height), w = img.width * k, h = img.height * k; x.drawImage(img, (512 - w) / 2, (512 - h) / 2, w, h); }
     else if (team.emoji) { x.font = '400px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(team.emoji, 256, 280); }
@@ -136,42 +136,111 @@
     }
     return cur;
   }
+  // ---------------------------------------------------------------- per-logo design
+  // Not every logo should be sculpted the same way. Four looks:
+  //   emblem -- bold flat logos (solid color blocks with clean outlines): every
+  //             color area is raised with a rounded bevel, like a TV-package logo.
+  //   badge  -- a strong shape with lots of fine drawing inside: only the big
+  //             shapes are raised (fine detail is smoothed away first), plus a
+  //             gentle overall dome, so beards / palm leaves / fur don't turn
+  //             into a field of little bumps.
+  //   art    -- painted cartoons: the artwork is left untouched and the whole
+  //             piece is domed under a clear coat, like an enamel pin.
+  //   photo  -- photos: a round medallion, photo under glass, barely domed.
+  const LOOKS = {
+    emblem: { colorEdges: true, thresh: 80, preBlur: 0.6, bevel: 0.024, wR: 1, wD: 0.25, domeR: 0.1, str: 1, faceMetal: 0.3, rough: 0.32, coat: 0.8 },
+    badge: { colorEdges: true, thresh: 120, preBlur: 2.4, bevel: 0.03, wR: 0.55, wD: 0.55, domeR: 0.12, str: 0.9, faceMetal: 0.22, rough: 0.32, coat: 0.85 },
+    art: { colorEdges: false, wR: 0, wD: 1, domeR: 0.16, str: 0.85, faceMetal: 0.06, rough: 0.34, coat: 1 },
+    photo: { colorEdges: false, wR: 0, wD: 1, domeR: 0.3, str: 0.35, faceMetal: 0, rough: 0.5, coat: 1, circle: true },
+  };
+  // Reviewed one by one (Nov 2026). Keyed by team id and the logo's upload
+  // stamp, so a newly uploaded logo falls back to the automatic guess below.
+  const DESIGN = {
+    aebd2919: ['emblem', '1790200135794'], // Joe Buck Yourself: flat bull head
+    edc07345: ['emblem', '1790200220574'], // Stony Creek Gunners: flat cannon + lettering
+    '8c5ba255': ['emblem', '1790199761917'], // Just End The Season: flat helmet
+    '05d9258f': ['emblem', '1790198673494'], // Gary and the Conquerors: flat helmet
+    '79cf7a97': ['emblem', '1790208073170'], // Abby's Aqua Army: flat helmet
+    ba590964: ['emblem', '1790208470902'], // Megatron's Army: flat player
+    d1646220: ['emblem', '1790208241619'], // Jason's Scary Team: flat mask
+    '073f8314': ['emblem', '1790201266056'], // Bababooey: flat snowman helmet
+    '55c0d10f': ['emblem', '1790198426449'], // The All-Star Aces: bold badge
+    '1795509a': ['emblem', '1790208309093'], // Branford Blast: comic BOOM burst
+    fbde0d2f: ['badge', '1790198897054'], // Raiderz: detailed viking illustration in a shield
+    db198b3c: ['badge', '1790200423731'], // Branford Crabs: badge with a detailed beach scene
+    dc7c7d80: ['badge', '1790198316830'], // The Howling Hurricanes: shaded football + swirl
+    '2da5771f': ['badge', '1790207552672'], // Chase's Crusaders: lettering over crossed swords
+    '14ea4df2': ['badge', '1790208030365'], // Eff's Ball Saxs: fuzzy footballs + lettering
+    '352d6490': ['art', '1790201129464'], // Lady and the Champs: painted cartoon dog
+    '5ec4a999': ['art', '1790200545904'], // Jamie's Finest Team: cartoon cat
+    b1369e7b: ['art', '1790208287602'], // Brittany's Ball Stealers: cartoon burger
+    '35d9e167': ['art', '1790208410581'], // Little Jommy and the Jackasses: painted bird
+    '6056e782': ['art', '1790208342224', { circle: true }], // Tina's Touchdown: cartoon in a circle
+    '13fb241e': ['photo', '1790198997717'], // The Oscar Dynasty: photo in a circle
+    e62a85d6: ['photo', '1790208149331'], // Sasa's Stormtroopers: R2-D2 render in a circle
+  };
+  // A new logo nobody has reviewed: guess from its colors and shape.
+  function guessLook(cv) {
+    const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(cv, 0, 0, 64, 64);
+    const d = x.getImageData(0, 0, 64, 64).data, cols = new Set(); let n = 0, x0 = 64, y0 = 64, x1 = 0, y1 = 0;
+    for (let i = 0; i < 64 * 64; i++) if (d[i * 4 + 3] > 128) { n++; cols.add((d[i * 4] >> 4) << 8 | (d[i * 4 + 1] >> 4) << 4 | d[i * 4 + 2] >> 4); const px = i % 64, py = (i / 64) | 0; x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py); }
+    const w = x1 - x0 + 1, h = y1 - y0 + 1, fill = n / Math.max(1, w * h), round = Math.abs(w / h - 1) < 0.06 && Math.abs(fill - 0.785) < 0.04;
+    if (round) return cols.size > 140 ? 'photo' : 'art';
+    if (cols.size < 110 && fill < 0.72) return 'emblem';
+    return 'badge';
+  }
+  function lookFor(team, cv) {
+    const id8 = String(team.id || '').slice(0, 8), entry = DESIGN[id8];
+    const name = entry && String(team.logoUrl || '').includes(entry[1]) ? entry[0] : guessLook(cv);
+    return Object.assign({ name }, LOOKS[name], entry && entry[2]);
+  }
+
   // Relief: every color region of the logo becomes a raised, rounded piece.
   // Region borders (a clear color change, or the logo's edge) are found, a
   // distance-from-border is computed (two-pass chamfer), and height rises
   // over a short bevel and flattens on top -- then turned into a normal map
   // so the lighting rolls over each shape and dips into the grooves between.
-  function reliefNormal(cv, S) {
-    const c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d', { willReadFrequently: true });
-    // A slight blur first, so fine drawing detail (fur, shading) doesn't
-    // turn into dozens of little bumps -- only real color areas get raised.
-    if ('filter' in x) x.filter = `blur(${(S / 512 * 1.4).toFixed(2)}px)`;
-    x.drawImage(cv, 0, 0, S, S);
-    x.filter = 'none';
-    const img = x.getImageData(0, 0, S, S), d = img.data, n = S * S, INF = 1e6, dist = new Float32Array(n);
-    const diff = (i, j) => Math.abs(d[i * 4] - d[j * 4]) + Math.abs(d[i * 4 + 1] - d[j * 4 + 1]) + Math.abs(d[i * 4 + 2] - d[j * 4 + 2]);
-    for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) {
-      const i = y * S + xx;
-      if (d[i * 4 + 3] < 128) { dist[i] = 0; continue; }
-      let edge = xx === 0 || y === 0 || xx === S - 1 || y === S - 1;
-      if (!edge) for (const j of [i - 1, i + 1, i - S, i + S]) if (d[j * 4 + 3] < 128 || diff(i, j) > 70) { edge = true; break; }
-      dist[i] = edge ? 0 : INF;
-    }
+  function chamfer(dist, S) {
     const D = Math.SQRT2;
     for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) { const i = y * S + xx; let v = dist[i]; if (!v) continue;
       if (xx > 0) v = Math.min(v, dist[i - 1] + 1); if (y > 0) { v = Math.min(v, dist[i - S] + 1); if (xx > 0) v = Math.min(v, dist[i - S - 1] + D); if (xx < S - 1) v = Math.min(v, dist[i - S + 1] + D); } dist[i] = v; }
     for (let y = S - 1; y >= 0; y--) for (let xx = S - 1; xx >= 0; xx--) { const i = y * S + xx; let v = dist[i]; if (!v) continue;
       if (xx < S - 1) v = Math.min(v, dist[i + 1] + 1); if (y < S - 1) { v = Math.min(v, dist[i + S] + 1); if (xx < S - 1) v = Math.min(v, dist[i + S + 1] + D); if (xx > 0) v = Math.min(v, dist[i + S - 1] + D); } dist[i] = v; }
-    const R = Math.max(3, S * 0.018), h = new Float32Array(n);
-    for (let i = 0; i < n; i++) { const t = Math.min(1, dist[i] / R); h[i] = 1 - (1 - t) * (1 - t); }
-    // Smooth the heights (two separable box-blur passes) so every bevel is a
-    // soft, even slope instead of a stepped or bumpy one.
-    const rad = Math.max(1, Math.round(R / 3)), tmp = new Float32Array(n);
+    return dist;
+  }
+  // Height = (rounded bevel up from each color border) and/or (a smooth dome
+  // up from the logo's outline), mixed per look, blurred so every slope is
+  // soft, then turned into a normal map.
+  function reliefNormal(cv, S, look) {
+    const c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d', { willReadFrequently: true });
+    x.imageSmoothingQuality = 'high';
+    if (look.colorEdges && look.preBlur && 'filter' in x) x.filter = `blur(${(look.preBlur * S / 256).toFixed(2)}px)`; // fine detail isn't a "region"
+    x.drawImage(cv, 0, 0, S, S);
+    x.filter = 'none';
+    const d = x.getImageData(0, 0, S, S).data, n = S * S, INF = 1e6;
+    const diff = (i, j) => Math.abs(d[i * 4] - d[j * 4]) + Math.abs(d[i * 4 + 1] - d[j * 4 + 1]) + Math.abs(d[i * 4 + 2] - d[j * 4 + 2]);
+    const distA = new Float32Array(n), distC = look.wR ? new Float32Array(n) : null;
+    for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) {
+      const i = y * S + xx;
+      if (d[i * 4 + 3] < 128) { distA[i] = 0; if (distC) distC[i] = 0; continue; }
+      let a = xx === 0 || y === 0 || xx === S - 1 || y === S - 1, col = false;
+      if (!a) for (const j of [i - 1, i + 1, i - S, i + S]) { if (d[j * 4 + 3] < 128) { a = true; break; } if (distC && diff(i, j) > look.thresh) col = true; }
+      distA[i] = a ? 0 : INF; if (distC) distC[i] = a || col ? 0 : INF;
+    }
+    chamfer(distA, S); if (distC) chamfer(distC, S);
+    const R = Math.max(2, S * (look.bevel || 0.02)), RD = S * look.domeR, h = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      let v = 0;
+      if (distC) { const t = Math.min(1, distC[i] / R); v += look.wR * (1 - (1 - t) * (1 - t)); }
+      if (look.wD) { const t = Math.min(1, distA[i] / RD); v += look.wD * Math.sqrt(1 - (1 - t) * (1 - t)); }
+      h[i] = v;
+    }
+    const rad = Math.max(1, Math.round(S * 0.006)), tmp = new Float32Array(n);
     for (let pass = 0; pass < 2; pass++) {
       for (let y = 0; y < S; y++) { let acc = 0; for (let k = -rad; k <= rad; k++) acc += h[y * S + Math.min(S - 1, Math.max(0, k))]; for (let xx = 0; xx < S; xx++) { tmp[y * S + xx] = acc / (2 * rad + 1); acc += h[y * S + Math.min(S - 1, xx + rad + 1)] - h[y * S + Math.max(0, xx - rad)]; } }
       for (let xx = 0; xx < S; xx++) { let acc = 0; for (let k = -rad; k <= rad; k++) acc += tmp[Math.min(S - 1, Math.max(0, k)) * S + xx]; for (let y = 0; y < S; y++) { h[y * S + xx] = acc / (2 * rad + 1); acc += tmp[Math.min(S - 1, y + rad + 1) * S + xx] - tmp[Math.max(0, y - rad) * S + xx]; } }
     }
-    const out = x.createImageData(S, S), o = out.data, str = R * 1.1;
+    const out = x.createImageData(S, S), o = out.data, str = look.str * S * 0.02;
     for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) {
       const i = y * S + xx;
       const dx = (h[xx < S - 1 ? i + 1 : i] - h[xx > 0 ? i - 1 : i]) / 2, dy = (h[y < S - 1 ? i + S : i] - h[y > 0 ? i - S : i]) / 2;
@@ -228,9 +297,9 @@
   }
   // Glossy enamel: the logo's own colors, with the relief's normal map so
   // highlights follow every raised shape (the clear coat follows it too).
-  const faceMat = (THREE, tex, nrm) => (T().physical
-    ? new THREE.MeshPhysicalMaterial({ map: tex, normalMap: nrm, metalness: 0.3, roughness: 0.32, clearcoat: 0.8, clearcoatRoughness: 0.12, clearcoatNormalMap: nrm, envMapIntensity: 0.85, transparent: true, alphaTest: 0.05 })
-    : new THREE.MeshStandardMaterial({ map: tex, normalMap: nrm, metalness: 0.3, roughness: 0.3, envMapIntensity: 0.85, transparent: true, alphaTest: 0.05 }));
+  const faceMat = (THREE, tex, nrm, look) => { const L = look || LOOKS.emblem; return T().physical
+    ? new THREE.MeshPhysicalMaterial({ map: tex, normalMap: nrm, metalness: L.faceMetal, roughness: L.rough, clearcoat: L.coat, clearcoatRoughness: 0.1, clearcoatNormalMap: nrm, envMapIntensity: 0.85, transparent: true, alphaTest: 0.05 })
+    : new THREE.MeshStandardMaterial({ map: tex, normalMap: nrm, metalness: L.faceMetal, roughness: Math.max(0.22, L.rough - 0.06), envMapIntensity: 0.85, transparent: true, alphaTest: 0.05 }); };
 
   // Wall art (grayscale, tinted by the wall material): faint triangular
   // facets lit from the top left. A second texture holds a grid of small plus
@@ -370,6 +439,7 @@
       const { THREE } = E.L3;
       const cv = await logoCanvas(team);
       await idle();
+      const look = lookFor(team, cv);
       const mk = mask(cv);
       const pts = mk.square ? null : contour(mk.m);
       const bandPts = mk.square ? null : contour(dilate(mk.m, 3)); // a team-color enamel ring around the logo
@@ -381,15 +451,25 @@
         else { const a = -grow, b = 1 + grow, r = 0.12 + grow; sh.moveTo(a + r, a); sh.lineTo(b - r, a); sh.quadraticCurveTo(b, a, b, a + r); sh.lineTo(b, b - r); sh.quadraticCurveTo(b, b, b - r, b); sh.lineTo(a + r, b); sh.quadraticCurveTo(a, b, a, b - r); sh.lineTo(a, a + r); sh.quadraticCurveTo(a, a, a + r, a); }
         return sh;
       };
-      const faceShape = toShape(pts, 0), bandShape = toShape(bandPts, bandPts ? 0 : 0.016), rimShape = toShape(rimPts, rimPts ? 0 : 0.045);
+      let faceShape = toShape(pts, 0), bandShape = toShape(bandPts, bandPts ? 0 : 0.016), rimShape = toShape(rimPts, rimPts ? 0 : 0.045);
+      // Round logos (photos, the Tina badge): a true circle reads cleaner than a traced one.
+      if (look.circle && mk.m) {
+        let x0 = N, y0 = N, x1 = 0, y1 = 0; for (let i = 0; i < N * N; i++) if (mk.m[i]) { const px = i % N, py = (i / N) | 0; x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py); }
+        const cx = (x0 + x1 + 1) / 2 / N, cy = 1 - (y0 + y1 + 1) / 2 / N, r = Math.max(x1 - x0 + 1, y1 - y0 + 1) / 2 / N - 0.006;
+        const circ = (rr) => { const sh = new THREE.Shape(); sh.absarc(cx, cy, rr, 0, Math.PI * 2, false); return sh; };
+        faceShape = circ(r); bandShape = circ(r + 0.022); rimShape = circ(r + 0.055);
+      }
       const size = T().tex;
       let texCv = cv;
-      if (size < cv.width) { texCv = document.createElement('canvas'); texCv.width = texCv.height = size; texCv.getContext('2d').drawImage(cv, 0, 0, size, size); }
+      if (size < cv.width) { texCv = document.createElement('canvas'); texCv.width = texCv.height = size; const tx2 = texCv.getContext('2d'); tx2.imageSmoothingQuality = 'high'; tx2.drawImage(cv, 0, 0, size, size); }
       const tex = new THREE.CanvasTexture(texCv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = T().bloom ? 4 : 1;
-      const nrm = new THREE.CanvasTexture(reliefNormal(cv, size)); nrm.anisotropy = tex.anisotropy; // linear data, not a color
+      // Logos are stored at 200px, so the relief is worked out near that size and
+      // the graphics card smooths it -- working it out on a stretched copy is
+      // what made edges look messy.
+      const nrm = new THREE.CanvasTexture(reliefNormal(cv, 256, look)); nrm.anisotropy = tex.anisotropy; // linear data, not a color
       await idle();
       const metal = gold ? E.mats.gold : E.mats.chrome;
-      const seg = { bevelSegments: T().bevel, curveSegments: T().curve };
+      const seg = { bevelSegments: T().bevel, curveSegments: look.circle && mk.m ? (T().bloom ? 64 : 40) : T().curve }; // circles need many segments to stay round
       const geo = new THREE.ExtrudeGeometry(faceShape, Object.assign({ depth: 0.06, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.006 }, seg));
       const geo2 = new THREE.ExtrudeGeometry(rimShape, Object.assign({ depth: 0.12, bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.024 }, seg, { bevelSegments: T().bevel + 2 }));
       const geo3 = new THREE.ExtrudeGeometry(bandShape, Object.assign({ depth: 0.06, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.008 }, seg));
@@ -401,10 +481,11 @@
       const bandMat = T().physical
         ? new THREE.MeshPhysicalMaterial({ color: bandCol, metalness: 0.55, roughness: 0.26, clearcoat: 0.7, clearcoatRoughness: 0.1, envMapIntensity: 0.9 })
         : new THREE.MeshStandardMaterial({ color: bandCol, metalness: 0.55, roughness: 0.24, envMapIntensity: 0.9 });
-      const front = new THREE.Mesh(geo, [faceMat(THREE, tex, nrm), metal]);
+      const front = new THREE.Mesh(geo, [faceMat(THREE, tex, nrm, look), metal]);
       const band = new THREE.Mesh(geo3, bandMat);
       const rim = new THREE.Mesh(geo2, metal);
       const g = new THREE.Group(); g.add(rim, band, front);
+      g.userData.look = look.name;
       // Free this emblem's own GPU memory (the shared metal stays).
       g.userData.dispose = () => { geo.dispose(); geo2.dispose(); geo3.dispose(); tex.dispose(); nrm.dispose(); front.material[0].dispose(); bandMat.dispose(); };
       if (E.renderer.initTexture) E.renderer.initTexture(tex); // upload now, not on the first frame
