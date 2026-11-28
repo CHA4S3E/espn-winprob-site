@@ -320,6 +320,29 @@
     ], casual: [
       ['STAT FIX', 'ESPN fixed {PL}’s points: {PTS} now.'],
     ] },
+    // ----- record book ({REC} record name, {V} new value, {OLD} old value, {WHO} old holder, {WHEN} when it was set)
+    record_watch: { mood: 'hype', pro: [
+      ['RECORD WATCH: {T}', '{T} are projected for {V} — the league record is {OLD}, set by {WHO} ({WHEN}).'],
+      ['{T} CHASING HISTORY', 'History in reach: {T} on pace for {V}. The mark to beat: {OLD}.'],
+      ['RECORD IN PLAY', 'The {REC} record ({OLD}, {WHO}) is under threat — {T} projected for {V}.'],
+      ['{T} EYE THE RECORD BOOK', '{T} could rewrite the record book: {V} projected, record {OLD}.'],
+    ], casual: [
+      ['{T} COULD MAKE HISTORY', '{T} are on pace for {V}! The record is {OLD} by {WHO}. Ooooh.'],
+      ['RECORD WATCH!', 'Somebody call the record keepers: {T} projected for {V}. Record: {OLD}.'],
+      ['{WHO}, WATCH OUT', '{WHO}’s record of {OLD} might fall — {T} are on pace for {V}!'],
+      ['HISTORY ALERT', '{T} might break the {REC} record! {V} projected vs {OLD}.'],
+    ] },
+    record_broken: { mood: 'hype', pro: [
+      ['NEW LEAGUE RECORD', '{T} set a new league record for {REC}: {V}. The old mark: {OLD} by {WHO} ({WHEN}).'],
+      ['HISTORY: {T}', '{T} are in the record book — {REC}, {V}. Previous: {OLD}.'],
+      ['RECORD SHATTERED', 'The {REC} record falls. {T}: {V}. {WHO}’s {OLD} is history.'],
+      ['{T} MAKE HISTORY', 'For the first time in league history: {V}. {T} own the {REC} record.'],
+    ], casual: [
+      ['NEW RECORD!!!', '{T} just set the league record for {REC}: {V}! Sorry {WHO}, your {OLD} is toast.'],
+      ['FRAME IT!', '{T} are officially in the record book: {V}! Old record: {OLD}.'],
+      ['{WHO} JUST GOT DETHRONED', '{T} broke {WHO}’s {REC} record! {V} vs {OLD}.'],
+      ['HISTORY, BABY!', 'New league record for {REC}: {T}, {V}!'],
+    ] },
     // ----- NFL
     nfl_kickoff: { mood: 'calm', pro: [
       ['KICKOFF: {G}', '{G} is underway.'],
@@ -350,12 +373,52 @@
     players: { pro: ['Top performers', 'Player watch', 'Who’s carrying their teams', 'The stat sheet', 'Stars of the week'], casual: ['Who’s balling', 'MVP watch', 'Players of the day', 'The heroes (and zeros)', 'Who’s doing what'] },
     nfl: { pro: ['Around the NFL', 'The real games', 'NFL scoreboard', 'Live from the league'], casual: ['Real football', 'The actual NFL', 'What the pros are doing', 'NFL check-in'] },
     rundown: { pro: ['The rundown', 'Top stories', 'Latest headlines', 'What you missed'], casual: ['The latest gossip', 'What’s happening', 'News roundup', 'Catch me up'] },
+    need: { pro: ['What they need', 'Path to victory', 'The comeback math', 'Do the math', 'Still alive'], casual: ['What it’s gonna take', 'Can they do it?', 'Comeback math', 'Still got a shot?', 'Hope-o-meter'] },
+    records: { pro: ['The record book', 'League history', 'All-time marks', 'By the numbers: all time'], casual: ['The family record book', 'Hall of fame (and shame)', 'Who holds the records', 'Bragging rights forever'] },
+    recap: { pro: ['Weekly recap', 'The week in review', 'Last week’s highlights'], casual: ['Last week, real quick', 'Previously on…', 'The week that was'] },
     preview: { pro: ['Matchup preview', 'Looking ahead', 'On deck', 'The week ahead'], casual: ['Coming up', 'What to watch', 'Sneak peek', 'Next up'] },
   };
   const HANDOFF = {
     pro: ['Let’s send it over to {L2}.', 'For more, we go to the {L2} studio.', 'Time to check in with {L2}.', 'Over to our friends at {L2}.', 'Let’s throw it across the hall to {L2}.', '{L2}, take it away.'],
     casual: ['Okay, back to the fancy folks at {L2}!', 'Let’s go bug {L2}.', 'Tossing it over to {L2}!', '{L2}, you’re up! Sit up straight.', 'Let’s see what the suits at {L2} are saying.', 'Over to {L2}. Be nice.'],
   };
+
+  // ---------------------------------------------------------------- commercials
+  // Fake ads for the commercial break. {A} a team (usually last place), {B} another team,
+  // {L} league, {P} a player. [brand, tagline, body, fine print]
+  const ADS = {
+    pro: [
+      ['Bench Regret™ Insurance', 'Because hindsight is 20/20.', 'Left 30 points on your bench? Bench Regret Insurance pays out in pure emotional damages. Just ask {A}.', 'Coverage excludes kickers, bye weeks and your own decisions.'],
+      ['Waiver Wire Energy', 'Claim it before Wednesday.', 'The official drink of managers who refresh the waiver wire at 3 a.m. {A} drinks it by the case.', 'Not a substitute for actual research.'],
+      ['{A} Financial Advisors', 'We know a thing about losses.', 'Down bad? Our advisors have lived it. Every week. Ask about our "Next Year" plan.', 'Past performance is, unfortunately, indicative of future results.'],
+      ['Projection Pro™', 'Accurate 50% of the time, every time.', 'Projections so confident they forget the games are actually played. As trusted by {B}.', 'Projections are not promises. Ask {A}.'],
+      ['The {L} Trophy Polish', 'For the shelf you’ll never use.', 'Keep your hardware gleaming. {B} uses it weekly. {A} uses it on hope.', 'Trophy sold separately. Talent sold separately.'],
+      ['Trade Veto Hotline', 'Collusion? Call us.', 'Suspicious two-for-one? Our agents review every trade with the seriousness of a Super Bowl replay booth.', 'Hotline staffed by the commissioner’s cousin.'],
+      ['Late Swing™ Antacid', 'For Sunday nights and Monday nights.', 'When your opponent has a Monday night QB and you have nothing left, reach for Late Swing.', 'May not prevent the {P} touchdown you’re dreading.'],
+      ['Draft Day Do-Over', 'Pick again. In your dreams.', 'Wish you’d taken {P}? So does {A}. Our simulator lets you relive it. And relive it.', 'Does not affect actual standings.'],
+      ['Primetime Couch Co.', 'Sit like a champion.', 'Ergonomic seating for three-game windows. As seen in the {B} living room.', 'Does not improve your lineup.'],
+      ['Garbage Time Gold', 'Every point counts. Some count less.', 'Love a 4th-quarter backup touchdown in a 35-point game? So does your fantasy team.', 'Real NFL fans may disagree.'],
+    ],
+    casual: [
+      ['Grandma’s Lineup Advice', 'She’s been right twice.', 'Can’t decide who to start? Call Grandma. She picks by jersey color. {A} should honestly try it.', 'Grandma is not liable for duds.'],
+      ['Couch Potato Chips', 'Crunchy. Salty. Undefeated.', 'The only thing on the couch that never loses. Unlike {A}.', 'Contains 0% fantasy skill.'],
+      ['Sorry About Your Team™ Cards', 'For every occasion. Mostly losses.', 'Send {A} a heartfelt card this week. Glitter optional.', 'Card cannot change the score.'],
+      ['The Trash Talk Academy', 'Learn from the best (it’s {B}).', 'Ten easy lessons on how to text the group chat after a win. Lesson one: all caps.', 'Results may cause family tension.'],
+      ['Dad’s Remote Finder', 'Because it’s always in the couch.', 'Never miss a {P} touchdown again. Beeps on command.', 'Batteries not included. Remote probably in the couch.'],
+      ['Snack Bowl Insurance', 'For when someone eats all the dip.', 'Protect your snacks from that one cousin. You know who.', 'Does not cover {A}’s season.'],
+      ['Participation Trophy Co.', 'Everybody’s a winner! (Not really.)', 'Custom trophies for {A}, celebrating "trying really hard". Engraving free.', 'Real trophy goes to {B}.'],
+      ['Benchwarmer Blankets', 'Cozy enough for your bench guys.', 'Wrap up in the same comfort {P} enjoyed on {A}’s bench this week.', 'Warmth not guaranteed. Points definitely not.'],
+      ['The Group Chat Mute Button', 'Peace and quiet, finally.', 'Lost by 40? Mute the group chat for 24 hours. {A} has it on speed dial.', 'Muting does not delete screenshots.'],
+      ['Lucky Socks Laundry', 'We wash the luck right out.', 'Haven’t washed your lucky socks since week 1? Neither has {B}. We can help.', 'Luck not transferable.'],
+    ],
+  };
+  const adOrder = { pro: [], casual: [] };
+  function commercial(voice, vars) {
+    const v = voice === 'casual' ? 'casual' : 'pro', pool = ADS[v];
+    if (!adOrder[v].length) adOrder[v] = pool.map((_, i) => i).sort(() => Math.random() - 0.5);
+    const [brand, tag, body, fine] = pool[adOrder[v].pop()].map((s) => fill(s, vars || {}));
+    return { brand, tag, body, fine };
+  }
 
   // ---------------------------------------------------------------- memory
   const DAY = new Date().toLocaleDateString('en-CA');
@@ -414,5 +477,5 @@
     return n;
   }
 
-  window.DeskLines = { write, segmentTitle, handoff, combos, kinds: Object.keys(CORES) };
+  window.DeskLines = { write, segmentTitle, handoff, commercial, combos, kinds: Object.keys(CORES) };
 })();

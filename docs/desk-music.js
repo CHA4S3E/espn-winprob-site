@@ -264,7 +264,7 @@
     const root = song ? song.root + 12 : 60, B = sfxBus;
     const chordHit = (notes, at, d) => (pro ? INST.brass : INST.rhodes)(at, notes, d, 1.6, B);
     const notePlay = (m, at, d) => (pro ? (night ? INST.bell : INST.lead) : INST.marimba)(at, m, d, 1.4, B);
-    duck({ breaking: 3.2, upset: 3, final: 3.2, td: 1.6, bad: 1.8, lead: 2, handoff: 2.4, alert: 1.2 }[kind] || 1.5);
+    duck({ jingle: 1.6, replay: 1.4, record: 3.4, breaking: 3.2, upset: 3, final: 3.2, td: 1.6, bad: 1.8, lead: 2, handoff: 2.4, alert: 1.2 }[kind] || 1.5);
     switch (kind) {
       case 'breaking':
         INST.whoosh(t, 0.6, 1, B);
@@ -290,6 +290,15 @@
         break;
       case 'handoff':
         INST.whoosh(t, 0.7, 0.9, B, false); INST.bell(t + 0.6, root + 12, 1, 1.2, B); INST.bell(t + 0.75, root + 19, 1, 1, B);
+        break;
+      case 'jingle': // commercial break: a little 5-note ditty
+        [0, 4, 7, 9, 12].forEach((iv, i) => INST.marimba(t + i * 0.13, root + 12 + iv, 0.2, 1.5, B)); INST.bell(t + 0.7, root + 24, 1, 1.2, B); INST.clap(t + 0.65, 0.8, B);
+        break;
+      case 'replay':
+        INST.whoosh(t, 0.5, 0.9, B, false); notePlay(root + 7, t + 0.45, 0.2); notePlay(root, t + 0.62, 0.5);
+        break;
+      case 'record':
+        [0, 4, 7, 12, 16].forEach((iv, i) => notePlay(root + iv, t + i * 0.1, 0.2)); chordHit([root + 12, root + 16, root + 19, root + 24], t + 0.55, 1.6); INST.boom(t + 0.55, 0.8, B); INST.hat(t + 0.55, 1, B, true);
         break;
       default:
         notePlay(root + 12, t, 0.12); notePlay(root + 19, t + 0.1, 0.3);
