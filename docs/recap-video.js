@@ -329,7 +329,7 @@
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
     const stream = cv.captureStream(30);
     let musicStarted = false;
-    if (!window.DeskMusic) await new Promise((res) => { const s = document.createElement('script'); s.src = 'desk-music.js?v=3'; s.onload = res; s.onerror = res; document.head.appendChild(s); });
+    if (!window.DeskMusic) await new Promise((res) => { const s = document.createElement('script'); s.src = 'desk-music.js?v=4'; s.onload = res; s.onerror = res; document.head.appendChild(s); });
     if (window.DeskMusic) {
       if (!DeskMusic.running) { DeskMusic.setStyle(show.o.studio, 'night'); DeskMusic.start(); musicStarted = true; }
       try { for (const tr of DeskMusic.tap().getAudioTracks()) stream.addTrack(tr); } catch (e) { /* no audio */ }
