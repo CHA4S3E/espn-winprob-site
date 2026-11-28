@@ -83,7 +83,9 @@
     console.warn('3D logos:', why, '-> now', tierName);
   }
   addEventListener('pagehide', () => { const st = readStore(); if (st.busy) { st.busy = false; writeStore(st); } });
-  const T = () => TIERS[tierName] || TIERS.lite;
+  // ?3dsize=1280x720 renders at that size (used when recording the set cinematics).
+  const sizeQ = (/^(\d{3,4})x(\d{3,4})$/.exec(new URLSearchParams(location.search).get('3dsize') || '') || []).slice(1).map(Number);
+  const T = () => { const t = TIERS[tierName] || TIERS.lite; return sizeQ.length ? Object.assign({}, t, { W: sizeQ[0], H: sizeQ[1] }) : t; };
 
   // Wait for a quiet moment so building things never interrupts an animation.
   const idle = () => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 1500 }) : setTimeout(r, 60)));
@@ -576,26 +578,33 @@
     if (!supported() || playing) return false;
     const e = await warm(); if (!e) return false;
     const { THREE } = e.L3;
+    // Modes: versus (two teams, three shots), single / champion (one team, three
+    // shots), and for recording the set cinematics: closeup (one glide across
+    // one emblem) and wide (one team's emblem on BOTH sides of the stage, so
+    // the desk can show team A's left half beside team B's right half).
     const mode = opts.mode || 'single', teams = (opts.teams || []).filter(Boolean), ms = opts.ms || 8000;
     const gold = mode === 'champion';
+    const pair = mode === 'versus' || mode === 'wide';
     const list = mode === 'versus' ? teams.slice(0, 2) : teams.slice(0, 1);
     const groups = [];
     for (const t of list) groups.push(await emblem(t, gold));
+    if (mode === 'wide' && groups[0]) groups.push(groups[0].clone());
     playing = true;
     setBusy(true);
     // Team colors on the set.
     const col = (i) => new THREE.Color(gold ? '#e0a93a' : ((list[i] || list[0] || {}).color || '#2f6bff'));
-    const cL = col(0), cR = mode === 'versus' ? col(1) : gold ? new THREE.Color((list[0] || {}).color || '#e0a93a') : col(0);
+    const cL = col(0), cR = mode === 'versus' ? col(1) : gold ? new THREE.Color((list[0] || {}).color || '#e0a93a') : col(0); // (wide: both sides the team's)
     // Walls: the team color deepened toward navy; the plus grid glows a light tint of it.
     const navy = new THREE.Color('#0b1430'), white = new THREE.Color('#ffffff');
     [[e.walls[0], cL], [e.walls[1], cR]].forEach(([w, c]) => { w.material.color.copy(c).lerp(navy, 0.2); w.material.emissive.copy(c).lerp(white, 0.6); });
     e.fills[0].color.copy(cL).lerp(white, 0.12); e.fills[1].color.copy(cR).lerp(white, 0.12); // the chrome picks up each team's color
     // Place the emblems (and their reflections).
     e.emblems.clear(); e.mirrorEmblems.clear();
-    if (mode === 'versus' && groups.length === 2) {
+    if (pair && groups.length === 2) {
       groups[0].position.set(-1.95, 0.3, 1.0); groups[0].scale.setScalar(2.0);
       groups[1].position.set(1.95, 0.3, 1.0); groups[1].scale.setScalar(2.0);
-    } else if (groups[0]) { groups[0].position.set(0, 0.45, 1.0); groups[0].scale.setScalar(2.5); }
+    } else if (mode === 'closeup' && groups[0]) { groups[0].position.set(0, 0.4, 1.0); groups[0].scale.setScalar(2.2); }
+    else if (groups[0]) { groups[0].position.set(0, 0.45, 1.0); groups[0].scale.setScalar(2.5); }
     groups.forEach((g) => g.rotation.set(0, 0, 0));
     e.emblems.add(...groups); // (the set is reflected in the floor; the floating emblems aren't, which reads cleaner)
 
@@ -609,7 +618,13 @@
     // the camera position and aim over its own 0..1, and a light sweep runs
     // across the metal in every shot.
     const shots = [];
-    if (mode === 'versus' && groups.length === 2) {
+    if (mode === 'closeup' && groups[0]) {
+      const p = groups[0].position;
+      shots.push({ len: 1, caption: 0, cam: (t) => { const e2 = ease(t); return { pos: V(lerp(-1.4, 0.7, e2), p.y + lerp(-0.1, 0.4, e2), p.z + lerp(4.0, 3.4, e2)), at: V(lerp(-0.15, 0.15, e2), p.y + 0.05, p.z) }; } });
+    } else if (mode === 'wide') {
+      // Straight down the middle (no orbit), so the two halves line up at the seam where the walls meet.
+      shots.push({ len: 1, caption: 2, cam: (t) => { const e2 = ease(t); return { pos: V(0, lerp(1.35, 0.8, e2), lerp(10.8, 8.6, e2)), at: V(0, 0.55, -1.2) }; } });
+    } else if (mode === 'versus' && groups.length === 2) {
       const close = (g, side) => (t) => { const p = g.position, e2 = ease(t);
         return { pos: V(p.x - side * lerp(1.3, -0.5, e2), p.y + lerp(-0.15, 0.35, e2), p.z + lerp(3.9, 3.4, e2)), at: V(p.x + side * 0.15, p.y + 0.05, p.z) }; };
       shots.push({ len: 0.27, cam: close(groups[0], 1), caption: 0 }, { len: 0.27, cam: close(groups[1], -1), caption: 1 });
@@ -620,11 +635,11 @@
         { len: 0.26, cam: (t) => { const e2 = ease(t); return { pos: V(lerp(1.1, 0.5, e2), p.y + lerp(-1.25, -0.9, e2), p.z + lerp(4.4, 3.8, e2)), at: V(0, p.y + 0.4, p.z) }; }, caption: 0 }); // low hero angle
     }
     const wideLen = 1 - shots.reduce((t, x) => t + x.len, 0);
-    shots.push({ len: wideLen, caption: 2, cam: (t) => { const e2 = ease(t), ang = -0.22 + e2 * 0.44, dist = mode === 'versus' ? 10.2 - e2 * 2.0 : 8.2 - e2 * 1.6; /* one emblem: a closer wide */ return { pos: V(Math.sin(ang) * dist, 0.7 + 0.7 * (1 - e2), Math.cos(ang) * dist), at: V(0, 0.55, -1.2) }; } });
+    if (wideLen > 0.01) shots.push({ len: wideLen, caption: 2, cam: (t) => { const e2 = ease(t), ang = -0.22 + e2 * 0.44, dist = mode === 'versus' ? 10.2 - e2 * 2.0 : 8.2 - e2 * 1.6; /* one emblem: a closer wide */ return { pos: V(Math.sin(ang) * dist, 0.7 + 0.7 * (1 - e2), Math.cos(ang) * dist), at: V(0, 0.55, -1.2) }; } });
     let shotIdx = -1, cutAt = 0;
     const baseExposure = e.renderer.toneMappingExposure;
-    await new Promise((resolve) => {
-      const frame = (now) => {
+    const rec = opts.record; // { fps, onFrame: async (canvas, i) } -- render frame by frame for recording
+    const step = (now) => {
         const el = Math.max(0, now - t0), u = Math.min(1, el / ms), k = ease(u), s = el / 1000;
         // Which shot, and how far through it.
         let acc = 0, si = 0;
@@ -637,21 +652,27 @@
         const fl = cutAt ? Math.exp(-(now - cutAt) / 110) : 0;
         e.renderer.toneMappingExposure = baseExposure * (1 + 1.6 * fl);
         groups.forEach((g, i) => {
-          const base = mode === 'versus' ? (i ? -0.32 : 0.32) : -0.45 + k * 0.9;
+          const base = pair ? (i ? -0.32 : 0.32) : mode === 'closeup' ? -0.22 + k * 0.44 : -0.45 + k * 0.9;
           g.rotation.y = base + Math.sin(s * 0.7 + i * 2) * 0.06; g.rotation.x = -0.05 + Math.sin(s * 0.5 + i) * 0.03;
-          g.position.y = (mode === 'versus' ? 0.3 : 0.45) + 0.05 * Math.sin(s * 1.1 + i);
+          g.position.y = (pair ? 0.3 : mode === 'closeup' ? 0.4 : 0.45) + 0.05 * Math.sin(s * 1.1 + i);
         });
         e.key.position.set(-7 + su * 14, 5, 6); // a light sweep across the metal in every shot
         e.flare.material.opacity = (T().bloom ? 0.42 : 0.55) + 0.06 * Math.sin(s * 1.3);
-        const fade = Math.min(1, el / 500, (ms - el) / 600); cv.style.opacity = Math.max(0, fade);
+        const fade = rec ? 1 : Math.min(1, el / 500, (ms - el) / 600); cv.style.opacity = Math.max(0, fade);
         e.draw();
-        if (last && ++frames > 10) { if (now - last > 45) slow++; }
-        last = now;
+        if (!rec) { if (last && ++frames > 10) { if (now - last > 45) slow++; } last = now; }
         if (opts.onFrame) opts.onFrame(u, cv); // test hook (read the canvas right after rendering)
-        if (u < 1) requestAnimationFrame(frame); else resolve();
-      };
-      requestAnimationFrame(frame);
-    });
+        return u;
+    };
+    if (rec) {
+      const n = Math.round(ms / 1000 * rec.fps);
+      for (let i = 0; i < n; i++) { step(t0 + (i * 1000) / rec.fps); await rec.onFrame(cv, i); }
+    } else {
+      await new Promise((resolve) => {
+        const frame = (now) => { if (step(now) < 1) requestAnimationFrame(frame); else resolve(); };
+        requestAnimationFrame(frame);
+      });
+    }
     cv.remove();
     e.renderer.toneMappingExposure = baseExposure;
     e.emblems.clear(); e.mirrorEmblems.clear();

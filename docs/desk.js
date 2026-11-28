@@ -776,19 +776,23 @@
   // Lite 3D (phones): build just the emblems the next cinematic could use --
   // the two games the spotlight rotates between, or the two finalists.
   function prepareUpcoming3D() {
-    if (!window.Logo3D || !Logo3D.supported() || Logo3D.preloadAll()) return;
     const L = cur; if (!L) return;
     const br = phaseOf(L) === 'championship' ? bracketOf(L) : null;
     const ids = br && br.final && br.final.a ? [br.final.a, br.final.b]
       : L.matchups.slice().sort((a, b) => drama(b) - drama(a)).slice(0, 2).flatMap((m) => [m.home, m.away]);
-    Logo3D.prepare(ids.filter(Boolean).map((id) => T3(L, id))).catch(() => {});
+    const ts = ids.filter(Boolean).map((id) => T3(L, id));
+    if (window.Cine && Cine.ready) Cine.preload(ts); // set cinematics: start fetching the clips
+    const missing = ts.filter((t) => !(window.Cine && Cine.has('versus', [t])));
+    if (missing.length && window.Logo3D && Logo3D.supported() && !Logo3D.preloadAll()) Logo3D.prepare(missing).catch(() => {});
   }
 
   // ------------------------------------------------------------------ 3D logo bumper
   // A few seconds of the two teams' logos as 3D chrome emblems before a spotlight game.
   let lastBumper = 0;
   async function logoBumper(L, m, title) {
-    if (!window.Logo3D || !Logo3D.supported() || busy) return;
+    const pairT = [T3(L, m.home), T3(L, m.away)];
+    const cine = window.Cine && Cine.has('versus', pairT); // the pre-rendered set cinematics
+    if (busy || (!cine && !(window.Logo3D && Logo3D.supported()))) return;
     busy = true;
     const h = T(L, m.home), a = T(L, m.away), el = $('logo3d'), pro = L.studio === 'pro';
     el.querySelector('.l3-k').textContent = title ? (pro ? 'The Championship' : 'The Big Game') : (pro ? 'Spotlight game' : 'The big one');
@@ -798,7 +802,7 @@
     // The caption follows the shots: each team's name on its close-up, then the matchup on the wide.
     const captions = [h.name, a.name, `${h.name}  vs  ${a.name}`], tEl = el.querySelector('.l3-t'), box = el.querySelector('.l3-text');
     const onShot = (i, c) => { const txt = captions[c] || captions[2]; if (tEl.textContent === txt) return; tEl.textContent = txt; tEl.style.color = c === 0 ? h.color : c === 1 ? a.color : ''; box.classList.remove('swap'); void box.offsetWidth; box.classList.add('swap'); };
-    try { await Logo3D.play(el, { mode: 'versus', teams: [T3(L, m.home), T3(L, m.away)], ms: 9000, onShot }); } catch (e) { /* flat look */ }
+    try { if (!(cine && await Cine.play(el, { mode: 'versus', teams: pairT, onShot })) && window.Logo3D && Logo3D.supported()) await Logo3D.play(el, { mode: 'versus', teams: pairT, ms: 9000, onShot }); } catch (e) { /* flat look */ }
     tEl.style.color = ''; box.classList.remove('swap');
     el.classList.remove('show');
     busy = false;
@@ -817,7 +821,9 @@
       <div class="cf-teams"><div class="cf-t l" style="--c:${esc(a.color)}">${icon(a)}<b>${esc(a.name)}</b><small>#${br.seedOf.get(br.final.a)} seed</small></div><div class="cf-vs">VS</div><div class="cf-t r" style="--c:${esc(b.color)}">${icon(b)}<b>${esc(b.name)}</b><small>#${br.seedOf.get(br.final.b)} seed</small></div></div>
       <div class="cf-sub">${br.final.weeks.length > 1 ? `Weeks ${br.final.weeks.join(' + ')} · scores combined` : `Week ${br.final.weeks[0]}`} · ${pro ? 'one trophy' : 'winner takes all'}</div>`;
     fx.className = 'show intro';
-    if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'versus', teams: [T3(L, br.final.a), T3(L, br.final.b)], ms: 10200 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
+    { const ft = [T3(L, br.final.a), T3(L, br.final.b)];
+      if (window.Cine && Cine.has('versus', ft)) { fx.classList.add('has3d'); Cine.play(fx, { mode: 'versus', teams: ft }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
+      else if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'versus', teams: ft, ms: 10200 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); } }
     M.sting('champIntro');
     say(pro ? `This is it. ${a.name} and ${b.name}, for the ${L.year} ${L.name} championship.` : `It all comes down to this: ${a.name} vs ${b.name} for the title!`);
     await sleep(10500);
@@ -837,7 +843,9 @@
       <div class="cf-champ" style="color:${esc(t.color)}">${esc(t.name)}</div><div class="cf-title small">${L.year} ${esc(L.name.toUpperCase())} ${pro ? 'CHAMPIONS' : 'CHAMPS!'}</div>
       ${opp && ws != null ? `<div class="cf-sub">${fmt(ws)} – ${fmt(ls)} over ${esc(opp.name)}</div>` : ''}`;
     fx.className = 'show finale';
-    if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'champion', teams: [T3(L, championId)], ms: quiet ? 8800 : 14800 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
+    { const ct = [T3(L, championId)], cms = quiet ? 8800 : 14800;
+      if (window.Cine && Cine.has('champion', ct)) { fx.classList.add('has3d'); Cine.play(fx, { mode: 'champion', teams: ct, ms: cms }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
+      else if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'champion', teams: ct, ms: cms }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); } }
     if (!quiet) M.sting('champion');
     say(pro ? `${t.name} are your ${L.year} ${L.name} champions!` : `${t.name} won the whole thing! Champs!`);
     const cv = fx.querySelector('canvas'), W = cv.width = 1920, H = cv.height = 1080, x = cv.getContext('2d');
@@ -1399,7 +1407,12 @@
     // 3D logos: build the renderer and every team's emblem ahead of time, a
     // piece at a time while the page is idle, so a cinematic never stalls the show.
     // On phones (Logo3D's lite tier) only the next few are built, to save memory.
+    const cineReady = window.Cine ? Cine.load() : Promise.resolve(false);
     if (window.Logo3D && Logo3D.supported()) setTimeout(async () => {
+      // Every team has its set cinematics: no need to build live 3D at all.
+      await cineReady;
+      const everyone = leagues.flatMap((L) => Object.keys(L.teams).map((id) => T3(L, id)));
+      if (window.Cine && Cine.has('versus', everyone)) return;
       if (!(await Logo3D.warm())) return;
       if (!Logo3D.preloadAll()) return prepareUpcoming3D();
       for (const L of leagues) await Logo3D.prepare(Object.keys(L.teams).map((id) => T3(L, id)));

@@ -459,6 +459,17 @@ html[data-champ="on"] #tv::after { content: ''; position: absolute; inset: -30%;
 #logo3d .l3-text { position: absolute; left: 0; right: 0; bottom: 120px; z-index: 2; text-align: center; color: #fff; text-shadow: 0 6px 30px rgba(0,0,0,.8); }
 #logo3d .l3-k { font: 700 24px 'Inter', sans-serif; letter-spacing: .4em; color: #9fc0ff; text-transform: uppercase; animation: hd .8s .6s both; }
 #logo3d .l3-t { font: italic 800 84px/1 'Barlow Condensed', sans-serif; letter-spacing: .02em; text-transform: uppercase; margin-top: 10px; animation: hd .8s .9s both; }
+/* set cinematics (desk-cine.js) */
+.cine { position: absolute; inset: 0; z-index: 1; background: #000; opacity: 0; transition: opacity .45s; pointer-events: none; }
+.cine.on { opacity: 1; }
+.cine-shot { position: absolute; inset: 0; }
+.cine-v { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+.cine-half { position: absolute; top: 0; bottom: 0; width: 50%; overflow: hidden; }
+.cine-half.l { left: 0; } .cine-half.r { left: 50%; }
+.cine-half .cine-v { width: 200%; } .cine-half.r .cine-v { left: -100%; }
+.cine-flash { position: absolute; inset: 0; z-index: 2; background: #fff; opacity: 0; }
+.cine-flash.go { animation: cineFlash .28s ease-out; }
+@keyframes cineFlash { 0% { opacity: .7; } 100% { opacity: 0; } }
 #logo3d .l3-text.swap .l3-t { animation: hd .5s .05s both; } /* caption changes with each camera shot */
 #champFx.has3d .cf-t .ic, #champFx.has3d .cf-logo { visibility: hidden; }
 #champFx.has3d .cf-beams { opacity: .35; }
@@ -511,8 +522,9 @@ html[data-champ="on"] #tv::after { content: ''; position: absolute; inset: -30%;
 <script src="wp-chart.js?v=2"></script>
 <script src="desk-playoffs.js?v=2"></script>
 <script src="desk-analytics.js?v=5"></script>
-<script src="desk-logo3d.js?v=14"></script>
+<script src="desk-logo3d.js?v=19"></script>
+<script src="desk-cine.js?v=1"></script>
 <script src="recap-video.js?v=5"></script>
-<script src="desk.js?v=15"></script>
+<script src="desk.js?v=16"></script>
 </body>
 </html>
