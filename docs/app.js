@@ -1197,7 +1197,25 @@ function drawSeasonalParticle(targetCtx, theme, p, t) {
 
 // ---- Full-page particle field ----
 const seasonalCanvas = document.getElementById('seasonalParticleCanvas');
-const seasonalCtx = seasonalCanvas ? seasonalCanvas.getContext('2d') : null;
+// Full-screen effect canvases: only wipe a canvas when something was drawn on
+// it since the last wipe. Clearing an already-empty canvas every frame still
+// makes the browser re-upload the whole layer, which was most of the page's
+// per-frame cost (and the stutter on slower machines).
+function trackCanvasDirty(ctx) {
+  if (!ctx) return ctx;
+  for (const m of ['fill', 'stroke', 'fillRect', 'strokeRect', 'drawImage', 'fillText', 'strokeText', 'putImageData']) {
+    const orig = ctx[m];
+    ctx[m] = function () { this.__dirty = true; return orig.apply(this, arguments); };
+  }
+  ctx.__dirty = true;
+  return ctx;
+}
+function clearCanvasIfDirty(ctx) {
+  if (!ctx.__dirty) return;
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.__dirty = false;
+}
+const seasonalCtx = trackCanvasDirty(seasonalCanvas ? seasonalCanvas.getContext('2d') : null);
 let seasonalParticles = [];
 
 function resizeSeasonalCanvas() {
@@ -1222,7 +1240,7 @@ function seedSeasonalParticles() {
 
 function seasonalTick(t) {
   if (seasonalCtx) {
-    seasonalCtx.clearRect(0, 0, seasonalCanvas.width, seasonalCanvas.height);
+    clearCanvasIfDirty(seasonalCtx);
     if (currentSeasonalTheme !== 'none' && !prefersReducedMotion()) {
       for (const p of seasonalParticles) {
         stepSeasonalParticle(p, currentSeasonalTheme, t, seasonalCanvas.width, seasonalCanvas.height, 1);
@@ -1236,7 +1254,7 @@ requestAnimationFrame(seasonalTick);
 
 // ---- Kickoff-countdown-box particle field (the pregame "hint") ----
 const kcCanvas = document.getElementById('kickoffCountdownParticles');
-const kcCtx = kcCanvas ? kcCanvas.getContext('2d') : null;
+const kcCtx = trackCanvasDirty(kcCanvas ? kcCanvas.getContext('2d') : null);
 let kcParticles = [];
 
 function resizeKcCanvas() {
@@ -1274,7 +1292,7 @@ function kcTick(t) {
   if (kcCtx) {
     // Self-heal: seed once the box has a real size (no-op if nothing changed).
     if (kcHintTheme !== 'none') seedKcParticles();
-    kcCtx.clearRect(0, 0, kcCanvas.width, kcCanvas.height);
+    clearCanvasIfDirty(kcCtx);
     if (kcHintTheme !== 'none' && !prefersReducedMotion()) {
       for (const p of kcParticles) {
         stepSeasonalParticle(p, kcHintTheme, t, kcCanvas.width, kcCanvas.height, 0.5);
@@ -1291,7 +1309,7 @@ requestAnimationFrame(kcTick);
 // than a day out; inside the final 24h the gap shrinks steadily (and keeps
 // shrinking) until kickoff, ending in a proper shower.
 const cmCanvas = document.getElementById('cdMeteorCanvas');
-const cmCtx = cmCanvas ? cmCanvas.getContext('2d') : null;
+const cmCtx = trackCanvasDirty(cmCanvas ? cmCanvas.getContext('2d') : null);
 let cmList = [];
 let cmNext = 0;
 const CM_COLORS = { halloween: '255,154,60', thanksgiving: '224,136,58', christmas: '79,212,147', 'coldsnap-pre': '150,205,255', 'coldsnap-post': '150,205,255', none: '255,170,90' };
@@ -1342,12 +1360,12 @@ function cmSnowTick() {
 }
 function cmTick(t) {
   if (cmCtx) {
-    cmCtx.clearRect(0, 0, cmCanvas.width, cmCanvas.height);
+    clearCanvasIfDirty(cmCtx);
     const hasTarget = !!kickoffCountdownTarget && !cometSuppressed;
     const okMotion = !prefersReducedMotion() && !document.hidden;
     const snowMode = hasTarget && kcHintTheme === 'christmas';
     const meteorMode = hasTarget && (kcHintTheme === 'halloween' || kcHintTheme === 'thanksgiving');
-    cmCanvas.style.zIndex = snowMode ? '3' : '0';
+    const cmZ = snowMode ? '3' : '0'; if (cmCanvas.style.zIndex !== cmZ) cmCanvas.style.zIndex = cmZ;
     if (!snowMode) { document.documentElement.style.setProperty('--blizz', '0'); snowList.length = 0; }
     if (snowMode && okMotion) cmSnowTick();
     if (meteorMode && okMotion) {
@@ -1409,7 +1427,7 @@ let skyActive = false;
 let skyHideAt = 0; // keeps drawing briefly after deactivation so the CSS fade-out isn't cut short by an empty canvas
 
 const skyCanvas = document.getElementById('skyCanvas');
-const skyCtx = skyCanvas ? skyCanvas.getContext('2d') : null;
+const skyCtx = trackCanvasDirty(skyCanvas ? skyCanvas.getContext('2d') : null);
 let skyStars = [];
 let skyLeads = [];
 let skyShooting = null;
@@ -1585,7 +1603,7 @@ function trackLeadChanges(leagueId, year, week, byMatchup, teamInfo) {
 
 function skyTick(t) {
   if (skyCtx) {
-    skyCtx.clearRect(0, 0, skyCanvas.width, skyCanvas.height);
+    clearCanvasIfDirty(skyCtx);
     const now = performance.now();
     if (skyActive || now < skyHideAt || skyLeads.length) {
       const dark = theme === 'dark';
