@@ -162,9 +162,16 @@
       if (xx > 0) v = Math.min(v, dist[i - 1] + 1); if (y > 0) { v = Math.min(v, dist[i - S] + 1); if (xx > 0) v = Math.min(v, dist[i - S - 1] + D); if (xx < S - 1) v = Math.min(v, dist[i - S + 1] + D); } dist[i] = v; }
     for (let y = S - 1; y >= 0; y--) for (let xx = S - 1; xx >= 0; xx--) { const i = y * S + xx; let v = dist[i]; if (!v) continue;
       if (xx < S - 1) v = Math.min(v, dist[i + 1] + 1); if (y < S - 1) { v = Math.min(v, dist[i + S] + 1); if (xx < S - 1) v = Math.min(v, dist[i + S + 1] + D); if (xx > 0) v = Math.min(v, dist[i + S - 1] + D); } dist[i] = v; }
-    const R = Math.max(3, S * 0.014), h = new Float32Array(n);
+    const R = Math.max(3, S * 0.018), h = new Float32Array(n);
     for (let i = 0; i < n; i++) { const t = Math.min(1, dist[i] / R); h[i] = 1 - (1 - t) * (1 - t); }
-    const out = x.createImageData(S, S), o = out.data, str = R * 0.9;
+    // Smooth the heights (two separable box-blur passes) so every bevel is a
+    // soft, even slope instead of a stepped or bumpy one.
+    const rad = Math.max(1, Math.round(R / 3)), tmp = new Float32Array(n);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let y = 0; y < S; y++) { let acc = 0; for (let k = -rad; k <= rad; k++) acc += h[y * S + Math.min(S - 1, Math.max(0, k))]; for (let xx = 0; xx < S; xx++) { tmp[y * S + xx] = acc / (2 * rad + 1); acc += h[y * S + Math.min(S - 1, xx + rad + 1)] - h[y * S + Math.max(0, xx - rad)]; } }
+      for (let xx = 0; xx < S; xx++) { let acc = 0; for (let k = -rad; k <= rad; k++) acc += tmp[Math.min(S - 1, Math.max(0, k)) * S + xx]; for (let y = 0; y < S; y++) { h[y * S + xx] = acc / (2 * rad + 1); acc += tmp[Math.min(S - 1, y + rad + 1) * S + xx] - tmp[Math.max(0, y - rad) * S + xx]; } }
+    }
+    const out = x.createImageData(S, S), o = out.data, str = R * 1.1;
     for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) {
       const i = y * S + xx;
       const dx = (h[xx < S - 1 ? i + 1 : i] - h[xx > 0 ? i - 1 : i]) / 2, dy = (h[y < S - 1 ? i + S : i] - h[y > 0 ? i - S : i]) / 2;
@@ -197,9 +204,9 @@
       if (dmax > eps) { const l = rdp(pts.slice(0, idx + 1), eps), r = rdp(pts.slice(idx), eps); return l.slice(0, -1).concat(r); }
       return [a, b];
     };
-    let out = rdp(best, 1.1);
-    // Round off the pixel steps (Chaikin corner cutting, twice) so edges read as smooth curves.
-    for (let it = 0; it < 2; it++) {
+    let out = rdp(best, 1.4);
+    // Round off the pixel steps (Chaikin corner cutting, three times) so edges read as smooth curves.
+    for (let it = 0; it < 3; it++) {
       const sm = [];
       for (let i = 0; i < out.length; i++) { const a = out[i], b = out[(i + 1) % out.length]; sm.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]); }
       out = sm;
@@ -297,7 +304,7 @@
     flare.scale.set(6, 6, 1); flare.position.set(-3.6, FLOOR + 4.8, -4.2); scene.add(flare);
     // Lights: a soft key from the top left that drifts a little, team-colored fills.
     const key = new THREE.SpotLight(0xffffff, 6, 30, 0.6, 0.95); key.position.set(-5, 5, 6); scene.add(key, key.target);
-    const fills = [-1, 1].map((sd) => { const l = new THREE.PointLight(0xffffff, 6, 9); l.position.set(sd * 2.6, 1.0, 1.4); scene.add(l); return l; });
+    const fills = [-1, 1].map((sd) => { const l = new THREE.PointLight(0xffffff, 9, 9); l.position.set(sd * 2.6, 1.0, 1.4); scene.add(l); return l; });
     // A soft wash on the walls so their color reads, from up front.
     const wash = new THREE.DirectionalLight(0xdfe8ff, 1.1); wash.position.set(0, 3, 8); scene.add(wash);
     scene.add(new THREE.HemisphereLight(0x8090c0, 0x0a0a14, 0.8));
@@ -365,7 +372,8 @@
       await idle();
       const mk = mask(cv);
       const pts = mk.square ? null : contour(mk.m);
-      const rimPts = mk.square ? null : contour(dilate(mk.m, 7)); // the chrome rim: the outline grown evenly
+      const bandPts = mk.square ? null : contour(dilate(mk.m, 3)); // a team-color enamel ring around the logo
+      const rimPts = mk.square ? null : contour(dilate(mk.m, 8)); // the chrome rim: the outline grown evenly
       await idle();
       const toShape = (p, grow) => {
         const sh = new THREE.Shape();
@@ -373,7 +381,7 @@
         else { const a = -grow, b = 1 + grow, r = 0.12 + grow; sh.moveTo(a + r, a); sh.lineTo(b - r, a); sh.quadraticCurveTo(b, a, b, a + r); sh.lineTo(b, b - r); sh.quadraticCurveTo(b, b, b - r, b); sh.lineTo(a + r, b); sh.quadraticCurveTo(a, b, a, b - r); sh.lineTo(a, a + r); sh.quadraticCurveTo(a, a, a + r, a); }
         return sh;
       };
-      const faceShape = toShape(pts, 0), rimShape = toShape(rimPts || (pts ? null : null), rimPts ? 0 : 0.035);
+      const faceShape = toShape(pts, 0), bandShape = toShape(bandPts, bandPts ? 0 : 0.016), rimShape = toShape(rimPts, rimPts ? 0 : 0.045);
       const size = T().tex;
       let texCv = cv;
       if (size < cv.width) { texCv = document.createElement('canvas'); texCv.width = texCv.height = size; texCv.getContext('2d').drawImage(cv, 0, 0, size, size); }
@@ -383,16 +391,22 @@
       const metal = gold ? E.mats.gold : E.mats.chrome;
       const seg = { bevelSegments: T().bevel, curveSegments: T().curve };
       const geo = new THREE.ExtrudeGeometry(faceShape, Object.assign({ depth: 0.06, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.006 }, seg));
-      const geo2 = new THREE.ExtrudeGeometry(rimShape, Object.assign({ depth: 0.12, bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.022 }, seg, { bevelSegments: T().bevel + 1 }));
-      // Same centering for both (the rim grows evenly, so its box shares the face's center).
+      const geo2 = new THREE.ExtrudeGeometry(rimShape, Object.assign({ depth: 0.12, bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.024 }, seg, { bevelSegments: T().bevel + 2 }));
+      const geo3 = new THREE.ExtrudeGeometry(bandShape, Object.assign({ depth: 0.06, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.008 }, seg));
+      // Same centering for all three (each layer grows evenly, so they share a center).
       geo2.computeBoundingBox(); const c0 = new THREE.Vector3(); geo2.boundingBox.getCenter(c0);
-      geo.translate(-c0.x, -c0.y, 0); geo2.translate(-c0.x, -c0.y, -0.1);
-      // The enamel face sits just proud of the rim, the rim's chrome shows as an even border.
+      // Stepped layers, front to back: enamel face (0.072) > team-color ring (0.058) > chrome rim (0.045).
+      geo.translate(-c0.x, -c0.y, 0); geo3.translate(-c0.x, -c0.y, -0.012); geo2.translate(-c0.x, -c0.y, -0.11);
+      const bandCol = new THREE.Color(team.color || '#2f6bff');
+      const bandMat = T().physical
+        ? new THREE.MeshPhysicalMaterial({ color: bandCol, metalness: 0.55, roughness: 0.26, clearcoat: 0.7, clearcoatRoughness: 0.1, envMapIntensity: 0.9 })
+        : new THREE.MeshStandardMaterial({ color: bandCol, metalness: 0.55, roughness: 0.24, envMapIntensity: 0.9 });
       const front = new THREE.Mesh(geo, [faceMat(THREE, tex, nrm), metal]);
+      const band = new THREE.Mesh(geo3, bandMat);
       const rim = new THREE.Mesh(geo2, metal);
-      const g = new THREE.Group(); g.add(rim, front);
+      const g = new THREE.Group(); g.add(rim, band, front);
       // Free this emblem's own GPU memory (the shared metal stays).
-      g.userData.dispose = () => { geo.dispose(); geo2.dispose(); tex.dispose(); nrm.dispose(); front.material[0].dispose(); };
+      g.userData.dispose = () => { geo.dispose(); geo2.dispose(); geo3.dispose(); tex.dispose(); nrm.dispose(); front.material[0].dispose(); bandMat.dispose(); };
       if (E.renderer.initTexture) E.renderer.initTexture(tex); // upload now, not on the first frame
       return g;
     })();
@@ -437,7 +451,7 @@
     // Walls: the team color deepened toward navy; the plus grid glows a light tint of it.
     const navy = new THREE.Color('#0b1430'), white = new THREE.Color('#ffffff');
     [[e.walls[0], cL], [e.walls[1], cR]].forEach(([w, c]) => { w.material.color.copy(c).lerp(navy, 0.2); w.material.emissive.copy(c).lerp(white, 0.6); });
-    e.fills[0].color.copy(cL).lerp(white, 0.4); e.fills[1].color.copy(cR).lerp(white, 0.4);
+    e.fills[0].color.copy(cL).lerp(white, 0.12); e.fills[1].color.copy(cR).lerp(white, 0.12); // the chrome picks up each team's color
     // Place the emblems (and their reflections).
     e.emblems.clear(); e.mirrorEmblems.clear();
     if (mode === 'versus' && groups.length === 2) {
