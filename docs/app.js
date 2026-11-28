@@ -3380,8 +3380,17 @@ function renderRecapBanner(byMatchup, teamInfo, theme, weekLabel) {
     <div class="recap-scores">${scoreLines}</div>
     <div class="recap-highlights">${highlights.join('')}</div>
     <button type="button" class="recap-play" id="recapPlay">\u25b6&nbsp; Play the week</button>
+    <button type="button" class="recap-play recap-video-btn" id="recapVideo">\ud83c\udfac&nbsp; Recap video (watch or download)</button>
   `;
   banner.hidden = false;
+  const videoBtn = document.getElementById('recapVideo');
+  if (videoBtn) {
+    if (!window.RecapVideo) videoBtn.hidden = true;
+    videoBtn.onclick = () => {
+      const name = leagueSelect.selectedOptions[0] ? leagueSelect.selectedOptions[0].textContent : 'League';
+      window.RecapVideo.openModal(sb, { leagueId: leagueSelect.value, name, studio: /family/i.test(name) ? 'casual' : 'pro', year: Number(yearSelect.value), week: Number(weekSelect.value) });
+    };
+  }
   const playBtn = document.getElementById('recapPlay');
   if (playBtn) {
     if (!window.WeekCinema) playBtn.hidden = true;

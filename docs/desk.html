@@ -213,6 +213,65 @@ body.ui #controls, #controls:focus-within { opacity: 1; }
 #soundGate { position: fixed; left: 50%; top: 22px; transform: translateX(-50%); z-index: 60; padding: 18px 30px; border-radius: 999px; border: 0; cursor: pointer; font: 800 24px 'Inter', sans-serif; background: #fff; color: #000; box-shadow: 0 10px 40px rgba(0,0,0,.5); animation: pulse 2s infinite; }
 @keyframes pulse { 50% { transform: translateX(-50%) scale(1.05); } }
 #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #fff; font: 700 28px 'Inter', sans-serif; z-index: 70; background: #000; }
+/* ---- holiday sets (season-look.js sets html[data-seasonal-theme]; desk-fx.js sets data-holiday) ---- */
+#sl_canvas, #sl_fx, #sl_frost { display: none !important; } /* the site-wide particles; the desk draws its own inside the TV */
+#holidayFx { position: absolute; inset: 0; width: 1920px; height: 1080px; pointer-events: none; z-index: 0; }
+#top, #stage, #side, #anchor { z-index: 1; }
+html[data-holiday="halloween"] { --accent: #ff8a1f; --accent-2: #9b5cff; --hot: #ff5a1f; --bar: linear-gradient(90deg, #2a1240, #6d28d9 45%, #ff8a1f); }
+html[data-holiday="thanksgiving"] { --accent: #c9772b; --accent-2: #e8a33d; --bar: linear-gradient(90deg, #7a2e12, #b5441c 50%, #e8a33d); }
+html[data-holiday="christmas"] { --accent: #d62828; --accent-2: #18a058; --hot: #d62828; --bar: linear-gradient(90deg, #0b6b3a, #d62828 55%, #f2c14e); }
+html[data-holiday="coldsnap"] { --accent: #3b8fd9; --accent-2: #9fd3ff; --bar: linear-gradient(90deg, #12355e, #3b8fd9 55%, #bfe6ff); }
+html[data-holiday][data-daypart="night"] #tv { background: radial-gradient(ellipse at 50% -10%, color-mix(in srgb, var(--accent) 35%, #000) 0%, var(--bg) 60%); }
+
+/* ---- headshots ---- */
+.hs-sm { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; background: var(--panel); vertical-align: middle; margin-right: 8px; }
+.hs-md { width: 58px; height: 58px; border-radius: 50%; object-fit: cover; background: var(--panel); }
+.prow { grid-template-columns: 46px 58px 1fr auto; }
+.callout b .hs-sm { width: 40px; height: 40px; }
+.bk-hs { display: block; width: 240px; height: 175px; object-fit: contain; margin: 26px auto -10px; filter: drop-shadow(0 12px 30px rgba(0,0,0,.6)); }
+#alert .ic { width: 86px; height: 86px; font-size: 86px; }
+.hs-al { width: 86px; height: 86px; object-fit: cover; background: rgba(255,255,255,.15); }
+
+/* ---- what they need ---- */
+.need-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; height: 100%; }
+.need { padding: 20px 22px; border-radius: var(--radius); background: var(--panel-2); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 16px; }
+.need-head { display: flex; justify-content: space-between; align-items: center; font: var(--head-style) var(--head-weight) 34px/1.05 var(--font-head); }
+.need-head .ic { font-size: 44px; }
+.need-pct { font: 800 30px var(--font-head); color: var(--muted); }
+.need-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.need-nums b { display: block; font: 800 64px/1 var(--font-head); font-variant-numeric: tabular-nums; }
+.need-nums small { font: 600 15px var(--font-body); color: var(--muted); }
+.need-left .pl { background: var(--panel); }
+
+/* ---- record book ---- */
+table.rec td { padding: 9px 10px; font-size: 20px; } table.rec td small { font-size: 14px; }
+.rec-foot { margin-top: 12px; font: 600 15px var(--font-body); color: var(--muted); text-align: right; }
+
+/* ---- commercial break ---- */
+.ad { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 18px; padding: 0 60px;
+  background: repeating-linear-gradient(135deg, transparent 0 40px, color-mix(in srgb, var(--accent) 6%, transparent) 40px 80px); border-radius: var(--radius); }
+.ad-k { font: 700 16px var(--font-body); letter-spacing: .22em; text-transform: uppercase; color: var(--muted); }
+.ad-brand { font: var(--head-style) 800 96px/1 var(--font-head); color: var(--accent); text-shadow: 0 6px 0 color-mix(in srgb, var(--accent) 25%, transparent); }
+.ad-tag { font: 700 34px var(--font-head); }
+.ad-body { font: 600 27px/1.4 var(--font-body); max-width: 950px; }
+.ad-fine { font: 500 14px var(--font-body); color: var(--muted); font-style: italic; margin-top: 10px; }
+
+/* ---- instant replay ---- */
+#replay { position: absolute; inset: 0; z-index: 3; background: var(--bg2); display: flex; flex-direction: column; align-items: center; padding: 70px 30px 20px; animation: segIn .5s ease both; }
+#replay.out { opacity: 0; transition: opacity .5s; }
+#replay .rp-bug { position: absolute; left: 0; right: 0; top: 0; height: 56px; padding: 0 30px; display: flex; align-items: center; background: var(--hot); color: #fff; font: italic 800 30px 'Barlow Condensed', sans-serif; letter-spacing: .12em; animation: blink 1.4s infinite; }
+#replay .rp-teams { width: 1150px; display: flex; justify-content: space-between; font: var(--head-style) var(--head-weight) 38px var(--font-head); margin-bottom: 14px; }
+#replay .rp-teams b { font-variant-numeric: tabular-nums; }
+#replay #rpPct { color: var(--muted); font-size: 28px; }
+
+/* ---- recap show inside the stage ---- */
+.recap-cv { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: var(--radius); background: #000; }
+#segBody:has(.recap-cv) { inset: 56px 0 0 0; padding: 0; }
+.recap-dl { position: absolute; right: 18px; bottom: 16px; z-index: 2; font: 700 16px var(--font-body); padding: 9px 16px; border-radius: 999px; border: 0; background: rgba(0,0,0,.6); color: #fff; cursor: pointer; }
+
+/* ---- connection banner ---- */
+#netBanner { position: fixed; left: 50%; top: 14px; transform: translate(-50%, -300%); z-index: 80; padding: 10px 22px; border-radius: 999px; background: #c2410c; color: #fff; font: 700 16px 'Inter', sans-serif; transition: transform .4s; }
+#netBanner.show { transform: translate(-50%, 0); }
 @media (prefers-reduced-motion: reduce) { .seg-in, #breaking .stripes, #live i { animation: none !important; } }
 </style>
 </head>
@@ -246,9 +305,13 @@ body.ui #controls, #controls:focus-within { opacity: 1; }
   <a href="index.html" style="color:#fff;text-decoration:none;padding:7px 10px">✕</a>
 </div>
 <script src="config.js"></script>
-<script src="desk-lines.js?v=1"></script>
-<script src="desk-music.js?v=1"></script>
-<script src="desk-data.js?v=1"></script>
-<script src="desk.js?v=1"></script>
+<script src="season-look.js?v=4"></script>
+<script src="desk-lines.js?v=2"></script>
+<script src="desk-music.js?v=2"></script>
+<script src="desk-fx.js?v=1"></script>
+<script src="desk-data.js?v=2"></script>
+<script src="desk-records.js?v=1"></script>
+<script src="recap-video.js?v=1"></script>
+<script src="desk.js?v=2"></script>
 </body>
 </html>

@@ -47,6 +47,12 @@
     const ini = String(t.name || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
     return `<span class="ic ini" style="background:${esc(t.color)}">${esc(ini)}</span>`;
   }
+  // ESPN headshots by player id (D/ST ids are negative: use the NFL team logo instead).
+  function headshot(id, tm, cls) {
+    if (id == null && !tm) return '';
+    const src = Number(id) < 0 || id == null ? (tm ? `https://a.espncdn.com/i/teamlogos/nfl/500/${String(tm).toLowerCase()}.png` : '') : `https://a.espncdn.com/i/headshots/nfl/players/full/${id}.png`;
+    return src ? `<img class="${cls || 'hs'}" src="${src}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : '';
+  }
   const ago = (ts) => { const s = Math.max(0, (Date.now() - ts) / 1000); return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago'; };
   const leftToPlay = (L, teamId) => { const p = L.lineups.get(teamId); return p ? p.filter((x) => !x.bench && (x.g === 'pre' || x.g === 'in')).length : null; };
 
@@ -70,7 +76,8 @@
     const root = document.documentElement;
     root.dataset.studio = L.studio; root.dataset.daypart = night() ? 'night' : 'day';
     $('brandMark').textContent = shortName(L).toUpperCase();
-    $('brandShow').textContent = shortName(L) + ' ' + showName(L);
+    const tag = window.DeskFx ? DeskFx.holidayTag(L.studio) : '';
+    $('brandShow').textContent = shortName(L) + ' ' + showName(L) + (tag ? ' \u00b7 ' + tag : '');
     $('tickerLabel').textContent = L.studio === 'pro' ? 'SCORES' : 'THE SCOOP';
     $('anchorTag').innerHTML = L.studio === 'pro' ? 'The<br>Desk' : 'Couch<br>Talk';
     M.setStyle(L.studio, night() ? 'night' : 'day');
@@ -144,7 +151,7 @@
         const p = L.lineups.get(id); if (!p) return '';
         const on = p.filter((x) => !x.bench && x.g === 'in').sort((x, y) => y.pts - x.pts).slice(0, 3);
         const left = p.filter((x) => !x.bench && x.g === 'pre').length;
-        return on.map((x) => `<div class="pl"><span><span class="live">LIVE</span>${esc(x.n)}<em>${esc(x.pos)} · ${esc(x.tm || '')}</em></span><b>${fmt(x.pts)}</b></div>`).join('') +
+        return on.map((x) => `<div class="pl"><span>${headshot(x.id, x.tm, 'hs-sm')}<span class="live">LIVE</span>${esc(x.n)}<em>${esc(x.pos)} · ${esc(x.tm || '')}</em></span><b>${fmt(x.pts)}</b></div>`).join('') +
           `<div class="pl" style="background:transparent;color:var(--muted)"><span>${left} still to play</span><span>${on.length} on the field</span></div>`;
       };
       const hasPlayers = L.lineups.size > 0;
@@ -219,10 +226,10 @@
       const dud = starters.filter((p) => p.g === 'post' && p.proj >= 8).sort((a, b) => a.pts / a.proj - b.pts / b.proj)[0];
       const bench = all.filter((p) => p.bench).sort((a, b) => b.pts - a.pts)[0];
       const onField = starters.filter((p) => p.g === 'in').length, toPlay = starters.filter((p) => p.g === 'pre').length;
-      const html = `<div class="players-top"><div>${top.map((p, i) => `<div class="prow"><div class="rk">${i + 1}</div><div><b>${esc(p.n)}</b><span>${esc(p.pos)} · ${esc(p.tm || '')} · <span style="color:${esc(p.team.color)}">${esc(p.team.name)}</span>${p.g === 'in' ? ' · <b style="display:inline;color:var(--hot);font-size:14px">LIVE</b>' : ''}</span></div><div class="pts">${fmt(p.pts)}</div></div>`).join('')}</div>
+      const html = `<div class="players-top"><div>${top.map((p, i) => `<div class="prow"><div class="rk">${i + 1}</div>${headshot(p.id, p.tm, 'hs-md')}<div><b>${esc(p.n)}</b><span>${esc(p.pos)} · ${esc(p.tm || '')} · <span style="color:${esc(p.team.color)}">${esc(p.team.name)}</span>${p.g === 'in' ? ' · <b style="display:inline;color:var(--hot);font-size:14px">LIVE</b>' : ''}</span></div><div class="pts">${fmt(p.pts)}</div></div>`).join('')}</div>
         <div>
-          ${dud ? `<div class="callout"><small>${voice(L) === 'pro' ? 'Biggest letdown' : 'Took the day off'}</small><b>${esc(dud.n)}</b><span>${fmt(dud.pts)} pts (projected ${fmt(dud.proj)}) · ${esc(dud.team.name)}</span></div>` : ''}
-          ${bench && bench.pts >= 8 ? `<div class="callout"><small>${voice(L) === 'pro' ? 'Left on the bench' : 'Bench regret'}</small><b>${esc(bench.n)}</b><span>${fmt(bench.pts)} pts on ${esc(bench.team.name)}’s bench</span></div>` : ''}
+          ${dud ? `<div class="callout"><small>${voice(L) === 'pro' ? 'Biggest letdown' : 'Took the day off'}</small><b>${headshot(dud.id, dud.tm, 'hs-sm')}${esc(dud.n)}</b><span>${fmt(dud.pts)} pts (projected ${fmt(dud.proj)}) · ${esc(dud.team.name)}</span></div>` : ''}
+          ${bench && bench.pts >= 8 ? `<div class="callout"><small>${voice(L) === 'pro' ? 'Left on the bench' : 'Bench regret'}</small><b>${headshot(bench.id, bench.tm, 'hs-sm')}${esc(bench.n)}</b><span>${fmt(bench.pts)} pts on ${esc(bench.team.name)}’s bench</span></div>` : ''}
           <div class="callout"><small>${voice(L) === 'pro' ? 'On the field' : 'Playing right now'}</small><b>${onField} live · ${toPlay} to play</b><span>across ${esc(L.name)}</span></div>
         </div></div>`;
       const p = top[0];
@@ -246,6 +253,46 @@
       const line = live ? (voice(L) === 'pro' ? `${live} NFL game${live === 1 ? '' : 's'} in progress. Every snap moves the numbers.` : `${live} real game${live === 1 ? '' : 's'} on right now. Go team(s)!`)
         : (voice(L) === 'pro' ? 'No NFL games live at the moment. Here’s the slate.' : 'No real football on right now. Here’s what’s coming up!');
       return { key: 'nfl', title: Lines.segmentTitle('nfl', voice(L)), html, dur: 15000, line };
+    },
+    need(L) {
+      const live = L.matchups.filter((m) => !m.done && m.wp > 4 && m.wp < 96).sort((a, b) => Math.abs(a.wp - 50) - Math.abs(b.wp - 50)).slice(0, 2);
+      if (!live.length) return null;
+      const block = (m) => {
+        const trailHome = m.wp < 50, tr = trailHome ? m.home : m.away, ld = trailHome ? m.away : m.home;
+        const tT = T(L, tr), lT = T(L, ld);
+        const trS = trailHome ? m.hs : m.as, trX = trailHome ? m.hx : m.ax, ldX = trailHome ? m.ax : m.hx, ldS = trailHome ? m.as : m.hs;
+        const need = Math.max(0, ldX - trS), have = Math.max(0, trX - trS), pct = Math.round(Math.min(m.wp, 100 - m.wp));
+        const ps = (L.lineups.get(tr) || []).filter((p) => !p.bench && (p.g === 'pre' || p.g === 'in')).map((p) => ({ ...p, left: p.g === 'in' ? Math.max(0, p.proj - p.pts) : p.proj })).sort((a, b) => b.left - a.left).slice(0, 4);
+        return { tr, tT, lT, need, have, pct, ldS, trS, html: `<div class="need">
+          <div class="need-head"><span style="color:${esc(tT.color)}">${icon(tT)} ${esc(tT.name)}</span><span class="need-pct">${pct}%</span></div>
+          <div class="need-nums"><div><b>${fmt(need)}</b><small>points needed to catch ${esc(lT.name)}</small></div><div><b>${fmt(have)}</b><small>projected from who\u2019s left</small></div></div>
+          <div class="wpbar" style="height:12px"><i style="width:${Math.min(100, have / Math.max(need, 0.1) * 100)}%;background:${esc(tT.color)}"></i></div>
+          ${ps.length ? `<div class="need-left">${ps.map((p) => `<div class="pl"><span>${headshot(p.id, p.tm, 'hs-sm')}${p.g === 'in' ? '<span class="live">LIVE</span>' : ''}${esc(p.n)}<em>${esc(p.pos)} \u00b7 ${esc(p.tm || '')}</em></span><b>~${fmt(p.left)}</b></div>`).join('')}</div>` : ''}
+        </div>` };
+      };
+      const bs = live.map(block);
+      const b = bs[0];
+      const line = voice(L) === 'pro'
+        ? `${b.tT.name} need ${fmt(b.need)} more points to catch ${b.lT.name}. The projections say ${fmt(b.have)} \u2014 ${b.have >= b.need ? 'it\u2019s doable' : 'they\u2019ll need someone to outplay their projection'}.`
+        : `${b.tT.name} need ${fmt(b.need)} points. They\u2019re projected for ${fmt(b.have)}. ${b.have >= b.need ? 'Ooh, it could happen!' : 'Somebody\u2019s gotta show up big!'}`;
+      return { key: 'need', title: Lines.segmentTitle('need', voice(L)), html: `<div class="need-grid">${bs.map((x) => x.html).join('')}</div>`, dur: 17000, line };
+    },
+    records(L) {
+      const book = window.DeskRecords && DeskRecords.book(L);
+      if (!book || !book.records.length) return null;
+      const html = `<table class="st rec"><thead><tr><th>Record</th><th class="num">Mark</th><th>Holder</th><th>When</th></tr></thead><tbody>${book.records.map((r) => {
+        const t = L.teams[r.team]; const col = t ? vis(t.color) : 'var(--fg)';
+        return `<tr><td><b>${esc(r.label)}</b></td><td class="num"><b>${esc(r.text)}</b></td><td><span style="color:${esc(col)};font-weight:800">${esc(r.who)}</span><br><small style="color:var(--muted)">${esc(r.note)}</small></td><td><small>${esc(r.when)}</small></td></tr>`;
+      }).join('')}</tbody></table><div class="rec-foot">${book.games.length} games on record since ${book.games[0].year}</div>`;
+      const r = book.records[Math.floor(Math.random() * book.records.length)];
+      const line = voice(L) === 'pro' ? `From the ${L.name} record book: ${r.label.toLowerCase()}, ${r.text}, ${r.who}, ${r.when}.` : `Fun fact! ${r.label}: ${r.who}, ${r.text}. That was ${r.when}.`;
+      return { key: 'records', title: Lines.segmentTitle('records', voice(L)), html, dur: 16000, line };
+    },
+    recap(L) {
+      if (!window.RecapVideo || !L.recapWeek) return null;
+      return { key: 'recap', title: Lines.segmentTitle('recap', voice(L)), html: `<canvas class="recap-cv" id="recapCv" width="1920" height="1080"></canvas><button class="recap-dl" id="recapDl" type="button">\u2b07 Download video</button>`,
+        dur: 1000 * 75, line: voice(L) === 'pro' ? `Let\u2019s look back at week ${L.recapWeek.week} in ${L.name}.` : `Previously, on the ${L.name}\u2026 week ${L.recapWeek.week}!`,
+        after() { playRecap(L); } };
     },
     rundown(L) {
       const list = (rundown.get(L.id) || []).slice(0, 6);
@@ -278,11 +325,13 @@
 
   function planFor(L) {
     const live = L.matchups.some((m) => !m.done);
-    const plan = live ? ['spotlight', 'scoreboard', 'players', 'spotlight', 'standings', 'nfl', 'rundown'] : ['scoreboard', 'standings', 'players', 'spotlight', 'rundown', 'nfl'];
-    return plan.filter((k) => SEGMENTS[k](L) !== null);
+    const plan = live ? ['spotlight', 'scoreboard', 'need', 'players', 'spotlight', 'standings', 'records', 'nfl', 'rundown'] : ['recap', 'scoreboard', 'standings', 'records', 'players', 'spotlight', 'rundown', 'nfl'];
+    return plan.filter((k) => (k === 'recap' ? !!(window.RecapVideo && L.recapWeek) : SEGMENTS[k](L) !== null));
   }
 
+  function stopRecap() { if (recapPlayer) { recapPlayer.stop(); recapPlayer = null; } }
   function showSegment(seg, animate) {
+    if (seg.key !== 'recap' || animate) stopRecap();
     currentSeg = seg;
     $('segLabel').textContent = seg.title;
     const body = $('segBody');
@@ -295,7 +344,8 @@
     clearTimeout(segTimer);
     if (busy) { segTimer = setTimeout(nextSegment, 1500); return; }
     if (segIdx >= segPlan.length) {
-      // Block finished: throw it over to the other studio (when there is one).
+      // Block finished: a commercial break now and then, then throw it over to the other studio.
+      if (Math.random() < 0.6) await commercialBreak();
       const other = lock === 'auto' ? leagues.find((L) => L !== cur && L.year) : null;
       if (other) await handoff(other);
       segPlan = planFor(cur); segIdx = 0;
@@ -307,6 +357,88 @@
     showSegment(seg, true);
     segStarted = Date.now(); segDur = seg.dur;
     segTimer = setTimeout(nextSegment, seg.dur);
+  }
+
+  // ------------------------------------------------------------------ commercial break
+  async function commercialBreak() {
+    if (busy) return;
+    busy = true;
+    const L = cur, st = L.standings || [];
+    const worst = st.length ? st[st.length - 1].id : null, best = st.length ? st[0].id : null;
+    const ids = Object.keys(L.teams);
+    const pick = () => ids[Math.floor(Math.random() * ids.length)];
+    let star = 'Josh Allen';
+    for (const ps of L.lineups.values()) for (const p of ps) if (!p.bench && p.pts > 15 && Math.random() < 0.3) star = p.n;
+    const ad = Lines.commercial(L.studio, { A: T(L, worst || pick()).name, B: T(L, best || pick()).name, L: L.name, P: star });
+    const prevSeg = currentSeg;
+    stopRecap();
+    $('segLabel').textContent = L.studio === 'pro' ? 'A word from our sponsors' : 'Commercial break!';
+    const body = $('segBody');
+    body.innerHTML = `<div class="ad"><div class="ad-k">${L.studio === 'pro' ? 'Paid programming' : 'And now a word from\u2026'}</div><div class="ad-brand">${esc(ad.brand)}</div><div class="ad-tag">${esc(ad.tag)}</div><div class="ad-body">${esc(ad.body)}</div><div class="ad-fine">${esc(ad.fine)}</div></div>`;
+    body.classList.remove('seg-in'); void body.offsetWidth; body.classList.add('seg-in');
+    M.sting('jingle');
+    say(ad.brand + ' \u2014 ' + ad.tag);
+    await sleep(12000);
+    currentSeg = prevSeg;
+    busy = false;
+  }
+
+  // ------------------------------------------------------------------ instant replay
+  // Slow-motion replay of the win-% chart for the stretch that just mattered.
+  async function playReplay(L, m) {
+    if (!m || !m.series || m.series.length < 3) return;
+    const h = T(L, m.home), a = T(L, m.away);
+    const all = m.series, end = all[all.length - 1].t;
+    let pts = all.filter((p) => p.t >= end - 3 * 3600 * 1000);
+    if (pts.length < 3) pts = all.slice(-Math.min(all.length, 40));
+    const wrap = document.createElement('div'); wrap.id = 'replay';
+    wrap.innerHTML = `<div class="rp-bug">\u25b6 REPLAY</div><div class="rp-teams"><span style="color:${esc(h.color)}">${esc(h.name)} <b id="rpHs">0.0</b></span><span id="rpPct"></span><span style="color:${esc(a.color)}"><b id="rpAs">0.0</b> ${esc(a.name)}</span></div><canvas id="rpCv"></canvas>`;
+    $('stage').appendChild(wrap);
+    M.sting('replay');
+    const cv = wrap.querySelector('canvas'), W = 1150, H = 470, dpr = 2;
+    cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    const x = cv.getContext('2d'); x.scale(dpr, dpr);
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1, X = (t) => 10 + (t - t0) / ((t1 - t0) || 1) * (W - 20), Y = (wp) => 10 + (1 - wp / 100) * (H - 20);
+    const css = getComputedStyle(document.documentElement);
+    const DUR = 7500, start = performance.now();
+    await new Promise((resolve) => {
+      const f = (now) => {
+        const u = Math.min(1, (now - start) / DUR), e = u < 0.6 ? u / 0.6 * 0.75 : 0.75 + (u - 0.6) / 0.4 * 0.25; // the last quarter of time in slow motion
+        const tc = t0 + (t1 - t0) * e;
+        x.clearRect(0, 0, W, H);
+        x.strokeStyle = css.getPropertyValue('--line'); x.setLineDash([6, 6]); x.beginPath(); x.moveTo(0, Y(50)); x.lineTo(W, Y(50)); x.stroke(); x.setLineDash([]);
+        let last = pts[0];
+        for (let i = 1; i < pts.length && pts[i - 1].t <= tc; i++) {
+          const p = pts[i - 1], q = pts[i].t <= tc ? pts[i] : { t: tc, wp: p.wp, hs: p.hs, as: p.as };
+          const col = (p.wp + q.wp) / 2 >= 50 ? h.color : a.color;
+          x.strokeStyle = col; x.lineWidth = 5; x.lineJoin = 'round'; x.beginPath(); x.moveTo(X(p.t), Y(p.wp)); x.lineTo(X(q.t), Y(p.wp)); x.lineTo(X(q.t), Y(q.wp)); x.stroke();
+          last = q;
+        }
+        const glow = 10 + 6 * Math.sin(now / 90);
+        x.fillStyle = last.wp >= 50 ? h.color : a.color; x.shadowColor = x.fillStyle; x.shadowBlur = glow * 2; x.beginPath(); x.arc(X(last.t), Y(last.wp), 10, 0, 7); x.fill(); x.shadowBlur = 0;
+        wrap.querySelector('#rpHs').textContent = fmt(last.hs); wrap.querySelector('#rpAs').textContent = fmt(last.as);
+        wrap.querySelector('#rpPct').textContent = Math.round(Math.max(last.wp, 100 - last.wp)) + '% ' + (last.wp >= 50 ? h.name : a.name);
+        if (u < 1) requestAnimationFrame(f); else resolve();
+      };
+      requestAnimationFrame(f);
+    });
+    await sleep(1200);
+    wrap.classList.add('out'); await sleep(500); wrap.remove();
+  }
+
+  // ------------------------------------------------------------------ weekly recap video
+  let recapPlayer = null;
+  async function playRecap(L) {
+    const cv = $('recapCv'); if (!cv || !window.RecapVideo) return;
+    try {
+      const show = await RecapVideo.build(D.sb, { leagueId: L.id, name: L.name, studio: L.studio, year: L.recapWeek.year, week: L.recapWeek.week, teams: L.teams });
+      if (!show || $('recapCv') !== cv) return;
+      if (recapPlayer) recapPlayer.stop();
+      recapPlayer = RecapVideo.play(cv, show, { onLine: (t) => say(t) });
+      const dl = $('recapDl');
+      if (dl) dl.onclick = async () => { dl.disabled = true; dl.textContent = 'Recording\u2026 (plays once)'; try { await RecapVideo.download(show); dl.textContent = '\u2b07 Downloaded'; } catch (e) { dl.textContent = 'Couldn\u2019t record here'; } };
+      clearTimeout(segTimer); segTimer = setTimeout(nextSegment, show.duration + 1500);
+    } catch (e) { console.warn('recap unavailable', e); }
   }
 
   // ------------------------------------------------------------------ handoff
@@ -337,12 +469,14 @@
       Y: ev.detail && ev.detail.yards, PROJ: ev.detail && ev.detail.proj != null ? Number(ev.detail.proj).toFixed(1) : '' };
     if (v.P != null) v.OPCT = 100 - Number(v.P);
     if (ev.kind === 'big_swing') { v.T = ev.up.name; v.O = ev.down.name; }
+    if (ev.record) { const r = ev.record; v.REC = r.label.toLowerCase(); v.OLD = r.text; v.WHO = r.who; v.WHEN = r.when; v.V = r.key === 'streak' ? ev.value : Number(ev.value).toFixed(1); }
     if (ev.game) { const g = ev.game; v.G = g.state === 'post' || g.state === 'in' ? `${g.away.abbr} ${g.away.score}, ${g.home.abbr} ${g.home.score}` : `${g.away.name} at ${g.home.name}`; }
     return v;
   }
   function stingFor(kind) {
     if (/upset/.test(kind)) return 'upset';
     if (/^final/.test(kind)) return 'final';
+    if (/^record/.test(kind)) return 'record';
     if (/_td$|dst_score|big_day|boom_final|big_play/.test(kind)) return 'td';
     if (/interception|fumble|dud|bench_boom|scare/.test(kind)) return 'bad';
     if (kind === 'lead_change' || kind === 'big_swing') return 'lead';
@@ -365,14 +499,17 @@
 
   async function playBreaking({ ev, w }) {
     busy = true;
+    stopRecap();
     const L = ev.league;
     if (L && L !== cur && lock === 'auto') { busy = false; await handoff(L); busy = true; }
     const el = $('breaking'), m = ev.matchup;
     const tCol = (ev.team && ev.team.color) || '#e11d2e';
     el.style.setProperty('--bt', tCol);
-    el.querySelector('.kick').textContent = /^final/.test(ev.kind) ? (voice(L) === 'pro' ? 'FINAL' : 'IT’S OVER') : /upset/.test(ev.kind) ? 'UPSET ALERT' : /^player_/.test(ev.kind) ? (voice(L) === 'pro' ? 'SCORING PLAY' : 'BIG PLAY') : (voice(L) === 'pro' ? 'BREAKING' : 'BIG NEWS');
+    el.querySelector('.kick').textContent = /^final/.test(ev.kind) ? (voice(L) === 'pro' ? 'FINAL' : 'IT’S OVER') : /upset/.test(ev.kind) ? 'UPSET ALERT' : ev.kind === 'record_broken' ? (voice(L) === 'pro' ? 'HISTORY' : 'NEW RECORD') : ev.kind === 'record_watch' ? 'RECORD WATCH' : /^player_/.test(ev.kind) ? (voice(L) === 'pro' ? 'SCORING PLAY' : 'BIG PLAY') : (voice(L) === 'pro' ? 'BREAKING' : 'BIG NEWS');
     el.querySelector('.hd').textContent = w.head;
     el.querySelector('.bd').textContent = w.body;
+    const old = el.querySelector('.bk-hs'); if (old) old.remove();
+    if (ev.pid != null || /^player_/.test(ev.kind)) { const hs = headshot(ev.pid, ev.pro, 'bk-hs'); if (hs) el.querySelector('.kick').insertAdjacentHTML('afterend', hs); }
     const teams = el.querySelector('.teams'), meter = el.querySelector('.meter');
     if (m && L) {
       const h = T(L, m.home), a = T(L, m.away);
@@ -388,6 +525,7 @@
     el.classList.add('out');
     await sleep(650);
     el.classList.remove('show', 'out');
+    if (m && L && /lead_change|big_swing|upset|final_close|nail_biter|record_broken/.test(ev.kind)) await playReplay(L, L.matchups.find((x) => x.id === m.id) || m);
     lastBreakingAt = Date.now();
     busy = false;
     if (currentSeg) { const again = SEGMENTS[currentSeg.key] && SEGMENTS[currentSeg.key](cur); if (again) showSegment(again, true); }
@@ -398,6 +536,8 @@
     el.querySelector('.tag').textContent = L ? shortName(L).toUpperCase() : 'NFL';
     el.querySelector('.txt b').textContent = w.head;
     el.querySelector('.txt span').textContent = w.body;
+    const ic = el.querySelector('.ic'); if (ic) ic.remove();
+    if (ev.pid != null || /^player_/.test(ev.kind)) el.insertAdjacentHTML('beforeend', `<span class="ic">${headshot(ev.pid, ev.pro, 'hs-al')}</span>`);
     el.classList.add('show');
     M.sting(/^player_/.test(ev.kind) ? stingFor(ev.kind) : 'alert');
     await sleep(6500);
@@ -440,7 +580,7 @@
   }
 
   // ------------------------------------------------------------------ demo
-  const DEMO_KINDS = ['lead_change', 'player_rush_td', 'upset_watch', 'player_rec_td', 'big_swing', 'player_dud', 'nail_biter', 'final_upset', 'player_big_day', 'final_close', 'player_interception', 'player_bench_boom'];
+  const DEMO_KINDS = ['lead_change', 'player_rush_td', 'record_watch', 'upset_watch', 'player_rec_td', 'big_swing', 'player_dud', 'nail_biter', 'final_upset', 'player_big_day', 'final_close', 'player_interception', 'player_bench_boom'];
   let demoI = 0;
   function demoEvent() {
     const L = leagues.filter((x) => x.matchups.length)[demoI % Math.max(1, leagues.filter((x) => x.matchups.length).length)] || cur;
@@ -448,16 +588,36 @@
     const m = L.matchups[Math.floor(Math.random() * L.matchups.length)];
     if (!m) return;
     const tm = T(L, m.home), op = T(L, m.away);
-    const names = ['Josh Allen', 'Bijan Robinson', 'Ja’Marr Chase', 'CeeDee Lamb', 'Saquon Barkley', 'Travis Kelce', 'Amon-Ra St. Brown', 'Puka Nacua'];
+    const names = [['Josh Allen', 3918298, 'BUF'], ['Bijan Robinson', 4430807, 'ATL'], ['Ja\u2019Marr Chase', 4362628, 'CIN'], ['CeeDee Lamb', 4241389, 'DAL'], ['Saquon Barkley', 3929630, 'PHI'], ['Travis Kelce', 15847, 'KC'], ['Amon-Ra St. Brown', 4374302, 'DET'], ['Puka Nacua', 4426515, 'LAR']];
+    const pl = names[demoI % names.length];
     D.__emit({ league: L, kind, priority: /^player_(dud|interception|bench)/.test(kind) ? 1 : 2, matchup: m, team: tm, opp: op, pct: 68, wp: 68, score: fmt(m.hs), oppScore: fmt(m.as), margin: Math.abs(m.hs - m.as).toFixed(1),
-      prePct: 27, swing: 24, gap: '2.4', player: names[demoI % names.length], pos: 'RB', pro: 'ATL', pts: '24.6', delta: '6.0', detail: { proj: 16.5, yards: 112, mark: 100 }, ts: Date.now() });
+      record: kind === 'record_watch' ? { key: 'high', label: 'Highest score', text: '187.4', who: 'The Oscar Dynasty', when: 'Wk 9, 2025' } : undefined, value: 191.2,
+      prePct: 27, swing: 24, gap: '2.4', player: pl[0], pid: pl[1], pos: 'RB', pro: pl[2], pts: '24.6', delta: '6.0', detail: { proj: 16.5, yards: 112, mark: 100 }, ts: Date.now() });
   }
 
   // ------------------------------------------------------------------ boot
+  let recordsReady = false;
+  function checkRecords(quiet) {
+    if (!window.DeskRecords) return;
+    for (const L of leagues) for (const r of DeskRecords.check(L)) {
+      onEvent({ league: L, kind: r.kind, priority: r.priority, matchup: r.matchup, team: D.team(L, r.teamId), opp: D.team(L, r.oppId), record: r.record, value: r.value, ts: Date.now(), old: !!quiet });
+    }
+  }
   async function refreshAll() {
-    await Promise.all([D.refreshNfl(), ...leagues.map((L) => D.refreshLeague(L).catch((e) => console.warn('refresh failed', L.slug, e)))]);
+    let ok = true;
+    await Promise.all([D.refreshNfl(), ...leagues.map((L) => D.refreshLeague(L).catch((e) => { ok = false; console.warn('refresh failed', L.slug, e); }))]);
+    if (window.DeskFx) DeskFx.refreshResult(ok);
+    if (recordsReady) checkRecords(false);
     renderTop(); renderSide();
-    if (currentSeg && !busy && SEGMENTS[currentSeg.key]) { const s = SEGMENTS[currentSeg.key](cur); if (s) { s.title = currentSeg.title; s.line = currentSeg.line; showSegment(s, false); } }
+    if (currentSeg && !busy && currentSeg.key !== 'recap' && SEGMENTS[currentSeg.key]) { const s = SEGMENTS[currentSeg.key](cur); if (s) { s.title = currentSeg.title; s.line = currentSeg.line; showSegment(s, false); } }
+  }
+
+  // The most recent week where every game is final -> the recap show's week.
+  async function findRecapWeek(L) {
+    const done = new Map();
+    for (const r of L.summary) { const k = r.week; if (!done.has(k)) done.set(k, true); if (!r.all_starters_done) done.set(k, false); }
+    const weeks = [...done.entries()].filter(([, ok]) => ok).map(([w]) => w).sort((a, b) => b - a);
+    if (weeks.length) L.recapWeek = { year: L.year, week: weeks[0] };
   }
 
   async function boot() {
@@ -466,7 +626,7 @@
     addEventListener('mousemove', () => { document.body.classList.add('ui'); clearTimeout(hideUi); hideUi = setTimeout(() => document.body.classList.remove('ui'), 2500); });
     D.on(onEvent);
     D.__emit = onEvent;
-    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent() }; // for testing
+    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), commercial: () => commercialBreak(), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
     try {
       leagues = (await D.init()).filter((L) => L.year);
       await D.refreshNfl();
@@ -484,6 +644,10 @@
     const busiest = pinned || leagues.slice().sort((a, b) => b.matchups.filter((m) => !m.done).length - a.matchups.filter((m) => !m.done).length)[0];
     applyStudio(busiest);
     $('loading').remove();
+    // Record book + last finished week (for the recap show), in the background.
+    if (window.DeskRecords) Promise.all(leagues.map((L) => DeskRecords.load(D.sb, L).catch(() => null))).then(() => { checkRecords(true); recordsReady = true; });
+    for (const L of leagues) findRecapWeek(L);
+    if (window.DeskFx) { DeskFx.onOnline = refreshAll; DeskFx.onHoliday = () => cur && applyStudio(cur); }
     rebuildTicker(); requestAnimationFrame(tickerFrame);
     segPlan = planFor(cur); segIdx = 0; nextSegment();
     setInterval(tickClock, 1000); tickClock();
@@ -494,7 +658,7 @@
     // Sound: browsers need one click first.
     const gate = $('soundGate');
     if (params.get('sound') !== 'off') gate.hidden = false;
-    const startSound = () => { M.start(); M.setStyle(cur.studio, night() ? 'night' : 'day'); gate.hidden = true; $('btnSound').textContent = '🔊 Sound'; renderTop(); };
+    const startSound = () => { M.start(); M.setStyle(cur.studio, night() ? 'night' : 'day'); gate.hidden = true; $('btnSound').textContent = '🔊 Sound'; if (window.DeskFx) DeskFx.wake(); renderTop(); };
     gate.onclick = startSound;
     $('btnSound').onclick = () => { if (M.running) { M.stop(); $('btnSound').textContent = '🔇 Sound'; } else startSound(); };
     $('vol').oninput = (e) => M.setVolume(e.target.value / 100);

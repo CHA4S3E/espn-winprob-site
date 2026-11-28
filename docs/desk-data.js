@@ -160,7 +160,7 @@
     if (!L.lineupsOk) return;
     const [lu, ev] = await Promise.all([
       sb.from('lineups').select('team_id, players, updated_at').eq('league_id', L.id).eq('year', L.year).eq('week', L.week),
-      sb.from('player_events').select('id, team_id, ts, player_name, position, pro_team, kind, points, delta, detail').eq('league_id', L.id).eq('year', L.year).eq('week', L.week).gt('id', L.lastEventId).order('id').limit(500),
+      sb.from('player_events').select('id, team_id, ts, player_id, player_name, position, pro_team, kind, points, delta, detail').eq('league_id', L.id).eq('year', L.year).eq('week', L.week).gt('id', L.lastEventId).order('id').limit(500),
     ]);
     if (lu.error || ev.error) {
       const e = lu.error || ev.error;
@@ -305,7 +305,7 @@
       const team = T(e.team_id), opp = m ? T(m.home === e.team_id ? m.away : m.home) : null;
       const wpNow = m ? Math.round(m.home === e.team_id ? m.wp : 100 - m.wp) : null;
       const pri = { pass_td: 2, rush_td: 2, rec_td: 2, dst_score: 2, interception: 1, fumble: 1, big_day: 2, boom_final: 2, dud: 1, bench_boom: 1, big_play: 1, fg_50: 1, stat_correction: 0 }[e.kind];
-      out.push({ league: L, kind: 'player_' + e.kind, priority: pri == null ? 1 : pri, team, opp, matchup: m, player: e.player_name, pos: e.position, pro: e.pro_team,
+      out.push({ league: L, kind: 'player_' + e.kind, priority: pri == null ? 1 : pri, team, opp, matchup: m, player: e.player_name, pid: e.player_id, pos: e.position, pro: e.pro_team,
         pts: Number(e.points || 0).toFixed(1), delta: Math.abs(Number(e.delta || 0)).toFixed(1), detail: e.detail || {}, wp: wpNow, ts: Date.parse(e.ts), old: quiet || Date.now() - Date.parse(e.ts) > 20 * 60 * 1000 });
     }
     L._newPlayerEvents = [];
