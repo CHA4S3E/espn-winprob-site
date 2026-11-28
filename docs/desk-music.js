@@ -81,6 +81,17 @@
       comp: { inst: 'uke', rhythms: ['x.x.x.xxx.x.x.xx', 'x..x..x.x..x..x.', '..x...x...x...x.', 'x.xx.xx.x.xx.xx.'] },
       lead: { inst: 'marimba', density: 0.55, octave: 12 }, pad: null, seventh: false, bassInst: 'upright',
     },
+    'champ': {
+      name: 'Championship Anthem', tempo: [84, 94], swing: 0, scales: ['minor', 'major'], roots: [50, 52, 53, 55],
+      progs: [[0, 5, 3, 4], [0, 3, 4, 4], [5, 3, 0, 4], [0, 5, 2, 4], [3, 4, 0, 0]],
+      drums: [
+        { k: 'x.......x.x.....', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.', t: '............x.x.' },
+        { k: 'x.....x.x.......', s: '....x.......x...', c: '....x.......x...', h: 'x...x...x...x...', t: '..............xx' },
+      ],
+      bass: ['x.......x.......', 'x.....x.x.......'],
+      comp: { inst: 'brass', rhythms: ['x...............', 'x.......x.......', 'x.....x.........'] },
+      lead: { inst: 'softKeys', density: 0.35, octave: 12 }, pad: 'strings', seventh: false, bassInst: 'subBass',
+    },
     'casual-night': {
       name: 'Couch Lo-Fi', tempo: [70, 86], swing: 0.22, scales: ['dorian', 'major'], roots: [50, 52, 53, 55, 57],
       progs: [[1, 4, 0, 0], [0, 5, 1, 4], [3, 2, 1, 0], [1, 4, 0, 5], [0, 3, 1, 4], [5, 1, 4, 0], [3, 4, 2, 5]],
@@ -302,7 +313,7 @@
     const root = song ? 60 + song.root : 60, B = sfxBus;
     const chordHit = (notes, at, d) => (pro ? INST.brass : INST.rhodes)(at, notes, d, 0.9, B);
     const notePlay = (m, at, d) => (pro ? INST.softKeys : INST.marimba)(at, m, d * 1.4, pro ? 1.1 : 0.8, B);
-    duck({ jingle: 1.6, replay: 1.4, record: 3.4, breaking: 3.2, upset: 3, final: 3.2, td: 1.6, bad: 1.8, lead: 2, handoff: 2.4, alert: 1.2 }[kind] || 1.5);
+    duck({ champIntro: 4, champion: 4.5, jingle: 1.6, replay: 1.4, record: 3.4, breaking: 3.2, upset: 3, final: 3.2, td: 1.6, bad: 1.8, lead: 2, handoff: 2.4, alert: 1.2 }[kind] || 1.5);
     switch (kind) {
       case 'breaking':
         INST.whoosh(t, 0.6, 1, B);
@@ -335,6 +346,17 @@
       case 'replay':
         INST.whoosh(t, 0.5, 0.9, B, false); notePlay(root + 7, t + 0.45, 0.2); notePlay(root, t + 0.62, 0.5);
         break;
+      case 'champIntro': // big, slow build: boom, toms, rising brass
+        INST.boom(t, 0.9, B); [0, 0.25, 0.5, 0.75].forEach((d, i) => INST.tom(t + 0.4 + d, 0.5 + i * 0.1, B, 90 + i * 12));
+        chordHit([root - 12, root - 5, root], t + 1.3, 1.6); chordHit([root - 7, root, root + 4], t + 2.1, 2.2); INST.boom(t + 2.1, 0.8, B);
+        break;
+      case 'champion': // fanfare for the winner
+        INST.boom(t, 1, B);
+        [0, 4, 7, 12].forEach((iv, i) => chordHit([root + iv - 12, root + iv - 5, root + iv], t + i * 0.22, 0.25));
+        chordHit([root - 12, root - 8, root - 5, root, root + 4], t + 0.95, 2.8); INST.boom(t + 0.95, 0.9, B);
+        for (let i = 0; i < 10; i++) INST.snare(t + 0.4 + i * 0.055, 0.2 + i * 0.05, B);
+        INST.hat(t + 0.95, 0.8, B, true); INST.hat(t + 1.4, 0.6, B, true);
+        break;
       case 'record':
         [0, 4, 7, 12, 16].forEach((iv, i) => notePlay(root + iv, t + i * 0.1, 0.2)); chordHit([root + 12, root + 16, root + 19, root + 24], t + 0.55, 1.6); INST.boom(t + 0.55, 0.8, B); INST.hat(t + 0.55, 1, B, true);
         break;
@@ -359,8 +381,8 @@
     running = false; clearInterval(timer);
     if (ctx) master.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.2);
   }
-  function setStyle(studio, daypart) {
-    const key = (studio === 'casual' ? 'casual' : 'pro') + '-' + (daypart === 'night' ? 'night' : 'day');
+  function setStyle(studio, daypart, champ) {
+    const key = champ ? 'champ' : (studio === 'casual' ? 'casual' : 'pro') + '-' + (daypart === 'night' ? 'night' : 'day');
     if (key === styleKey && !pendingStyle) return;
     if (!running) { styleKey = key; style = STYLES[key]; return; }
     // Switch at the next bar: wrap the current song up quickly, then start fresh in the new style.

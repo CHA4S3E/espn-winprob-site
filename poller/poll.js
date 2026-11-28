@@ -12,7 +12,8 @@
 //      (b) the values actually changed since that team's last snapshot.
 
 const { createClient } = require('@supabase/supabase-js');
-const { fetchLeagueWeek, fetchNflGameStatusMap, fetchTransactions, fetchAthlete } = require('./lib/espnClient');
+const { fetchLeagueWeek, fetchNflGameStatusMap, fetchTransactions, fetchAthlete, fetchMatchupPeriods } = require('./lib/espnClient');
+const { periodForWeek, carryIn, rostersPresent } = require('./lib/multiweek');
 const { parseTransactions } = require('./lib/transactions');
 const { teamExpected, computeDynamicStddev, matchupWinProbability, DEFAULT_STDDEV } = require('./lib/winProb');
 const PRO_TEAM_MAP = require('./lib/proTeamMap');
@@ -360,9 +361,43 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
 
   if (saveSchedule) await saveFullSchedule(league, year, leagueData, teamIdByEspnId);
 
-  const schedule = (leagueData.schedule || []).filter(
+  let schedule = (leagueData.schedule || []).filter(
     (m) => m.matchupPeriodId === week && m.away // skip byes
   );
+
+  // A matchup spanning several NFL weeks (e.g. a championship over weeks 16
+  // and 17) is filed under its first matchup period, so a later week of it
+  // finds nothing above. Track it anyway, under this week, with the points
+  // each side banked in the earlier week(s) added on (lib/multiweek.js).
+  const carryByTeam = new Map(); // ESPN team id -> points banked earlier in the period
+  if (!schedule.length && (leagueData.schedule || []).length) {
+    try {
+      const periods = await fetchMatchupPeriods({ espnLeagueId: league.espn_league_id, espnS2: league.espn_s2, swid: league.swid, year });
+      const period = periodForWeek(periods, week);
+      if (period && period.periodId !== week) {
+        const multi = (leagueData.schedule || []).filter((m) => m.matchupPeriodId === period.periodId && m.away);
+        if (multi.length && rostersPresent(multi)) {
+          for (const m of multi) for (const side of [m.home, m.away]) {
+            const teamUuid = teamIdByEspnId[side.teamId];
+            let fallback = 0;
+            if (teamUuid) { // last saved total from the previous week of this period
+              const { data: prev } = await supabase.from('snapshots').select('actual_score')
+                .eq('league_id', league.id).eq('year', year).eq('week', week - 1).eq('team_id', teamUuid)
+                .order('ts', { ascending: false }).limit(1);
+              fallback = prev && prev[0] ? Number(prev[0].actual_score) : 0;
+            }
+            carryByTeam.set(side.teamId, carryIn(side, period.weeks, week, fallback));
+          }
+          schedule = multi;
+          console.log(`[${league.slug}] week ${week}: multi-week matchup period ${period.periodId} (weeks ${period.weeks.join('+')}) -- tracking ${multi.length} matchup(s) with earlier weeks' points carried in`);
+        } else if (multi.length) {
+          console.warn(`[${league.slug}] week ${week}: multi-week matchups found but ESPN returned no rosters for this week -- not writing`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[${league.slug}] week ${week}: could not check for multi-week matchups: ${err.message || err}`);
+    }
+  }
 
   let insertedCount = 0;
   let skippedCount = 0;
@@ -384,7 +419,8 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
       } = teamExpected(side.rosterForCurrentScoringPeriod?.entries, nflStatusMap);
       const teamUuidForLineup = teamIdByEspnId[side.teamId];
       if (teamUuidForLineup) lineupByTeam.set(teamUuidForLineup, buildPlayers(side.rosterForCurrentScoringPeriod?.entries, nflStatusMap));
-      return { side, isHome, expected, allDone, actual, totalCount, doneCount, remainingFractionSum, lineupFingerprint, hasPendingPregamePlayer };
+      const carry = carryByTeam.get(side.teamId) || 0; // multi-week matchups: earlier weeks' points
+      return { side, isHome, expected: expected + carry, allDone, actual: actual + carry, totalCount, doneCount, remainingFractionSum, lineupFingerprint, hasPendingPregamePlayer };
     });
 
     // Hold a questionable/Out PREGAME starter's projection drop at its last

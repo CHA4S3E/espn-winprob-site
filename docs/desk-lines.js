@@ -343,6 +343,27 @@
       ['{WHO} JUST GOT DETHRONED', '{T} broke {WHO}’s {REC} record! {V} vs {OLD}.'],
       ['HISTORY, BABY!', 'New league record for {REC}: {T}, {V}!'],
     ] },
+    // ----- playoffs ({RD} round just won, {NX} next round)
+    advance: { mood: 'hype', pro: [
+      ['{T} ADVANCE', '{T} beat {O} {S}\u2013{OS} and move on to the {NX}.'],
+      ['{T} SURVIVE THE {RD}', '{T} take down {O}, {S}\u2013{OS}. Next stop: the {NX}.'],
+      ['{T} MARCH ON', 'The {RD} is in the books \u2014 {T} over {O}, {S}\u2013{OS}.'],
+      ['{O} ELIMINATED', '{T} send {O} home, {S}\u2013{OS}. {T} advance to the {NX}.'],
+    ], casual: [
+      ['{T} ARE MOVING ON!', '{T} beat {O}, {S}\u2013{OS}! On to the {NX}!'],
+      ['BYE BYE, {O}', '{O} are out. {T} win {S}\u2013{OS} and keep dancing!'],
+      ['{T} SURVIVE!', '{T} made it through the {RD}! {S}\u2013{OS} over {O}.'],
+      ['ONE STEP CLOSER', '{T} are one step closer to the trophy. {S}\u2013{OS}!'],
+    ] },
+    champion: { mood: 'hype', pro: [
+      ['{T} ARE CHAMPIONS', '{T} win the {L} championship, {S}\u2013{OS} over {O}.'],
+      ['CHAMPIONS: {T}', 'The title belongs to {T}. Final: {S}\u2013{OS}.'],
+      ['{T} WIN IT ALL', '{T} are the champions of {L}.'],
+    ], casual: [
+      ['{T} WON IT ALL!!!', '{T} are the champs! {S}\u2013{OS} over {O}! Group hug!'],
+      ['CHAMPS!', 'Bow down to {T}, your {L} champions!'],
+      ['THE TROPHY GOES TO {T}', '{T} beat {O} for the title. Bragging rights for a whole year!'],
+    ] },
     // ----- clinch watch
     clinched: { mood: 'hype', pro: [
       ['{T} CLINCH', '{T} have clinched a playoff spot in {L}.'],
