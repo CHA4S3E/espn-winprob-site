@@ -127,11 +127,13 @@ const content = document.getElementById('content');
 
 const YEAR_IN_REVIEW_WEEK = 17; // the last week of the season, same as app.js
 
+let urlYearApplied = false;
 async function loadLeagues() {
-  const { data, error } = await sb.from('leagues').select('id, name').order('name');
+  const { data, error } = await sb.from('leagues').select('id, slug, name').order('name');
   if (error) { showEmpty('Could not load leagues -- check the console.'); console.error(error); return; }
   if (!data.length) { showEmpty('No leagues found.'); return; }
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
+  if (window.PageState) PageState.pickLeague(leagueSelect, data);
   leagueSelect.onchange = () => loadYearsForLeague(leagueSelect.value);
   await loadYearsForLeague(data[0].id);
 }
@@ -165,8 +167,12 @@ async function loadYearsForLeague(leagueId) {
   const years = [...new Set([...finishedSnapYears, ...(legacyYears || []).map((r) => r.year)])].sort((a, b) => b - a);
   if (!years.length) { showEmpty('Year in Review unlocks once the championship week (week 17) is final. Check back after the season finishes!'); return; }
   yearSelect.innerHTML = years.map((y) => `<option value="${y}">${y}</option>`).join('');
-  yearSelect.onchange = () => loadYear(leagueId, Number(yearSelect.value));
-  await loadYear(leagueId, years[0]);
+  yearSelect.onchange = () => { if (window.PageState) PageState.set({ year: yearSelect.selectedIndex === 0 ? null : yearSelect.value }); loadYear(leagueId, Number(yearSelect.value)); };
+  // A shared ?year= link opens that season (first load only).
+  let startYear = years[0];
+  if (window.PageState && !urlYearApplied) { urlYearApplied = true; if (PageState.pick(yearSelect, PageState.param('year'))) startYear = Number(yearSelect.value); }
+  else if (window.PageState) PageState.set({ year: null });
+  await loadYear(leagueId, startYear);
 }
 
 function showEmpty(message) {

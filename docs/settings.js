@@ -57,9 +57,10 @@ unlockBtn.addEventListener('click', () => {
 });
 
 async function loadLeagues() {
-  const { data, error } = await sb.from('leagues').select('id, name').order('name');
+  const { data, error } = await sb.from('leagues').select('id, slug, name').order('name');
   if (error) return;
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
+  if (window.PageState) PageState.pickLeague(leagueSelect, data);
   leagueSelect.onchange = () => { loadTeams(); loadSeasonResultsPanel(); loadLegacySection(); };
   if (data.length) { loadTeams(); loadSeasonResultsPanel(); loadLegacySection(); }
 }
@@ -338,7 +339,7 @@ async function savePlayoffSettings() {
   const { data, error } = await sb.from('leagues')
     .update({ playoff_spots: parsePlayoffSpots(), reseed_weeks: parseReseedWeeks() })
     .eq('id', leagueId)
-    .select();
+    .select('id, playoff_spots, reseed_weeks'); // never '*': the ESPN cookie columns aren't readable with the public key
   const note = document.getElementById('playoffSettingsSavedNote');
   if (error) {
     note.textContent = 'Failed to save: ' + error.message;
@@ -392,7 +393,7 @@ document.getElementById('saveSeasonResultsBtn').addEventListener('click', async 
     // .select() so a zero-row RLS-silenced update (see savePlayoffSettings'
     // own comment on this) is at least distinguishable from here on, even
     // though this combined button doesn't have its own dedicated note span.
-    sb.from('leagues').update({ playoff_spots: playoffSpots, reseed_weeks: reseedWeeks }).eq('id', leagueId).select(),
+    sb.from('leagues').update({ playoff_spots: playoffSpots, reseed_weeks: reseedWeeks }).eq('id', leagueId).select('id, playoff_spots, reseed_weeks'),
     podiumRows.length
       ? sb.from('season_results').upsert(podiumRows, { onConflict: 'league_id,year,place' })
       : Promise.resolve({ error: null }),
