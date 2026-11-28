@@ -95,14 +95,42 @@
     if (!s) r = g = b = l; else { const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q; r = f(p, q, h + 1 / 3); g = f(p, q, h); b = f(p, q, h - 1 / 3); }
     return '#' + [r, g, b].map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
   }
-  function teamColor(hex, dark) {
-    if (!/^#?[0-9a-f]{6}$/i.test(String(hex || '').trim())) return dark ? '#8fa8ff' : '#3355aa';
-    hex = '#' + String(hex).trim().replace('#', '');
+  // Same rule as the main site (app.js themedColor): only on dark backgrounds,
+  // and only colors too close to black to read (lightness under 20%), which
+  // are lifted to 50% keeping their hue and saturation exactly.
+  const MIN_LIGHTNESS = 0.20, TARGET_LIGHTNESS = 0.50;
+  const valid = (hex) => /^#?[0-9a-f]{6}$/i.test(String(hex || '').trim());
+  const norm = (hex) => '#' + String(hex).trim().replace('#', '').toLowerCase();
+  function adjust(hex, dark) {
+    if (!valid(hex)) return { color: '#1a3fa0', wasAdjusted: false };
+    hex = norm(hex);
     const { h, s, l } = hexToHsl(hex);
-    if (dark && l < 0.30) return hslToHex(h, s < 0.08 ? 0 : Math.max(s, 0.55), s < 0.08 ? 0.72 : 0.52); // greys/black -> light grey, colors -> same hue at 52%
-    if (!dark && l > 0.82) return hslToHex(h, s, 0.42);
-    return hex;
+    if (!dark || l >= MIN_LIGHTNESS) return { color: hex, wasAdjusted: false };
+    return { color: hslToHex(h, s, TARGET_LIGHTNESS), wasAdjusted: true };
+  }
+  function teamColor(hex, dark) { return adjust(hex, dark).color; }
+  // Same as the site's deconflictColors: across a whole league, a color WE
+  // lifted that now looks like another team's gets its hue rotated (40 degrees
+  // at a time) until it's clearly different. Colors the league picked that
+  // were already fine never move.
+  function redmean(a, b) {
+    const p = (x) => { const n = parseInt(x.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+    const [r1, g1, b1] = p(a), [r2, g2, b2] = p(b), rb = (r1 + r2) / 2, dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
+    return Math.sqrt((2 + rb / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rb) / 256) * db * db);
+  }
+  function rotate(hex, deg) { const { h, s, l } = hexToHsl(hex); return hslToHex((((h * 360 + deg) % 360) + 360) % 360 / 360, s, l); }
+  // teams: [{ id, color }] in the league's order -> { id: color }
+  function leaguePalette(teams, dark) {
+    const entries = teams.map((t) => Object.assign({ id: t.id }, adjust(t.color, dark)));
+    const fixed = entries.filter((e) => !e.wasAdjusted).map((e) => e.color), out = {};
+    for (const e of entries) {
+      if (!e.wasAdjusted) { out[e.id] = e.color; continue; }
+      let c = e.color, n = 0;
+      while (n < 8 && fixed.some((f) => redmean(f, c) < 150)) { c = rotate(c, 40); n++; }
+      out[e.id] = c; fixed.push(c);
+    }
+    return out;
   }
 
-  window.WPChart = { draw, teamColor, rgba };
+  window.WPChart = { draw, teamColor, leaguePalette, rgba };
 })();

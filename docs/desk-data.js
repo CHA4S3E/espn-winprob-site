@@ -55,7 +55,7 @@
     if (teams.error) throw teams.error;
     for (const t of teams.data || []) {
       const s = t.team_settings || {};
-      L.teams[t.id] = { id: t.id, name: s.display_name || t.espn_team_name, color: s.color || '#3b6ef5', emoji: s.emoji || '', logoUrl: s.logo_url || '' };
+      L.teams[t.id] = { id: t.id, name: s.display_name || t.espn_team_name, color: s.color || '#1a3fa0', emoji: s.emoji || '', logoUrl: s.logo_url || '' };
     }
     const row = latest.data && latest.data[0];
     if (!row) return;

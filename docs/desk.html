@@ -104,7 +104,6 @@ html[data-studio="casual"] #tv::before { background: radial-gradient(circle at 1
 #anchor { position: absolute; left: 48px; top: 852px; width: 1824px; height: 112px; display: flex; align-items: stretch; z-index: 4; }
 #anchorTag { width: 230px; display: grid; place-items: center; text-align: center; background: var(--bar); color: var(--bar-fg); clip-path: var(--clip); border-radius: var(--radius) 0 0 var(--radius); font: var(--head-style) var(--head-weight) 26px/1.05 var(--font-head); letter-spacing: .04em; text-transform: uppercase; padding: 0 22px; }
 #anchorText { flex: 1; background: var(--panel); border: 1px solid var(--line); border-left: 0; border-radius: 0 var(--radius) var(--radius) 0; padding: 0 30px; display: flex; align-items: center; font: 600 30px/1.25 var(--font-body); overflow: hidden; }
-#anchorText .cur { display: inline-block; width: 3px; height: 30px; background: var(--accent); margin-left: 4px; animation: blink 1s infinite; vertical-align: middle; }
 
 /* ---- ticker ---- */
 #ticker { position: absolute; left: 0; right: 0; bottom: 0; height: 86px; display: flex; background: #05070d; color: #fff; z-index: 6; box-shadow: 0 0 0 100vmax #05070d; clip-path: inset(0 -100vmax -100vmax -100vmax); }
@@ -140,6 +139,29 @@ html[data-studio="casual"] #breaking .kick { font-family: 'Baloo 2', sans-serif;
 html[data-studio="casual"] #breaking .hd { font-family: 'Baloo 2', sans-serif; font-style: normal; font-size: 112px; }
 #breaking .bd { margin-top: 30px; font: 600 40px/1.3 'Inter', sans-serif; opacity: .92; }
 #breaking .teams { margin-top: 36px; display: flex; justify-content: center; gap: 30px; align-items: center; font: 800 40px 'Barlow Condensed', sans-serif; }
+/* Story impact board: one moment, several teams (one or both leagues) */
+#breaking.board .hd { margin-top: 26px; font-size: 92px; }
+html[data-studio="casual"] #breaking.board .hd { font-size: 84px; }
+#breaking.board .bd { margin-top: 18px; font-size: 30px; }
+#breaking.board .teams { display: block; margin-top: 26px; font: inherit; }
+.impact { display: grid; gap: 10px; width: 1320px; margin: 0 auto; text-align: left; }
+.im-row { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) 300px; gap: 18px; align-items: center; padding: 12px 22px; border-radius: 12px; background: rgba(0,0,0,.42); border-left: 8px solid var(--c); }
+.im-row:not(:has(.im-lg)) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 300px; }
+.im-lg { font: 800 18px/1 'Barlow Condensed', sans-serif; letter-spacing: .12em; padding: 7px 10px; border-radius: 5px; background: rgba(255,255,255,.14); }
+.im-tm { display: flex; align-items: center; gap: 14px; min-width: 0; font: 800 36px/1 'Barlow Condensed', sans-serif; color: var(--c); }
+.im-tm b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.im-tm .ic { width: 46px; height: 46px; flex: none; }
+.im-flip { flex: none; font: 800 16px/1 'Inter', sans-serif; font-style: normal; letter-spacing: .08em; padding: 6px 9px; border-radius: 5px; background: var(--c); color: #fff; }
+.im-pl { font: 600 24px/1.2 'Inter', sans-serif; opacity: .92; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.im-pl b { color: #7ee2a8; }
+.im-wp { display: grid; gap: 6px; font: 700 22px/1 'Inter', sans-serif; text-align: right; }
+.im-bar { height: 10px; border-radius: 5px; background: rgba(255,255,255,.15); overflow: hidden; }
+.im-bar i { display: block; height: 100%; }
+.im-wp .up { color: #7ee2a8; } .im-wp .dn { color: #ff7a7a; }
+.im-more { text-align: center; font: 700 24px 'Inter', sans-serif; opacity: .8; padding-top: 4px; }
+#breaking.show .impact .im-row { animation: hd .6s ease both; }
+#breaking.show .impact .im-row:nth-child(2) { animation-delay: .7s; } #breaking.show .impact .im-row:nth-child(3) { animation-delay: .85s; }
+#breaking.show .impact .im-row:nth-child(4) { animation-delay: 1s; } #breaking.show .impact .im-row:nth-child(5) { animation-delay: 1.15s; } #breaking.show .impact .im-row:nth-child(6) { animation-delay: 1.3s; }
 #breaking .meter { margin: 30px auto 0; width: 1100px; height: 20px; border-radius: 10px; overflow: hidden; background: rgba(255,255,255,.15); display: flex; }
 #breaking .meter i { display: block; height: 100%; transition: width 1.5s cubic-bezier(.2,.8,.2,1); }
 #breaking.show .kick { animation: kick .6s cubic-bezier(.2,1.4,.4,1) both; }
@@ -480,16 +502,16 @@ html[data-champ="on"] #tv::after { content: ''; position: absolute; inset: -30%;
 </div>
 <script src="config.js"></script>
 <script src="season-look.js?v=4"></script>
-<script src="desk-lines.js?v=4"></script>
+<script src="desk-lines.js?v=5"></script>
 <script src="desk-music.js?v=5"></script>
 <script src="desk-fx.js?v=2"></script>
-<script src="desk-data.js?v=4"></script>
+<script src="desk-data.js?v=5"></script>
 <script src="desk-records.js?v=1"></script>
-<script src="wp-chart.js?v=1"></script>
+<script src="wp-chart.js?v=2"></script>
 <script src="desk-playoffs.js?v=2"></script>
 <script src="desk-analytics.js?v=4"></script>
 <script src="desk-logo3d.js?v=2"></script>
-<script src="recap-video.js?v=4"></script>
-<script src="desk.js?v=11"></script>
+<script src="recap-video.js?v=5"></script>
+<script src="desk.js?v=12"></script>
 </body>
 </html>

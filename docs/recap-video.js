@@ -40,7 +40,7 @@
     if (o.teams && Object.keys(o.teams).length) Object.assign(teams, o.teams);
     else {
       const { data } = await sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', o.leagueId);
-      for (const t of data || []) { const s = t.team_settings || {}; teams[t.id] = { id: t.id, name: s.display_name || t.espn_team_name, color: s.color || '#3b6ef5', emoji: s.emoji || '', logoUrl: s.logo_url || '' }; }
+      for (const t of data || []) { const s = t.team_settings || {}; teams[t.id] = { id: t.id, name: s.display_name || t.espn_team_name, color: s.color || '#1a3fa0', emoji: s.emoji || '', logoUrl: s.logo_url || '' }; }
     }
     const summary = await fetchAll((a, b) => sb.from('snapshot_summary').select('week, matchup_id, team_id, is_home, actual_score, all_starters_done, ts, pregame_win_prob, pregame_expected_score').eq('league_id', o.leagueId).eq('year', o.year).lte('week', o.week).range(a, b));
     const latest = new Map();
@@ -164,7 +164,8 @@
   function scenes(S) {
     const o = S.o, P = palette(o.studio), pro = o.studio !== 'casual', dark = pro;
     const N = (id) => (S.teams[id] || {}).name || 'Unknown';
-    const C = (id) => readable((S.teams[id] || {}).color, dark);
+    const pal = window.WPChart && WPChart.leaguePalette ? WPChart.leaguePalette(Object.values(S.teams), dark) : {}; // same colors as the site
+    const C = (id) => pal[id] || readable((S.teams[id] || {}).color, dark);
     const list = [];
     const scene = (dur, line, draw) => list.push({ dur, line, draw });
 
