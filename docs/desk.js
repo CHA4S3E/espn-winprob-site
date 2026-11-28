@@ -48,6 +48,7 @@
   }
   // Playoff odds as text: only a mathematical clinch/elimination shows as 100% / 0%.
   const oddsText = (o) => o.status === 'clinched' ? '100%' : o.status === 'eliminated' ? '0%' : o.now >= 0.995 ? '>99%' : o.now < 0.005 ? '<1%' : Math.round(o.now * 100) + '%';
+  const pctText = (v) => (v < 1 ? '<1%' : v > 99 ? '>99%' : Math.round(v) + '%');
   const ago = (ts) => { const s = Math.max(0, (Date.now() - ts) / 1000); return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago'; };
   const leftToPlay = (L, teamId) => { const p = L.lineups.get(teamId); return p ? p.filter((x) => !x.bench && (x.g === 'pre' || x.g === 'in')).length : null; };
 
@@ -186,7 +187,7 @@
         `This one started ${Math.round(m.pre >= 50 ? m.pre : 100 - m.pre)}% ${m.pre >= 50 ? h.name : a.name}. Now it’s ${ldr.name} at ${P}%. Drama!`,
         `Only ${gap} points between ${h.name} and ${a.name}. Somebody pass the chips.`,
       ];
-      return { key: 'spotlight', title: Lines.segmentTitle('spotlight', voice(L)), html, dur: 20000, line: lines[Math.floor(Math.random() * lines.length)],
+      return { key: 'spotlight', matchup: m, title: Lines.segmentTitle('spotlight', voice(L)), html, dur: 20000, line: lines[Math.floor(Math.random() * lines.length)],
         after() { drawChart($('spotChart'), m, h, a); } };
     },
     scoreboard(L) {
@@ -263,6 +264,81 @@
       const line = live ? (voice(L) === 'pro' ? `${live} NFL game${live === 1 ? '' : 's'} in progress. Every snap moves the numbers.` : `${live} real game${live === 1 ? '' : 's'} on right now. Go team(s)!`)
         : (voice(L) === 'pro' ? 'No NFL games live at the moment. Here’s the slate.' : 'No real football on right now. Here’s what’s coming up!');
       return { key: 'nfl', title: Lines.segmentTitle('nfl', voice(L)), html, dur: 15000, line };
+    },
+    // ---- season analysis (desk-analytics.js) ----
+    drama(L) {
+      const A = window.DeskAnalytics && DeskAnalytics.drama(L); if (!A) return null;
+      const pro = voice(L) === 'pro';
+      const gameRow = (g, i) => { const h = T(L, g.h), a = T(L, g.a), w = g.hs > g.as ? h : a; return `<div class="an-row"><span class="an-rk">${i + 1}</span><span>${icon(h)} <b style="color:${esc(h.color)}">${esc(h.name)}</b> ${fmt(g.hs)} – ${fmt(g.as)} <b style="color:${esc(a.color)}">${esc(a.name)}</b> ${icon(a)}<em>Wk ${g.week} · ${g.lc} lead change${g.lc === 1 ? '' : 's'}</em></span><b class="an-big">${g.ex}</b></div>`; };
+      const teamRow = (t) => { const x = T(L, t.id); return `<div class="pl"><span>${icon(x)} <b style="color:${esc(x.color)}">${esc(x.name)}</b></span><b>${Math.round(t.avg)}</b></div>`; };
+      const html = `<div class="an-2"><div><h4>${pro ? 'Most exciting games of the season' : 'The wildest games so far'}</h4>${A.top.map(gameRow).join('')}<div class="an-foot">Excitement = total win-probability movement during the game</div></div>
+        <div><h4>${pro ? 'Drama rating' : 'Who brings the drama'}</h4>${A.teams.slice(0, 5).map(teamRow).join('')}<h4 style="margin-top:14px">${pro ? 'Steadiest games' : 'Snooze-fest teams'}</h4>${A.teams.slice(-2).reverse().map(teamRow).join('')}</div></div>`;
+      const g = A.top[0], wt = A.weekTop;
+      const line = pro ? `Game of the year so far: ${T(L, g.h).name} vs ${T(L, g.a).name} in week ${g.week} — ${g.ex} points of win-probability swing.${wt && wt.week !== g.week ? ` Last week’s thriller: ${T(L, wt.h).name} vs ${T(L, wt.a).name}.` : ''}` : `The craziest game this year? ${T(L, g.h).name} vs ${T(L, g.a).name}, week ${g.week}. ${A.teams[0] ? `${T(L, A.teams[0].id).name} games are pure chaos.` : ''}`;
+      return { key: 'drama', title: pro ? 'Excitement index' : 'Drama meter', html, dur: 17000, line };
+    },
+    comebacks(L) {
+      const A = window.DeskAnalytics && DeskAnalytics.comebacks(L); if (!A || !A.comebacks.length) return null;
+      const pro = voice(L) === 'pro';
+      const row = (x, i, kind) => { const w = T(L, x.w), l = T(L, x.l), g = x.g; const ws = g.h === x.w ? g.hs : g.as, ls = g.h === x.w ? g.as : g.hs;
+        return `<div class="an-row"><span class="an-rk">${i + 1}</span><span>${icon(kind === 'cb' ? w : l)} <b style="color:${esc((kind === 'cb' ? w : l).color)}">${esc((kind === 'cb' ? w : l).name)}</b> <em>${kind === 'cb' ? `beat ${esc(l.name)}` : `lost to ${esc(w.name)}`} ${fmt(ws)}–${fmt(ls)} · Wk ${g.week}</em></span><b class="an-big">${pctText(kind === 'cb' ? x.low : x.high)}</b></div>`; };
+      const html = `<div class="an-2"><div><h4>${pro ? 'Biggest comebacks' : 'Never say die'} <small>lowest win % before winning</small></h4>${A.comebacks.map((x, i) => row(x, i, 'cb')).join('')}</div>
+        <div><h4>${pro ? 'Biggest collapses' : 'Oof, those hurt'} <small>highest win % before losing</small></h4>${A.collapses.map((x, i) => row(x, i, 'co')).join('') || '<div class="pl">No big collapses yet</div>'}
+        ${A.clutch ? `<div class="callout" style="margin-top:12px"><small>${pro ? 'Comeback kings' : 'Never out of it'}</small><b>${esc(T(L, A.clutch.id).name)}</b><span>won ${A.clutch.trailedWon} of ${A.clutch.trailed} games after falling to 25% or lower</span></div>` : ''}</div></div>`;
+      const c = A.comebacks[0];
+      const line = pro ? `The comeback of the year: ${T(L, c.w).name} were down to ${pctText(c.low)} against ${T(L, c.l).name} in week ${c.g.week} — and won.` : `${T(L, c.w).name} were at ${pctText(c.low)} and STILL won! Week ${c.g.week}. Never give up!`;
+      return { key: 'comebacks', title: pro ? 'Comebacks & collapses' : 'Comebacks & heartbreaks', html, dur: 17000, line };
+    },
+    timing(L) {
+      const A = window.DeskAnalytics && DeskAnalytics.timing(L); if (!A || !A.teams.length) return null;
+      const pro = voice(L) === 'pro', W = A.windows.filter((w) => A.leagueShare[w] > 0.02);
+      const head = `<div class="tm-row tm-head"><span></span>${W.map((w) => `<span>${esc(A.windowName[w].replace(' night', '').replace('Sunday ', 'Sun '))}</span>`).join('')}<span>${pro ? 'Identity' : 'Their thing'}</span></div>`;
+      const rows = A.teams.slice(0, 10).map((t) => { const x = T(L, t.id); return `<div class="tm-row"><span>${icon(x)} <b style="color:${esc(x.color)}">${esc(x.name)}</b></span>${W.map((w) => { const v = t.share[w], lv = A.leagueShare[w]; return `<span class="tm-cell ${v > lv * 1.25 ? 'hi' : v < lv * 0.75 ? 'lo' : ''}">${Math.round(v * 100)}%</span>`; }).join('')}<span class="tm-id">${t.ident ? esc(A.windowName[t.ident]) + ' team' : ''}</span></div>`; }).join('');
+      const html = `<div class="tm" style="--cols:${W.length}">${head}${rows}<div class="tm-row tm-lg"><span>${pro ? 'League average' : 'Everybody'}</span>${W.map((w) => `<span>${Math.round(A.leagueShare[w] * 100)}%</span>`).join('')}<span></span></div></div>
+        ${A.mondayMagic && A.mondayMagic.monGain > 0 ? `<div class="an-foot">${pro ? 'Monday Night magic' : 'Monday night heroes'}: ${esc(T(L, A.mondayMagic.id).name)} +${Math.round(A.mondayMagic.monGain)} win-% points gained from Monday on this season</div>` : ''}`;
+      const t0 = A.teams.find((t) => t.ident); if (!t0) return null;
+      const line = pro ? `${T(L, t0.id).name} are a true ${A.windowName[t0.ident]} team: ${Math.round(t0.share[t0.ident] * 100)}% of their points, versus ${Math.round(A.leagueShare[t0.ident] * 100)}% league-wide.` : `${T(L, t0.id).name} come alive on ${A.windowName[t0.ident]}! ${Math.round(t0.share[t0.ident] * 100)}% of their points.`;
+      return { key: 'timing', title: pro ? 'When they score' : 'Prime time players', html, dur: 17000, line };
+    },
+    lineupiq(L) {
+      const A = window.DeskAnalytics && DeskAnalytics.lineupIQ(L); if (!A) return null;
+      const pro = voice(L) === 'pro';
+      const html = `<div class="an-2"><div><h4>${pro ? 'Lineup IQ' : 'Who sets the best lineup'} <small>points scored vs best possible</small></h4>${A.teams.map((t) => { const x = T(L, t.id); return `<div class="iq"><span>${icon(x)} <b style="color:${esc(x.color)}">${esc(x.name)}</b></span><span class="iq-bar"><i style="width:${Math.max(0, (t.eff - 0.7) / 0.3 * 100)}%;background:${esc(x.color)}"></i></span><b>${Math.round(t.eff * 100)}%</b></div>`; }).join('')}</div>
+        <div><h4>${pro ? 'Points left on the bench' : 'Bench regret'}</h4>${A.teams.slice().sort((a, b) => b.lost - a.lost).slice(0, 5).map((t) => { const x = T(L, t.id); return `<div class="pl"><span>${icon(x)} ${esc(x.name)}${t.costly ? `<em>${t.costly} loss${t.costly === 1 ? '' : 'es'} from it</em>` : ''}</span><b>${fmt(t.lost)}</b></div>`; }).join('')}
+        <div class="an-foot">${A.weeks.length === 1 ? `Week ${A.weeks[0]}` : `Weeks ${A.weeks[0]}–${A.weeks[A.weeks.length - 1]}`} · best lineup with the same positions</div></div></div>`;
+      const best = A.teams[0], worst = A.worstWeek;
+      const line = pro ? `${T(L, best.id).name} have the sharpest lineups, getting ${Math.round(best.eff * 100)}% of their best possible score. ${worst && worst.lost >= 10 ? `${T(L, worst.id).name} left ${fmt(worst.lost)} on the bench in week ${worst.week}${worst.costly ? ' — and it cost them the game' : ''}.` : ''}` : `${T(L, best.id).name} are lineup geniuses! ${worst && worst.lost >= 10 ? `${T(L, worst.id).name}… left ${fmt(worst.lost)} on the bench. Yikes.` : ''}`;
+      return { key: 'lineupiq', title: pro ? 'Lineup IQ' : 'Lineup smarts', html, dur: 17000, line };
+    },
+    projections(L) {
+      const A = window.DeskAnalytics && DeskAnalytics.projections(L); if (!A) return null;
+      const pro = voice(L) === 'pro';
+      const teamRow = (t) => { const x = T(L, t.id); return `<div class="pl"><span>${icon(x)} <b style="color:${esc(x.color)}">${esc(x.name)}</b><em>beat it ${t.beat} of ${t.n} weeks</em></span><b class="${t.avg >= 0 ? 'mv-up' : 'mv-dn'}">${t.avg >= 0 ? '+' : ''}${fmt(t.avg)}</b></div>`; };
+      const plRow = (p) => `<div class="pl">${headshot(p.id, p.tm, 'hs-sm')}<span>${esc(p.n)}<em>${esc(p.pos)} · ${esc(T(L, p.team).name)}</em></span><b class="${p.avg >= 0 ? 'mv-up' : 'mv-dn'}">${p.avg >= 0 ? '+' : ''}${fmt(p.avg)}</b></div>`;
+      const html = `<div class="an-2"><div><h4>${pro ? 'Teams vs their projections' : 'Who beats the experts'} <small>avg points over/under per week</small></h4>${A.teams.slice(0, 4).map(teamRow).join('')}<div style="height:8px"></div>${A.teams.slice(-3).map(teamRow).join('')}</div>
+        <div>${A.overs.length ? `<h4>${pro ? 'Players beating projections' : 'Overachievers'}</h4>${A.overs.slice(0, 4).map(plRow).join('')}<h4 style="margin-top:12px">${pro ? 'Players missing projections' : 'Underachievers'}</h4>${A.unders.slice(0, 3).map(plRow).join('')}` : '<h4>Players</h4><div class="pl">Player stats start once lineups are saved for a full week</div>'}</div></div>`;
+      const top = A.teams[0], bot = A.teams[A.teams.length - 1];
+      const line = top ? (pro ? `ESPN keeps underrating ${T(L, top.id).name}: ${fmt(top.avg)} points a week over projection. ${bot ? `${T(L, bot.id).name} keep falling short.` : ''}` : `${T(L, top.id).name} keep proving the experts wrong — +${fmt(top.avg)} a week!`) : '';
+      return { key: 'projections', title: pro ? 'Beating the projections' : 'Experts vs reality', html, dur: 16000, line };
+    },
+    moves(L) {
+      const A = window.DeskAnalytics && DeskAnalytics.moves(L); if (!A || (!A.pickups.length && !A.trades.length)) return null;
+      const pro = voice(L) === 'pro';
+      const pick = (x) => { const tm = T(L, x.team); return `<div class="pl">${headshot(x.it.player_id, x.it.pro, 'hs-sm')}<span>${esc(x.it.name || 'Player')}<em>${esc(x.it.pos || '')} · <span style="color:${esc(tm.color)}">${esc(tm.name)}</span> · ${x.t.kind === 'waiver' ? 'waivers' : 'free agent'}, wk ${x.t.week}</em></span><b>${x.weeks ? fmt(x.started) : '—'}</b></div>`; };
+      const trade = (x) => `<div class="trd">${x.sides.map((sd, i) => { const tm = T(L, sd.team); return `<div class="trd-s ${i === 0 && x.sides[0].pts > x.sides[1].pts ? 'win' : ''}"><b style="color:${esc(tm.color)}">${icon(tm)} ${esc(tm.name)}</b><span>got ${esc(sd.got.map((g) => g.name || 'a player').join(', '))}</span><em>${fmt(sd.pts)} pts started since</em></div>`; }).join('<span class="trd-vs">⇄</span>')}<small>Week ${x.t.week} trade</small></div>`;
+      const html = `<div class="an-2"><div><h4>${pro ? 'Best pickups' : 'Best grabs'} <small>points scored as a starter since</small></h4>${A.pickups.map(pick).join('') || '<div class="pl">No pickups yet</div>'}</div><div><h4>${pro ? 'Trade scorecard' : 'Who won the trade?'}</h4>${A.trades.map(trade).join('') || '<div class="pl">No trades yet</div>'}</div></div>
+        <div class="an-foot">Points since the move count weeks with saved lineups (week 12 on)</div>`;
+      const p = A.pickups[0];
+      const line = p && p.weeks ? (pro ? `Best pickup so far: ${p.it.name} — ${fmt(p.started)} points as a starter for ${T(L, p.team).name}.` : `${T(L, p.team).name} struck gold with ${p.it.name}: ${fmt(p.started)} points!`) : (pro ? 'Grading the league’s moves.' : 'Who’s winning the waiver wire?');
+      return { key: 'moves', title: pro ? 'Waiver & trade grades' : 'Who won the moves', html, dur: 16000, line };
+    },
+    reportcards(L) {
+      const A = window.DeskAnalytics && DeskAnalytics.reportCards(L); if (!A) return null;
+      const pro = voice(L) === 'pro';
+      const html = `<div class="rc-grid">${A.cards.map((c) => { const x = T(L, c.id); return `<div class="rc" style="--c:${esc(x.color)}"><div class="rc-g rc-${esc(c.letter[0])}">${esc(c.letter)}</div><div><b>${icon(x)} ${esc(x.name)}</b><span>${fmt(c.pts)} · ${c.won ? 'W' : 'L'}${c.notes.length ? ' · ' + esc(c.notes.slice(0, 2).join(', ')) : ''}</span></div></div>`; }).join('')}</div>`;
+      const top = A.cards[0], bot = A.cards[A.cards.length - 1];
+      const line = pro ? `Week ${A.week} report cards: ${T(L, top.id).name} earn an ${top.letter}. ${T(L, bot.id).name}: ${bot.letter}.` : `Report cards are in! ${T(L, top.id).name} get an ${top.letter}. ${T(L, bot.id).name}… ${bot.letter}. See me after class.`;
+      return { key: 'reportcards', title: pro ? `Week ${A.week} report cards` : `Week ${A.week} grades`, html, dur: 18000, line };
     },
     bracket(L) {
       const br = bracketOf(L); if (!br) return null;
@@ -600,12 +676,12 @@
   function planFor(L) {
     const live = L.matchups.some((m) => !m.done);
     const PLANS = {
-      pregame: ['countdown', 'preview', 'picks', 'news', 'clinch', 'standings', 'transactions', 'leaders', 'records'],
+      pregame: ['countdown', 'preview', 'picks', 'news', 'clinch', 'projections', 'standings', 'transactions', 'timing', 'leaders', 'records'],
       whip: ['whip', 'scoreboard', 'whip', 'need', 'whip', 'players', 'whip', 'news'],
       showdown: ['scenarios', 'spotlight', 'scenarios', 'need', 'clinch', 'scoreboard', 'news'],
-      awards: ['recap', 'standings', 'clinch', 'leaders', 'records', 'transactions', 'rundown', 'news'],
+      awards: ['reportcards', 'recap', 'standings', 'clinch', 'drama', 'lineupiq', 'comebacks', 'leaders', 'moves', 'records', 'transactions', 'rundown', 'news'],
     };
-    let plan = PLANS[mode] || (live ? ['spotlight', 'scoreboard', 'need', 'players', 'news', 'spotlight', 'standings', 'clinch', 'records', 'transactions', 'nfl', 'rundown'] : ['recap', 'scoreboard', 'standings', 'clinch', 'leaders', 'records', 'transactions', 'news', 'players', 'spotlight', 'rundown', 'nfl']);
+    let plan = PLANS[mode] || (live ? ['spotlight', 'scoreboard', 'need', 'players', 'news', 'spotlight', 'standings', 'clinch', 'comebacks', 'records', 'transactions', 'nfl', 'rundown'] : ['recap', 'reportcards', 'scoreboard', 'standings', 'clinch', 'drama', 'comebacks', 'leaders', 'lineupiq', 'records', 'moves', 'timing', 'projections', 'transactions', 'news', 'players', 'spotlight', 'rundown', 'nfl']);
     const ph = phaseOf(L);
     if (ph === 'championship') plan = live ? ['champLive', 'tale', 'scenarios', 'champLive', 'bracket', 'need', 'records', 'champLive', 'news'] : ['tale', 'bracket', 'countdown', 'tale', 'records', 'news'];
     else if (ph === 'champion') plan = ['champion', 'bracket', 'recap', 'leaders', 'records', 'champion', 'standings'];
@@ -640,6 +716,7 @@
     const key = segPlan[segIdx++];
     const seg = SEGMENTS[key](cur);
     if (!seg) return nextSegment();
+    if ((key === 'spotlight' || key === 'champLive') && seg.matchup && Date.now() - lastBumper > 6 * 60 * 1000) { lastBumper = Date.now(); await logoBumper(cur, seg.matchup, key === 'champLive'); }
     showSegment(seg, true);
     segStarted = Date.now(); segDur = seg.dur;
     segTimer = setTimeout(nextSegment, seg.dur);
@@ -669,6 +746,22 @@
     busy = false;
   }
 
+  // ------------------------------------------------------------------ 3D logo bumper
+  // A few seconds of the two teams' logos as 3D chrome emblems before a spotlight game.
+  let lastBumper = 0;
+  async function logoBumper(L, m, title) {
+    if (!window.Logo3D || !Logo3D.supported() || busy) return;
+    busy = true;
+    const h = T(L, m.home), a = T(L, m.away), el = $('logo3d'), pro = L.studio === 'pro';
+    el.querySelector('.l3-k').textContent = title ? (pro ? 'The Championship' : 'The Big Game') : (pro ? 'Spotlight game' : 'The big one');
+    el.querySelector('.l3-t').textContent = `${h.name}  vs  ${a.name}`;
+    el.classList.add('show');
+    M.sting('handoff');
+    try { await Logo3D.play(el, { mode: 'versus', teams: [D.team(L, m.home), D.team(L, m.away)], ms: 5200 }); } catch (e) { /* flat look */ }
+    el.classList.remove('show');
+    busy = false;
+  }
+
   // ------------------------------------------------------------------ championship takeovers
   const champIntroAt = new Map();
   async function champIntro(L) {
@@ -682,6 +775,7 @@
       <div class="cf-teams"><div class="cf-t l" style="--c:${esc(a.color)}">${icon(a)}<b>${esc(a.name)}</b><small>#${br.seedOf.get(br.final.a)} seed</small></div><div class="cf-vs">VS</div><div class="cf-t r" style="--c:${esc(b.color)}">${icon(b)}<b>${esc(b.name)}</b><small>#${br.seedOf.get(br.final.b)} seed</small></div></div>
       <div class="cf-sub">${br.final.weeks.length > 1 ? `Weeks ${br.final.weeks.join(' + ')} · scores combined` : `Week ${br.final.weeks[0]}`} · ${pro ? 'one trophy' : 'winner takes all'}</div>`;
     fx.className = 'show intro';
+    if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'versus', teams: [a, b], ms: 10200 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
     M.sting('champIntro');
     say(pro ? `This is it. ${a.name} and ${b.name}, for the ${L.year} ${L.name} championship.` : `It all comes down to this: ${a.name} vs ${b.name} for the title!`);
     await sleep(10500);
@@ -701,6 +795,7 @@
       <div class="cf-champ" style="color:${esc(t.color)}">${esc(t.name)}</div><div class="cf-title small">${L.year} ${esc(L.name.toUpperCase())} ${pro ? 'CHAMPIONS' : 'CHAMPS!'}</div>
       ${opp && ws != null ? `<div class="cf-sub">${fmt(ws)} – ${fmt(ls)} over ${esc(opp.name)}</div>` : ''}`;
     fx.className = 'show finale';
+    if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'champion', teams: [t], ms: quiet ? 8800 : 14800 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
     if (!quiet) M.sting('champion');
     say(pro ? `${t.name} are your ${L.year} ${L.name} champions!` : `${t.name} won the whole thing! Champs!`);
     const cv = fx.querySelector('canvas'), W = cv.width = 1920, H = cv.height = 1080, x = cv.getContext('2d');
@@ -976,7 +1071,7 @@
     addEventListener('mousemove', () => { document.body.classList.add('ui'); clearTimeout(hideUi); hideUi = setTimeout(() => document.body.classList.remove('ui'), 2500); });
     D.on(onEvent);
     D.__emit = onEvent;
-    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), commercial: () => commercialBreak(), champIntro: () => { champIntroAt.clear(); return champIntro(cur); }, champFinale: (id) => champFinale(cur, id || (bracketOf(cur) || {}).champion), bracket: () => bracketOf(cur), restudio: () => applyStudio(cur), checkPlayoffs: (q) => checkPlayoffs(q), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
+    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), commercial: () => commercialBreak(), bumper: (i) => logoBumper(cur, cur.matchups[i || 0]), logo3d: (mode, i) => { const m = cur.matchups[i || 0]; const el = $('logo3d'); el.classList.add('show'); return Logo3D.play(el, { mode, teams: [D.team(cur, m.home), D.team(cur, m.away)], ms: 6000 }).then((ok) => { el.classList.remove('show'); return ok; }); }, champIntro: () => { champIntroAt.clear(); return champIntro(cur); }, champFinale: (id) => champFinale(cur, id || (bracketOf(cur) || {}).champion), bracket: () => bracketOf(cur), restudio: () => applyStudio(cur), checkPlayoffs: (q) => checkPlayoffs(q), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
     try {
       leagues = (await D.init()).filter((L) => L.year);
       await D.refreshNfl();
@@ -999,6 +1094,8 @@
     // Record book + last finished week (for the recap show), in the background.
     if (window.DeskRecords) Promise.all(leagues.map((L) => DeskRecords.load(D.sb, L).catch(() => null))).then(() => { checkRecords(true); recordsReady = true; });
     for (const L of leagues) findRecapWeek(L);
+    const loadAnalytics = async () => { if (!window.DeskAnalytics) return; for (const L of leagues) { try { await DeskAnalytics.load(D.sb, L); } catch (e) { console.warn('analysis unavailable', L.slug, e); } } };
+    setTimeout(loadAnalytics, 6000); setInterval(loadAnalytics, 30 * 60 * 1000);
     checkPlayoffs(true);
     // A crowned champion gets the finale once when the channel starts.
     setTimeout(() => { for (const L of leagues) { const b = bracketOf(L); if (b && b.phase === 'champion' && (lock === 'auto' || lock === L.id)) { champFinale(L, b.champion, true); break; } } }, 4000);

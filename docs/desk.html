@@ -7,6 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📺</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,700;0,800;1,800&family=Inter:wght@400;600;700&family=Baloo+2:wght@500;700;800&family=Nunito:wght@500;700;800&display=swap" rel="stylesheet">
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 /* ======================================================================
@@ -400,6 +401,43 @@ html[data-champ="on"] #tv::after { content: ''; position: absolute; inset: -30%;
 .cf-champ { font: italic 800 130px/0.95 'Barlow Condensed', sans-serif; text-shadow: 0 8px 50px rgba(0,0,0,.6); animation: kick 1s 1s cubic-bezier(.2,1.3,.4,1) both; }
 #champFx.finale .cf-sub { animation-delay: 1.6s; }
 
+/* ---- season analysis ---- */
+.an-2 { display: grid; grid-template-columns: 1.35fr 1fr; gap: 26px; }
+.an-2 h4 { margin: 0 0 10px; font: 700 15px var(--font-body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.an-2 h4 small { text-transform: none; letter-spacing: 0; font-weight: 600; margin-left: 6px; opacity: .8; }
+.an-row { display: grid; grid-template-columns: 30px 1fr auto; gap: 12px; align-items: center; padding: 10px 14px; border-radius: 10px; background: var(--panel-2); margin-bottom: 8px; font: 700 19px var(--font-body); }
+.an-row em { display: block; font: 600 14px var(--font-body); font-style: normal; color: var(--muted); margin-top: 2px; }
+.an-rk { font: 800 26px var(--font-head); color: var(--accent); text-align: center; }
+.an-big { font: var(--head-style) 800 34px var(--font-head); font-variant-numeric: tabular-nums; color: var(--accent); }
+.an-foot { margin-top: 8px; font: 600 14px var(--font-body); color: var(--muted); }
+.tm { display: grid; gap: 5px; }
+.tm-row { display: grid; grid-template-columns: 2.2fr repeat(var(--cols, 6), .8fr) 1.6fr; gap: 8px; align-items: center; padding: 6px 12px; border-radius: 8px; background: var(--panel-2); font: 600 17px var(--font-body); }
+.tm-row > span:not(:first-child):not(.tm-id) { text-align: center; font-variant-numeric: tabular-nums; }
+.tm-head { background: transparent; font: 700 13px var(--font-body); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tm-lg { background: transparent; color: var(--muted); font-size: 15px; }
+.tm-cell.hi { color: var(--good); font-weight: 800; } .tm-cell.lo { color: var(--muted); opacity: .7; }
+.tm-id { font: 700 14px var(--font-body); color: var(--accent); }
+.iq { display: grid; grid-template-columns: 1.4fr 1fr 60px; gap: 12px; align-items: center; padding: 7px 12px; border-radius: 8px; background: var(--panel-2); margin-bottom: 6px; font: 600 18px var(--font-body); }
+.iq > b { text-align: right; font-variant-numeric: tabular-nums; } .iq-bar { height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; } .iq-bar i { display: block; height: 100%; }
+.trd { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 10px; background: var(--panel-2); margin-bottom: 10px; position: relative; }
+.trd-s { display: flex; flex-direction: column; gap: 3px; font: 600 15px var(--font-body); } .trd-s b { font: 700 18px var(--font-body); } .trd-s em { font-style: normal; color: var(--muted); font-size: 14px; }
+.trd-s.win em { color: var(--good); font-weight: 800; } .trd-vs { font-size: 26px; color: var(--muted); } .trd small { position: absolute; right: 12px; top: 6px; color: var(--muted); font: 600 12px var(--font-body); }
+.rc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 20px; }
+.rc { display: grid; grid-template-columns: 74px 1fr; gap: 14px; align-items: center; padding: 8px 14px; border-radius: 10px; background: var(--panel-2); border-left: 6px solid var(--c); }
+.rc b { display: block; font: 700 19px var(--font-body); } .rc span { font: 600 14px var(--font-body); color: var(--muted); }
+.rc-g { font: var(--head-style) 800 46px/1 var(--font-head); text-align: center; }
+.rc-A { color: var(--good); } .rc-B { color: var(--accent); } .rc-C { color: #f5a524; } .rc-D, .rc-F { color: var(--hot); }
+
+/* ---- 3D metallic logos (desk-logo3d.js) ---- */
+.logo3d-canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; z-index: 1; pointer-events: none; transition: opacity .3s; }
+#logo3d { position: absolute; inset: 0; z-index: 24; display: none; background: radial-gradient(ellipse at 50% 30%, #0b1a3d 0%, #02040c 70%); }
+#logo3d.show { display: block; }
+#logo3d .l3-text { position: absolute; left: 0; right: 0; bottom: 120px; z-index: 2; text-align: center; color: #fff; text-shadow: 0 6px 30px rgba(0,0,0,.8); }
+#logo3d .l3-k { font: 700 24px 'Inter', sans-serif; letter-spacing: .4em; color: #9fc0ff; text-transform: uppercase; animation: hd .8s .6s both; }
+#logo3d .l3-t { font: italic 800 84px/1 'Barlow Condensed', sans-serif; letter-spacing: .02em; text-transform: uppercase; margin-top: 10px; animation: hd .8s .9s both; }
+#champFx.has3d .cf-t .ic, #champFx.has3d .cf-logo { visibility: hidden; }
+#champFx.has3d .cf-beams { opacity: .35; }
+
 /* ---- connection banner ---- */
 #netBanner { position: fixed; left: 50%; top: 14px; transform: translate(-50%, -300%); z-index: 80; padding: 10px 22px; border-radius: 999px; background: #c2410c; color: #fff; font: 700 16px 'Inter', sans-serif; transition: transform .4s; }
 #netBanner.show { transform: translate(-50%, 0); }
@@ -427,6 +465,7 @@ html[data-champ="on"] #tv::after { content: ''; position: absolute; inset: -30%;
   <div id="breaking"><div class="bg"></div><div class="stripes"></div><div class="box"><div class="kick"></div><div class="hd"></div><div class="bd"></div><div class="teams"></div><div class="meter"></div></div></div>
   <div id="wipe"><div><div class="w1"></div><div class="w2"></div></div></div>
   <div id="champFx"></div>
+  <div id="logo3d"><div class="l3-text"><div class="l3-k"></div><div class="l3-t"></div></div></div>
 </div>
 <button id="soundGate" type="button" hidden>🔊 Sound on</button>
 <div id="controls">
@@ -445,8 +484,10 @@ html[data-champ="on"] #tv::after { content: ''; position: absolute; inset: -30%;
 <script src="desk-data.js?v=4"></script>
 <script src="desk-records.js?v=1"></script>
 <script src="wp-chart.js?v=1"></script>
-<script src="desk-playoffs.js?v=1"></script>
+<script src="desk-playoffs.js?v=2"></script>
+<script src="desk-analytics.js?v=4"></script>
+<script src="desk-logo3d.js?v=1"></script>
 <script src="recap-video.js?v=4"></script>
-<script src="desk.js?v=7"></script>
+<script src="desk.js?v=10"></script>
 </body>
 </html>
