@@ -22,9 +22,9 @@
   .final-standing-row input[type="number"] { width: 50px; padding: 5px; border: 1px solid var(--input-border); border-radius: var(--r-sm); text-align: center; background: var(--input-bg); color: var(--fg); }
   .final-standing-row .team-label { flex: 1; }
   .final-standing-row .team-source-tag { font-size: 10px; color: var(--disabled-fg); text-transform: uppercase; }
-  .legacy-team-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid var(--input-border); border-radius: var(--r-sm); background: var(--input-bg); color: var(--fg); }
+  .legacy-team-row input[type="text"] { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--input-border); border-radius: var(--r-sm); background: var(--input-bg); color: var(--fg); }
   .legacy-team-row input[type="color"] { width: 40px; height: 32px; border: 1px solid var(--input-border); border-radius: var(--r-sm); padding: 2px; }
-  .legacy-remove-btn { background: var(--card-bg); border: 1px solid var(--warn); color: var(--warn); border-radius: var(--r-sm); padding: 5px 10px; cursor: pointer; font-size: 12px; }
+  .legacy-remove-btn { flex-shrink: 0; white-space: nowrap; background: var(--card-bg); border: 1px solid var(--warn); color: var(--warn); border-radius: var(--r-sm); padding: 5px 10px; cursor: pointer; font-size: 12px; }
   #legacyMatchupForm { background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--r-md); padding: 14px 16px; margin-bottom: 16px; }
   #legacyMatchupForm select, #legacyMatchupForm input { padding: 6px 8px; border: 1px solid var(--input-border); border-radius: var(--r-sm); background: var(--card-bg); color: var(--fg); }
   .legacy-matchup-week-group { font-weight: 600; font-size: 13px; color: var(--faint-fg); margin: 14px 0 6px; }
@@ -74,6 +74,7 @@
     <a class="top-nav-link" href="index.html">Matchups</a>
     <a class="top-nav-link" href="standings.html">Standings</a>
     <a class="top-nav-link" href="outlook.html">Outlook</a>
+    <a class="top-nav-link" href="year-in-review.html">Year in Review</a>
     <a class="top-nav-link is-active" href="preferences.html">Display</a>
     <button class="top-nav-link" id="themeToggle" type="button"></button>
   </nav>
@@ -152,6 +153,7 @@
 
 </div>
 <script src="config.js"></script>
-<script src="settings.js?v=6"></script>
+<script src="page-state.js?v=1"></script>
+<script src="settings.js?v=7"></script>
 </body>
 </html>

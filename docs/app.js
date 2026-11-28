@@ -427,8 +427,13 @@ async function fetchAllRows(buildQuery) {
 
 async function loadLeagues() {
   const { data, error } = await sb.from('leagues').select('id, slug, name').order('name');
-  if (error) { statusEl.textContent = 'Failed to load leagues: ' + error.message; return; }
+  if (error) {
+    if (window.PageState) PageState.errorBox(statusEl, 'Couldn’t load your leagues', error, () => location.reload());
+    else statusEl.textContent = 'Failed to load leagues: ' + error.message;
+    return;
+  }
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
+  if (window.PageState) PageState.pickLeague(leagueSelect, data);
 }
 
 // Given snapshot rows for a SPECIFIC week, determines whether every
@@ -2312,8 +2317,22 @@ async function loadYearsWeeks(leagueId) {
     const weeks = weeksForYear(Number(yearSelect.value));
     weekSelect.innerHTML = weeks.map((w) => `<option value="${w}">Week ${w}</option>`).join('');
   };
-  yearSelect.onchange = () => { updateWeeks(); loadMatchups(); };
+  yearSelect.onchange = () => { updateWeeks(); loadMatchups(); syncMatchupsUrl(); };
+  // A shared link (?year=&week=) opens that week -- only on the first load, so
+  // switching leagues afterwards starts on the new league's latest week.
+  if (window.PageState && !urlWeekApplied) {
+    urlWeekApplied = true;
+    if (PageState.pick(yearSelect, PageState.param('year'))) { updateWeeks(); PageState.pick(weekSelect, PageState.param('week')); return; }
+  }
   updateWeeks();
+}
+let urlWeekApplied = false;
+// Keeps ?league=&year=&week= in the address bar. The latest week stays out of
+// it, so a link to "now" keeps following the season instead of freezing.
+function syncMatchupsUrl() {
+  if (!window.PageState) return;
+  const latest = yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0;
+  PageState.set({ league: leagueSelect.value, year: latest ? null : yearSelect.value, week: latest ? null : weekSelect.value });
 }
 
 // Periodically checks whether a NEWER week's data has started arriving
@@ -2382,6 +2401,49 @@ const WEEK_SNAPSHOT_COLUMNS = 'id, league_id, year, week, matchup_id, team_id, i
 // True when every matchup on screen is final -- the auto-refresh then backs
 // off to IDLE_REFRESH_MS instead of the normal 30s.
 let weekIsIdle = false;
+
+// "Updated 40s ago" next to the subtitle, from the newest snapshot on screen.
+// While games are live on the latest week, a long gap means the poller (GitHub
+// Actions, every ~5 min) has stalled -- say so instead of silently showing old
+// numbers.
+let lastDataAt = null;
+const STALE_AFTER_MS = 25 * 60 * 1000;
+// The poller only writes when something changes, so quiet stretches are normal.
+// Only warn while an NFL game is actually in progress (from ESPN's public
+// scoreboard, checked at most every 2 minutes).
+let nflLive = false, nflLiveCheckedAt = 0;
+async function refreshNflLive() {
+  if (Date.now() - nflLiveCheckedAt < 2 * 60 * 1000) return;
+  nflLiveCheckedAt = Date.now();
+  try {
+    const r = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+    const j = await r.json();
+    nflLive = (j.events || []).some((e) => e.status && e.status.type && e.status.type.state === 'in');
+  } catch { nflLive = false; }
+  renderFreshness();
+}
+function agoText(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + 's ago';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + ' min ago';
+  const h = Math.round(m / 60);
+  if (h < 48) return h + 'h ago';
+  return Math.round(h / 24) + ' days ago';
+}
+function renderFreshness() {
+  const el = document.getElementById('freshness');
+  if (!el) return;
+  if (!lastDataAt) { el.textContent = ''; el.className = ''; return; }
+  const age = Date.now() - lastDataAt;
+  const latest = yearSelect.selectedIndex === 0 && weekSelect.selectedIndex === 0;
+  if (latest && !weekIsIdle && age > STALE_AFTER_MS) refreshNflLive();
+  const stale = latest && !weekIsIdle && nflLive && age > STALE_AFTER_MS;
+  el.className = stale ? 'stale' : '';
+  el.textContent = weekIsIdle ? 'All games final' : stale ? `⚠ No new data since ${agoText(age)}` : `Updated ${agoText(age)}`;
+  el.title = 'Newest data: ' + new Date(lastDataAt).toLocaleString();
+}
+setInterval(() => { if (!document.hidden) renderFreshness(); }, 15000);
 const IDLE_REFRESH_MS = 5 * 60 * 1000;
 let weekRowsCache = { key: null, rows: [], ids: new Set(), lastTs: null };
 const teamsCache = {}; // leagueId -> { at, data }
@@ -6237,7 +6299,10 @@ async function loadMatchups({ preserveCharts = false } = {}) {
   try {
     ({ byMatchup, teamInfo } = await fetchMatchupData(leagueId, year, week));
   } catch (err) {
-    if (!preserveCharts) statusEl.textContent = 'Error loading data: ' + err.message;
+    if (!preserveCharts) {
+      if (window.PageState) PageState.errorBox(statusEl, 'Couldn’t load this week’s matchups', err, () => loadMatchups());
+      else statusEl.textContent = 'Error loading data: ' + err.message;
+    }
     return; // don't wipe an existing view over a transient refresh error
   }
 
@@ -6253,6 +6318,10 @@ async function loadMatchups({ preserveCharts = false } = {}) {
       const h = latestRow(rows, true), a = latestRow(rows, false);
       return !!(h && a && h.all_starters_done && a.all_starters_done);
     });
+    let newest = 0;
+    for (const id of ids) for (const r of byMatchup[id]) { const t = Date.parse(r.ts); if (t > newest) newest = t; }
+    lastDataAt = newest || null;
+    renderFreshness();
   }
 
   // Computed here (rather than further down, where this used to live)
@@ -6610,12 +6679,14 @@ async function init() {
   await loadLeagues();
   leagueSelect.onchange = async () => {
     await loadYearsWeeks(leagueSelect.value);
+    syncMatchupsUrl();
     await loadMatchups();
     checkYearInReviewAvailability(leagueSelect.value);
   };
-  weekSelect.onchange = loadMatchups;
+  weekSelect.onchange = () => { syncMatchupsUrl(); loadMatchups(); };
   if (leagueSelect.value) {
     await loadYearsWeeks(leagueSelect.value);
+    syncMatchupsUrl();
     await loadMatchups();
     checkYearInReviewAvailability(leagueSelect.value);
   }

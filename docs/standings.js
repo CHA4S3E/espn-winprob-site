@@ -51,7 +51,8 @@ function showError(headline, detail) {
   console.error(headline, detail);
   const loadingEl = document.getElementById('loadingState');
   loadingEl.style.display = 'block';
-  loadingEl.textContent = `${headline} -- check the browser console for details.`;
+  if (window.PageState) PageState.errorBox(loadingEl, headline, detail, leagueSelect.value ? () => loadLeagueData(leagueSelect.value) : () => location.reload());
+  else loadingEl.textContent = `${headline} -- check the browser console for details.`;
   document.getElementById('standingsTable').style.display = 'none';
   document.getElementById('emptyState').style.display = 'none';
 }
@@ -352,10 +353,11 @@ function computePowerRatings(rows, teamIds, pregameWinProbByKey, throughWeek, op
 // Data loading
 // ============================================================
 async function loadLeagues() {
-  const { data, error } = await sb.from('leagues').select('id, name').order('name');
+  const { data, error } = await sb.from('leagues').select('id, slug, name').order('name');
   if (error) { showError('Could not load leagues', error); return; }
   if (!data.length) { showError('No leagues found', 'The leagues table returned zero rows for this Supabase project.'); return; }
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
+  if (window.PageState) PageState.pickLeague(leagueSelect, data);
   await loadLeagueData(data[0].id);
 }
 
@@ -427,6 +429,7 @@ async function loadLeagueData(leagueId, { quiet = false } = {}) {
     `<option value="">Full season</option>` +
     weeks.map((w) => `<option value="${w}">Through week ${w}</option>`).join('');
   if (quiet && keepWeek && weeks.includes(Number(keepWeek))) weekSelect.value = keepWeek;
+  else if (!quiet && window.PageState && !urlWeekApplied) { urlWeekApplied = true; PageState.pick(weekSelect, PageState.param('week')); }
 
   animateNextRender = !quiet;
   render();
@@ -682,7 +685,9 @@ function confidenceLabel(effectiveGamesPlayed) {
 }
 
 leagueSelect.addEventListener('change', () => loadLeagueData(leagueSelect.value));
-weekSelect.addEventListener('change', () => { animateNextRender = true; render(); });
+let urlWeekApplied = false; // a shared ?week= link applies once, on first load
+weekSelect.addEventListener('change', () => { animateNextRender = true; render(); if (window.PageState) PageState.set({ week: weekSelect.value || null }); });
+leagueSelect.addEventListener('change', () => { if (window.PageState) PageState.set({ week: null }); });
 
 // Projections toggle (remembered per browser). Defaults ON.
 const projectedToggle = document.getElementById('projectedToggle');

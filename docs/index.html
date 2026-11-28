@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fantasy Win Probability Tracker</title>
 <!-- Controls the color of the browser's OWN UI chrome on mobile (the
      status bar area, and on some browsers the overscroll/bounce region)
@@ -622,6 +623,8 @@
     font-size: var(--text-3xl); letter-spacing: 0.02em;
   }
   .sub { text-align: center; color: var(--muted); font-size: var(--text-sm); margin-bottom: 18px; }
+  #freshness:not(:empty)::before { content: ' · '; }
+  #freshness.stale { color: var(--warn, #c2410c); font-weight: 600; }
 
   /* Team settings used to sit in the top nav as its own tab; it's a
      rarely-used, PIN-gated admin page, not a view anyone switches to
@@ -1743,6 +1746,20 @@
   }
   .top-nav-link:hover { background: var(--btn-hover); }
   .top-nav-link.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* ---- Phones ---- */
+  @media (max-width: 560px) {
+    body { padding: 18px 12px 40px; }
+    h2 { font-size: var(--text-2xl); }
+    .top-nav { gap: 6px; margin-bottom: 16px; }
+    .top-nav-link { padding: 6px 11px; }
+    #controls { gap: 8px; }
+    .needle-card { padding: 16px 14px 18px; }
+    /* Gauge above the two team rows instead of beside them. */
+    .fc-top-row { flex-direction: column; gap: 14px; }
+    .fc-gauge-col { flex: none; }
+    .fc-info-col { flex: none; width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -1798,12 +1815,13 @@
   <div class="title-row">
     <h2>Fantasy W<a class="info-icon" href="settings.html" title="Team settings" aria-label="Team settings">i</a>n Probability</h2>
   </div>
-  <div class="sub">Updates automatically every ~1 minute while games are live.</div>
+  <div class="sub">Updates automatically every ~1 minute while games are live.<span id="freshness"></span></div>
 
   <nav class="top-nav">
     <a class="top-nav-link is-active" href="index.html">Matchups</a>
     <a class="top-nav-link" href="standings.html">Standings</a>
     <a class="top-nav-link" href="outlook.html">Outlook</a>
+    <a class="top-nav-link" href="year-in-review.html">Year in Review</a>
     <a class="top-nav-link" href="preferences.html">Display</a>
   </nav>
 
@@ -1896,8 +1914,9 @@
 </div>
 
 <script src="config.js"></script>
+<script src="page-state.js?v=1"></script>
 <button id="festMeteor" type="button" hidden aria-label="Replay the meteor strike" title="Replay the meteor strike"><span class="fm-crater"></span><span class="fm-glow"></span><i></i><i></i><i></i><span class="fm-rock"></span><span class="fm-sleigh">🛷</span><span class="fm-label">Replay the impact</span></button>
 <script src="week-cinema.js?v=1"></script>
-<script src="app.js?v=62"></script>
+<script src="app.js?v=63"></script>
 </body>
 </html>

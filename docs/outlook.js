@@ -46,7 +46,8 @@ function showError(headline, detail) {
   console.error(headline, detail);
   const loadingEl = document.getElementById('loadingState');
   loadingEl.style.display = 'block';
-  loadingEl.textContent = `${headline} -- check the browser console for details.`;
+  if (window.PageState) PageState.errorBox(loadingEl, headline, detail, leagueSelect.value ? () => loadLeagueData(leagueSelect.value) : () => location.reload());
+  else loadingEl.textContent = `${headline} -- check the browser console for details.`;
   document.getElementById('content').style.display = 'none';
   document.getElementById('emptyState').style.display = 'none';
 }
@@ -424,11 +425,12 @@ function seededMean(arr) { return arr.length ? arr.reduce((a, b) => a + b, 0) / 
 
 // ---------- data ----------
 async function loadLeagues() {
-  const { data, error } = await sb.from('leagues').select('id, name, playoff_spots, reseed_weeks').order('name');
+  const { data, error } = await sb.from('leagues').select('id, slug, name, playoff_spots, reseed_weeks').order('name');
   if (error) { showError('Could not load leagues', error); return; }
   if (!data.length) { showError('No leagues found', 'The leagues table returned zero rows for this Supabase project.'); return; }
   leaguesById = Object.fromEntries(data.map((l) => [l.id, l]));
   leagueSelect.innerHTML = data.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
+  if (window.PageState) PageState.pickLeague(leagueSelect, data);
   await loadLeagueData(data[0].id);
 }
 
