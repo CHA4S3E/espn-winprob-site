@@ -727,9 +727,13 @@
     if (busy) { segTimer = setTimeout(nextSegment, 1500); return; }
     if (segIdx >= segPlan.length) {
       // Block finished: a commercial break now and then, then throw it over to the other studio.
-      if (Math.random() < 0.6) await commercialBreak();
+      const hadAd = Math.random() < 0.6 && await commercialBreak();
       const other = lock === 'auto' ? leagues.find((L) => L !== cur && L.year) : null;
-      if (other) await handoff(other);
+      if (other && await handoff(other, { fromAd: hadAd })) {
+        // The new studio's first segment is already on screen and timed.
+        if (phaseOf(cur) === 'championship') { clearTimeout(segTimer); await champIntro(cur); segStarted = Date.now(); segTimer = setTimeout(nextSegment, segDur); }
+        return;
+      }
       segPlan = planFor(cur); segIdx = 0;
       if (!segPlan.length) { showSegment({ title: 'Studio', html: `<div class="empty-seg">No games this week yet.</div>`, line: 'Stand by.' }, true); segTimer = setTimeout(nextSegment, 20000); return; }
     }
@@ -739,13 +743,14 @@
     if (!seg) return nextSegment();
     if ((key === 'spotlight' || key === 'champLive') && seg.matchup && Date.now() - lastBumper > 6 * 60 * 1000) { lastBumper = Date.now(); await logoBumper(cur, seg.matchup, key === 'champLive'); }
     showSegment(seg, true);
+    prepareUpcoming3D();
     segStarted = Date.now(); segDur = seg.dur;
     segTimer = setTimeout(nextSegment, seg.dur);
   }
 
   // ------------------------------------------------------------------ commercial break
   async function commercialBreak() {
-    if (busy) return;
+    if (busy) return false;
     busy = true;
     const L = cur, st = L.standings || [];
     const worst = st.length ? st[st.length - 1].id : null, best = st.length ? st[0].id : null;
@@ -765,6 +770,18 @@
     await sleep(12000);
     currentSeg = prevSeg;
     busy = false;
+    return true;
+  }
+
+  // Lite 3D (phones): build just the emblems the next cinematic could use --
+  // the two games the spotlight rotates between, or the two finalists.
+  function prepareUpcoming3D() {
+    if (!window.Logo3D || !Logo3D.supported() || Logo3D.preloadAll()) return;
+    const L = cur; if (!L) return;
+    const br = phaseOf(L) === 'championship' ? bracketOf(L) : null;
+    const ids = br && br.final && br.final.a ? [br.final.a, br.final.b]
+      : L.matchups.slice().sort((a, b) => drama(b) - drama(a)).slice(0, 2).flatMap((m) => [m.home, m.away]);
+    Logo3D.prepare(ids.filter(Boolean).map((id) => T3(L, id))).catch(() => {});
   }
 
   // ------------------------------------------------------------------ 3D logo bumper
@@ -778,7 +795,11 @@
     el.querySelector('.l3-t').textContent = `${h.name}  vs  ${a.name}`;
     el.classList.add('show');
     M.sting('handoff');
-    try { await Logo3D.play(el, { mode: 'versus', teams: [T3(L, m.home), T3(L, m.away)], ms: 9000 }); } catch (e) { /* flat look */ }
+    // The caption follows the shots: each team's name on its close-up, then the matchup on the wide.
+    const captions = [h.name, a.name, `${h.name}  vs  ${a.name}`], tEl = el.querySelector('.l3-t'), box = el.querySelector('.l3-text');
+    const onShot = (i, c) => { const txt = captions[c] || captions[2]; if (tEl.textContent === txt) return; tEl.textContent = txt; tEl.style.color = c === 0 ? h.color : c === 1 ? a.color : ''; box.classList.remove('swap'); void box.offsetWidth; box.classList.add('swap'); };
+    try { await Logo3D.play(el, { mode: 'versus', teams: [T3(L, m.home), T3(L, m.away)], ms: 9000, onShot }); } catch (e) { /* flat look */ }
+    tEl.style.color = ''; box.classList.remove('swap');
     el.classList.remove('show');
     busy = false;
   }
@@ -880,23 +901,46 @@
   }
 
   // ------------------------------------------------------------------ handoff
-  async function handoff(toL) {
-    if (!toL || toL === cur) return;
+  // Throw it over to the other studio. The wipe fully covers the screen from
+  // ~0.8s to ~1.8s of its 2.6s run; in that window the new studio is applied
+  // AND its first segment is put on screen, so the wipe uncovers the new
+  // studio already running -- never the previous studio's last screen (an ad,
+  // a chart) restyled for a moment. Returns true when it put a segment up
+  // (the caller then just times it; see nextSegment).
+  async function handoff(toL, opts) {
+    if (!toL || toL === cur) return false;
     busy = true;
+    const fromAd = opts && opts.fromAd;
     const line = Lines.handoff(cur.studio, { L2: toL.name });
-    say(line);
-    await sleep(1400);
+    // Coming out of a commercial there's nothing to talk over: go straight to
+    // the wipe and say the throw-over line as it plays.
+    if (!fromAd) { say(line); await sleep(1400); }
     const wipe = $('wipe');
     wipe.style.setProperty('--wipe-bg', toL.studio === 'pro' ? 'linear-gradient(90deg,#0a2a6b,#0a4bd6)' : 'linear-gradient(90deg,#3f8f4e,#f2b544)');
     wipe.querySelector('.w1').textContent = shortName(toL) + ' ' + showName(toL);
     wipe.querySelector('.w2').textContent = toL.studio === 'pro' ? 'Live from the studio' : 'Pull up a chair';
     wipe.classList.remove('go'); void wipe.offsetWidth; wipe.classList.add('go');
     M.sting('handoff');
-    await sleep(1200);
+    if (fromAd) say(line);
+    await sleep(1100); // fully covered from here (until ~1.8s)
+    stopRecap();
     applyStudio(toL);
     segPlan = planFor(toL); segIdx = 0;
-    await sleep(1400);
+    let first = null;
+    while (!first && segIdx < segPlan.length) first = SEGMENTS[segPlan[segIdx++]](toL);
+    if (!first) first = { key: 'empty', title: 'Studio', html: `<div class="empty-seg">No games this week yet.</div>`, line: 'Stand by.', dur: 20000 };
+    showSegment(first, false); // drawn under the wipe; charts render in the same frame
+    clearTimeout(segTimer);
+    await sleep(550);
+    // Start its entrance while still covered (~1.65s), so it slides in as the
+    // wipe uncovers it instead of blinking out and back.
+    const body = $('segBody'); body.classList.remove('seg-in'); void body.offsetWidth; body.classList.add('seg-in');
+    await sleep(950); // the wipe finishes sliding off
+    say(first.line);
+    segStarted = Date.now(); segDur = first.dur || 15000;
+    segTimer = setTimeout(nextSegment, segDur);
     busy = false;
+    return true;
   }
 
   // ------------------------------------------------------------------ events
@@ -1326,7 +1370,7 @@
     addEventListener('mousemove', () => { document.body.classList.add('ui'); clearTimeout(hideUi); hideUi = setTimeout(() => document.body.classList.remove('ui'), 2500); });
     D.on(onEvent);
     D.__emit = onEvent;
-    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), story: (t) => storyDemo(t), flush: () => flushStories(), commercial: () => commercialBreak(), bumper: (i) => logoBumper(cur, cur.matchups[i || 0]), logo3d: (mode, i) => { const m = cur.matchups[i || 0]; const el = $('logo3d'); el.classList.add('show'); return Logo3D.play(el, { mode, teams: [D.team(cur, m.home), D.team(cur, m.away)], ms: 6000 }).then((ok) => { el.classList.remove('show'); return ok; }); }, champIntro: () => { champIntroAt.clear(); return champIntro(cur); }, champFinale: (id) => champFinale(cur, id || (bracketOf(cur) || {}).champion), bracket: () => bracketOf(cur), restudio: () => applyStudio(cur), checkPlayoffs: (q) => checkPlayoffs(q), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
+    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), story: (t) => storyDemo(t), flush: () => flushStories(), commercial: () => commercialBreak(), handoff: (fromAd) => handoff(leagues.find((L) => L !== cur && L.year), { fromAd }), bumper: (i) => logoBumper(cur, cur.matchups[i || 0]), logo3d: (mode, i) => { const m = cur.matchups[i || 0]; const el = $('logo3d'); el.classList.add('show'); return Logo3D.play(el, { mode, teams: [D.team(cur, m.home), D.team(cur, m.away)], ms: 6000 }).then((ok) => { el.classList.remove('show'); return ok; }); }, champIntro: () => { champIntroAt.clear(); return champIntro(cur); }, champFinale: (id) => champFinale(cur, id || (bracketOf(cur) || {}).champion), bracket: () => bracketOf(cur), restudio: () => applyStudio(cur), checkPlayoffs: (q) => checkPlayoffs(q), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
     try {
       leagues = (await D.init()).filter((L) => L.year);
       await D.refreshNfl();
@@ -1354,8 +1398,10 @@
     checkPlayoffs(true);
     // 3D logos: build the renderer and every team's emblem ahead of time, a
     // piece at a time while the page is idle, so a cinematic never stalls the show.
+    // On phones (Logo3D's lite tier) only the next few are built, to save memory.
     if (window.Logo3D && Logo3D.supported()) setTimeout(async () => {
       if (!(await Logo3D.warm())) return;
+      if (!Logo3D.preloadAll()) return prepareUpcoming3D();
       for (const L of leagues) await Logo3D.prepare(Object.keys(L.teams).map((id) => T3(L, id)));
       for (const L of leagues) { const b = bracketOf(L); if (b && b.champion) await Logo3D.prepare([T3(L, b.champion)], true); }
     }, 9000);

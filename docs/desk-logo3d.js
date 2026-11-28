@@ -1,13 +1,14 @@
 // desk-logo3d.js -- 3D metallic team-logo cinematics for the News Desk.
 //
-// Each team's logo is traced (its transparent pixels give the outline) and
-// extruded into a solid emblem: the logo art is the front face, the edges and a
-// slightly larger back plate are brushed chrome. Logos on a solid square
-// background become a rounded chrome badge; emoji logos work too.
+// Each team's logo becomes a sculpted emblem, the way TV graphics packages do
+// it: every color region of the logo is raised with rounded edges (a relief
+// generated from the logo image itself), finished as glossy enamel, and set
+// into a single polished chrome rim that follows the outline. Logos on a
+// solid square background become a rounded chrome-rimmed badge.
 //
-// The set is a split stage: two angled walls meeting in the middle, each one
-// striped in its team's color with marquee bulbs along the top, light rays
-// from above, and a glossy floor that reflects it all.
+// The set stays quiet so the emblem is the star: two angled walls in each
+// team's color with faint facets and a softly glowing plus-sign grid, a soft
+// top-left glow, and a dark glossy floor that reflects it all.
 //
 //   Logo3D.warm()              -> builds the renderer and stage ahead of time (call when idle)
 //   Logo3D.prepare(teams)      -> traces and builds those teams' emblems ahead of time
@@ -35,10 +36,55 @@
   }
   let canGL = null;
   function supported() {
+    if (tierName === 'off') return false;
     if (canGL !== null) return canGL;
     try { const c = document.createElement('canvas'); canGL = !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (e) { canGL = false; }
     return canGL;
   }
+  // ---------------------------------------------------------------- quality tiers
+  // full: TVs and computers (unchanged look). lite: phones and low-memory
+  // devices -- about a quarter of the pixels (the browser scales the canvas
+  // up), no bloom buffers (the glow and plus grid are drawn as light, so
+  // they still glow), lighter metal materials, half-size logo textures, and
+  // only the logos about to be shown are kept (at most 4). off: flat logos.
+  //
+  // Crash safety: a phone browser kills a tab that uses too much graphics
+  // memory and reloads it. A flag is saved while the 3D is building or
+  // playing and cleared on a normal exit (pagehide); if the page starts with
+  // the flag still set, the last attempt died, so it drops a tier (full ->
+  // lite -> off) and remembers that on this device. A lost WebGL context or
+  // a cinematic running too slowly also drop a tier.
+  // ?3d=full|lite|off in the URL forces one (and isn't remembered).
+  const TIERS = {
+    full: { W: 1920, H: 1080, aa: true, bloom: true, physical: true, tex: 512, bevel: 4, curve: 6, keep: Infinity, preloadAll: true },
+    lite: { W: 1024, H: 576, aa: false, bloom: false, physical: false, tex: 256, bevel: 2, curve: 4, keep: 4, preloadAll: false },
+  };
+  const STORE = 'winProbDesk3D';
+  const readStore = () => { try { return JSON.parse(localStorage.getItem(STORE) || '{}') || {}; } catch (e) { return {}; } };
+  const writeStore = (o) => { try { localStorage.setItem(STORE, JSON.stringify(o)); } catch (e) { /* private mode */ } };
+  const forced = (() => { const q = new URLSearchParams(location.search).get('3d'); return q === 'full' || q === 'lite' || q === 'off' ? q : null; })();
+  const lower = (t) => (t === 'full' ? 'lite' : 'off');
+  let tierName = (() => {
+    if (forced) return forced;
+    const st = readStore();
+    if (st.busy) { st.tier = lower(st.tier || defaultTier()); st.busy = false; writeStore(st); console.warn('3D logos: the last attempt did not finish, using', st.tier); }
+    return st.tier || defaultTier();
+  })();
+  function defaultTier() {
+    const phone = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent || '');
+    const lowMem = navigator.deviceMemory && navigator.deviceMemory <= 4;
+    return phone || lowMem ? 'lite' : 'full';
+  }
+  function setBusy(on) { if (forced) return; const st = readStore(); st.tier = tierName; st.busy = on; writeStore(st); }
+  function downgrade(why) {
+    if (forced || tierName === 'off') return;
+    tierName = lower(tierName);
+    const st = readStore(); st.tier = tierName; st.busy = false; writeStore(st);
+    console.warn('3D logos:', why, '-> now', tierName);
+  }
+  addEventListener('pagehide', () => { const st = readStore(); if (st.busy) { st.busy = false; writeStore(st); } });
+  const T = () => TIERS[tierName] || TIERS.lite;
+
   // Wait for a quiet moment so building things never interrupts an animation.
   const idle = () => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 1500 }) : setTimeout(r, 60)));
 
@@ -49,7 +95,7 @@
   }
   async function logoCanvas(team) {
     const cv = document.createElement('canvas'); cv.width = cv.height = 512;
-    const x = cv.getContext('2d');
+    const x = cv.getContext('2d'); x.imageSmoothingQuality = 'high'; // logos are 200px: upscale as cleanly as possible
     const img = await loadImage(team.logoUrl);
     if (img) { const k = Math.min(480 / img.width, 480 / img.height), w = img.width * k, h = img.height * k; x.drawImage(img, (512 - w) / 2, (512 - h) / 2, w, h); }
     else if (team.emoji) { x.font = '400px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(team.emoji, 256, 280); }
@@ -81,6 +127,129 @@
     }
     return { m: cur, square: false };
   }
+  function dilate(m, k) {
+    let cur = m;
+    for (let r = 0; r < k; r++) {
+      const nx = new Uint8Array(N * N);
+      for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) { const i = y * N + x; nx[i] = cur[i] | cur[i - 1] | cur[i + 1] | cur[i - N] | cur[i + N] | cur[i - N - 1] | cur[i - N + 1] | cur[i + N - 1] | cur[i + N + 1]; }
+      cur = nx;
+    }
+    return cur;
+  }
+  // ---------------------------------------------------------------- per-logo design
+  // Not every logo should be sculpted the same way. Four looks:
+  //   emblem -- bold flat logos (solid color blocks with clean outlines): every
+  //             color area is raised with a rounded bevel, like a TV-package logo.
+  //   badge  -- a strong shape with lots of fine drawing inside: only the big
+  //             shapes are raised (fine detail is smoothed away first), plus a
+  //             gentle overall dome, so beards / palm leaves / fur don't turn
+  //             into a field of little bumps.
+  //   art    -- painted cartoons: the artwork is left untouched and the whole
+  //             piece is domed under a clear coat, like an enamel pin.
+  //   photo  -- photos: a round medallion, photo under glass, barely domed.
+  const LOOKS = {
+    emblem: { colorEdges: true, thresh: 80, preBlur: 0.6, bevel: 0.024, wR: 1, wD: 0.25, domeR: 0.1, str: 1, faceMetal: 0.3, rough: 0.32, coat: 0.8 },
+    badge: { colorEdges: true, thresh: 120, preBlur: 2.4, bevel: 0.03, wR: 0.55, wD: 0.55, domeR: 0.12, str: 0.9, faceMetal: 0.22, rough: 0.32, coat: 0.85 },
+    art: { colorEdges: false, wR: 0, wD: 1, domeR: 0.16, str: 0.85, faceMetal: 0.06, rough: 0.34, coat: 1 },
+    photo: { colorEdges: false, wR: 0, wD: 1, domeR: 0.3, str: 0.35, faceMetal: 0, rough: 0.5, coat: 1, circle: true },
+  };
+  // Reviewed one by one (Nov 2026). Keyed by team id and the logo's upload
+  // stamp, so a newly uploaded logo falls back to the automatic guess below.
+  const DESIGN = {
+    aebd2919: ['emblem', '1790200135794'], // Joe Buck Yourself: flat bull head
+    edc07345: ['emblem', '1790200220574'], // Stony Creek Gunners: flat cannon + lettering
+    '8c5ba255': ['emblem', '1790199761917'], // Just End The Season: flat helmet
+    '05d9258f': ['emblem', '1790198673494'], // Gary and the Conquerors: flat helmet
+    '79cf7a97': ['emblem', '1790208073170'], // Abby's Aqua Army: flat helmet
+    ba590964: ['emblem', '1790208470902'], // Megatron's Army: flat player
+    d1646220: ['emblem', '1790208241619'], // Jason's Scary Team: flat mask
+    '073f8314': ['emblem', '1790201266056'], // Bababooey: flat snowman helmet
+    '55c0d10f': ['emblem', '1790198426449'], // The All-Star Aces: bold badge
+    '1795509a': ['emblem', '1790208309093'], // Branford Blast: comic BOOM burst
+    fbde0d2f: ['badge', '1790198897054'], // Raiderz: detailed viking illustration in a shield
+    db198b3c: ['badge', '1790200423731'], // Branford Crabs: badge with a detailed beach scene
+    dc7c7d80: ['badge', '1790198316830'], // The Howling Hurricanes: shaded football + swirl
+    '2da5771f': ['badge', '1790207552672'], // Chase's Crusaders: lettering over crossed swords
+    '14ea4df2': ['badge', '1790208030365'], // Eff's Ball Saxs: fuzzy footballs + lettering
+    '352d6490': ['art', '1790201129464'], // Lady and the Champs: painted cartoon dog
+    '5ec4a999': ['art', '1790200545904'], // Jamie's Finest Team: cartoon cat
+    b1369e7b: ['art', '1790208287602'], // Brittany's Ball Stealers: cartoon burger
+    '35d9e167': ['art', '1790208410581'], // Little Jommy and the Jackasses: painted bird
+    '6056e782': ['art', '1790208342224', { circle: true }], // Tina's Touchdown: cartoon in a circle
+    '13fb241e': ['photo', '1790198997717'], // The Oscar Dynasty: photo in a circle
+    e62a85d6: ['photo', '1790208149331'], // Sasa's Stormtroopers: R2-D2 render in a circle
+  };
+  // A new logo nobody has reviewed: guess from its colors and shape.
+  function guessLook(cv) {
+    const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(cv, 0, 0, 64, 64);
+    const d = x.getImageData(0, 0, 64, 64).data, cols = new Set(); let n = 0, x0 = 64, y0 = 64, x1 = 0, y1 = 0;
+    for (let i = 0; i < 64 * 64; i++) if (d[i * 4 + 3] > 128) { n++; cols.add((d[i * 4] >> 4) << 8 | (d[i * 4 + 1] >> 4) << 4 | d[i * 4 + 2] >> 4); const px = i % 64, py = (i / 64) | 0; x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py); }
+    const w = x1 - x0 + 1, h = y1 - y0 + 1, fill = n / Math.max(1, w * h), round = Math.abs(w / h - 1) < 0.06 && Math.abs(fill - 0.785) < 0.04;
+    if (round) return cols.size > 140 ? 'photo' : 'art';
+    if (cols.size < 110 && fill < 0.72) return 'emblem';
+    return 'badge';
+  }
+  function lookFor(team, cv) {
+    const id8 = String(team.id || '').slice(0, 8), entry = DESIGN[id8];
+    const name = entry && String(team.logoUrl || '').includes(entry[1]) ? entry[0] : guessLook(cv);
+    return Object.assign({ name }, LOOKS[name], entry && entry[2]);
+  }
+
+  // Relief: every color region of the logo becomes a raised, rounded piece.
+  // Region borders (a clear color change, or the logo's edge) are found, a
+  // distance-from-border is computed (two-pass chamfer), and height rises
+  // over a short bevel and flattens on top -- then turned into a normal map
+  // so the lighting rolls over each shape and dips into the grooves between.
+  function chamfer(dist, S) {
+    const D = Math.SQRT2;
+    for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) { const i = y * S + xx; let v = dist[i]; if (!v) continue;
+      if (xx > 0) v = Math.min(v, dist[i - 1] + 1); if (y > 0) { v = Math.min(v, dist[i - S] + 1); if (xx > 0) v = Math.min(v, dist[i - S - 1] + D); if (xx < S - 1) v = Math.min(v, dist[i - S + 1] + D); } dist[i] = v; }
+    for (let y = S - 1; y >= 0; y--) for (let xx = S - 1; xx >= 0; xx--) { const i = y * S + xx; let v = dist[i]; if (!v) continue;
+      if (xx < S - 1) v = Math.min(v, dist[i + 1] + 1); if (y < S - 1) { v = Math.min(v, dist[i + S] + 1); if (xx < S - 1) v = Math.min(v, dist[i + S + 1] + D); if (xx > 0) v = Math.min(v, dist[i + S - 1] + D); } dist[i] = v; }
+    return dist;
+  }
+  // Height = (rounded bevel up from each color border) and/or (a smooth dome
+  // up from the logo's outline), mixed per look, blurred so every slope is
+  // soft, then turned into a normal map.
+  function reliefNormal(cv, S, look) {
+    const c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d', { willReadFrequently: true });
+    x.imageSmoothingQuality = 'high';
+    if (look.colorEdges && look.preBlur && 'filter' in x) x.filter = `blur(${(look.preBlur * S / 256).toFixed(2)}px)`; // fine detail isn't a "region"
+    x.drawImage(cv, 0, 0, S, S);
+    x.filter = 'none';
+    const d = x.getImageData(0, 0, S, S).data, n = S * S, INF = 1e6;
+    const diff = (i, j) => Math.abs(d[i * 4] - d[j * 4]) + Math.abs(d[i * 4 + 1] - d[j * 4 + 1]) + Math.abs(d[i * 4 + 2] - d[j * 4 + 2]);
+    const distA = new Float32Array(n), distC = look.wR ? new Float32Array(n) : null;
+    for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) {
+      const i = y * S + xx;
+      if (d[i * 4 + 3] < 128) { distA[i] = 0; if (distC) distC[i] = 0; continue; }
+      let a = xx === 0 || y === 0 || xx === S - 1 || y === S - 1, col = false;
+      if (!a) for (const j of [i - 1, i + 1, i - S, i + S]) { if (d[j * 4 + 3] < 128) { a = true; break; } if (distC && diff(i, j) > look.thresh) col = true; }
+      distA[i] = a ? 0 : INF; if (distC) distC[i] = a || col ? 0 : INF;
+    }
+    chamfer(distA, S); if (distC) chamfer(distC, S);
+    const R = Math.max(2, S * (look.bevel || 0.02)), RD = S * look.domeR, h = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      let v = 0;
+      if (distC) { const t = Math.min(1, distC[i] / R); v += look.wR * (1 - (1 - t) * (1 - t)); }
+      if (look.wD) { const t = Math.min(1, distA[i] / RD); v += look.wD * Math.sqrt(1 - (1 - t) * (1 - t)); }
+      h[i] = v;
+    }
+    const rad = Math.max(1, Math.round(S * 0.006)), tmp = new Float32Array(n);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let y = 0; y < S; y++) { let acc = 0; for (let k = -rad; k <= rad; k++) acc += h[y * S + Math.min(S - 1, Math.max(0, k))]; for (let xx = 0; xx < S; xx++) { tmp[y * S + xx] = acc / (2 * rad + 1); acc += h[y * S + Math.min(S - 1, xx + rad + 1)] - h[y * S + Math.max(0, xx - rad)]; } }
+      for (let xx = 0; xx < S; xx++) { let acc = 0; for (let k = -rad; k <= rad; k++) acc += tmp[Math.min(S - 1, Math.max(0, k)) * S + xx]; for (let y = 0; y < S; y++) { h[y * S + xx] = acc / (2 * rad + 1); acc += tmp[Math.min(S - 1, y + rad + 1) * S + xx] - tmp[Math.max(0, y - rad) * S + xx]; } }
+    }
+    const out = x.createImageData(S, S), o = out.data, str = look.str * S * 0.02;
+    for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) {
+      const i = y * S + xx;
+      const dx = (h[xx < S - 1 ? i + 1 : i] - h[xx > 0 ? i - 1 : i]) / 2, dy = (h[y < S - 1 ? i + S : i] - h[y > 0 ? i - S : i]) / 2;
+      let nx = -dx * str, ny = dy * str, nz = 1; const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
+      o[i * 4] = (nx * 0.5 + 0.5) * 255; o[i * 4 + 1] = (ny * 0.5 + 0.5) * 255; o[i * 4 + 2] = (nz * 0.5 + 0.5) * 255; o[i * 4 + 3] = 255;
+    }
+    x.putImageData(out, 0, 0);
+    return c;
+  }
   // Largest outer contour (Moore-neighbour trace), simplified (Ramer-Douglas-Peucker).
   function contour(m) {
     const at = (x, y) => (x >= 0 && y >= 0 && x < N && y < N ? m[y * N + x] : 0);
@@ -104,9 +273,9 @@
       if (dmax > eps) { const l = rdp(pts.slice(0, idx + 1), eps), r = rdp(pts.slice(idx), eps); return l.slice(0, -1).concat(r); }
       return [a, b];
     };
-    let out = rdp(best, 1.1);
-    // Round off the pixel steps (Chaikin corner cutting, twice) so edges read as smooth curves.
-    for (let it = 0; it < 2; it++) {
+    let out = rdp(best, 1.4);
+    // Round off the pixel steps (Chaikin corner cutting, three times) so edges read as smooth curves.
+    for (let it = 0; it < 3; it++) {
       const sm = [];
       for (let i = 0; i < out.length; i++) { const a = out[i], b = out[(i + 1) % out.length]; sm.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]); }
       out = sm;
@@ -117,89 +286,98 @@
   // ---------------------------------------------------------------- engine (built once)
   let E = null, warming = null;
   // Shared materials: brushed chrome (soft highlights, not mirror-bright), gold for the champion.
+  // Lite uses the standard (no clear-coat) material: much cheaper shaders on a
+  // phone, and with the studio reflections it still reads as polished metal.
+  const metalMat = (THREE, o) => (T().physical ? new THREE.MeshPhysicalMaterial(Object.assign({ clearcoat: 0.35, clearcoatRoughness: 0.25 }, o)) : new THREE.MeshStandardMaterial(Object.assign({}, o, { roughness: Math.max(0.24, o.roughness - 0.06) })));
   function makeMaterials(THREE) {
     return {
-      chrome: new THREE.MeshPhysicalMaterial({ color: 0xc9d1de, metalness: 1, roughness: 0.32, clearcoat: 0.35, clearcoatRoughness: 0.25, envMapIntensity: 0.75 }),
-      gold: new THREE.MeshPhysicalMaterial({ color: 0xd9a843, metalness: 1, roughness: 0.3, clearcoat: 0.35, clearcoatRoughness: 0.25, envMapIntensity: 0.8 }),
+      chrome: metalMat(THREE, { color: 0xe8edf5, metalness: 1, roughness: 0.3, envMapIntensity: 1.1 }),
+      gold: metalMat(THREE, { color: 0xd9a843, metalness: 1, roughness: 0.3, envMapIntensity: 0.8 }),
     };
   }
-  const faceMat = (THREE, tex) => new THREE.MeshPhysicalMaterial({ map: tex, metalness: 0.2, roughness: 0.42, clearcoat: 0.3, clearcoatRoughness: 0.2, envMapIntensity: 0.6, transparent: true, alphaTest: 0.05 });
-  const glassMat = (THREE, color) => new THREE.MeshStandardMaterial({ color: new THREE.Color(color || '#3a6cff'), emissive: new THREE.Color(color || '#3a6cff'), emissiveIntensity: 0.25, metalness: 0.4, roughness: 0.35, envMapIntensity: 0.6 });
+  // Glossy enamel: the logo's own colors, with the relief's normal map so
+  // highlights follow every raised shape (the clear coat follows it too).
+  const faceMat = (THREE, tex, nrm, look) => { const L = look || LOOKS.emblem; return T().physical
+    ? new THREE.MeshPhysicalMaterial({ map: tex, normalMap: nrm, metalness: L.faceMetal, roughness: L.rough, clearcoat: L.coat, clearcoatRoughness: 0.1, clearcoatNormalMap: nrm, envMapIntensity: 0.85, transparent: true, alphaTest: 0.05 })
+    : new THREE.MeshStandardMaterial({ map: tex, normalMap: nrm, metalness: L.faceMetal, roughness: Math.max(0.22, L.rough - 0.06), envMapIntensity: 0.85, transparent: true, alphaTest: 0.05 }); };
 
-  // Grayscale wall art: diagonal stripes + panel lines. The wall material tints it with the team color.
-  function stripeTexture(THREE) {
-    const cv = document.createElement('canvas'); cv.width = 512; cv.height = 512; const x = cv.getContext('2d');
-    const g = x.createLinearGradient(0, 0, 0, 512); g.addColorStop(0, '#9a9a9a'); g.addColorStop(1, '#4a4a4a'); x.fillStyle = g; x.fillRect(0, 0, 512, 512);
-    x.save(); x.translate(256, 256); x.rotate(-0.62); x.translate(-512, -512);
-    const bands = [[120, 70, '#ffffff'], [230, 36, '#d8d8d8'], [330, 110, '#2a2a2a'], [520, 64, '#f0f0f0'], [620, 24, '#ffffff'], [700, 120, '#3a3a3a'], [880, 50, '#e6e6e6']];
-    for (const [y, h, c] of bands) { x.fillStyle = c; x.globalAlpha = 0.85; x.fillRect(0, y, 1024, h); }
-    x.restore(); x.globalAlpha = 1;
-    x.strokeStyle = 'rgba(0,0,0,.35)'; x.lineWidth = 3; for (let i = 64; i < 512; i += 128) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 512); x.stroke(); }
-    x.strokeStyle = 'rgba(255,255,255,.5)'; x.lineWidth = 10; x.strokeRect(5, 5, 502, 502);
-    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+  // Wall art (grayscale, tinted by the wall material): faint triangular
+  // facets lit from the top left. A second texture holds a grid of small plus
+  // signs that glow softly (the emissive map), fading out toward the middle.
+  function wallTextures(THREE) {
+    const W = 1024, H = 640;
+    const a = document.createElement('canvas'); a.width = W; a.height = H; const x = a.getContext('2d');
+    const g = x.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#d8d8d8'); g.addColorStop(0.5, '#8c8c8c'); g.addColorStop(1, '#4a4a4a'); x.fillStyle = g; x.fillRect(0, 0, W, H);
+    let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const side = 110, hgt = side * 0.866;
+    for (let row = -1; row * hgt < H + hgt; row++) for (let col = -1; col * side < W + side; col++) {
+      const x0 = col * side + (row % 2 ? side / 2 : 0), y0 = row * hgt;
+      for (const up of [true, false]) {
+        x.beginPath();
+        if (up) { x.moveTo(x0, y0 + hgt); x.lineTo(x0 + side / 2, y0); x.lineTo(x0 + side, y0 + hgt); }
+        else { x.moveTo(x0 + side / 2, y0); x.lineTo(x0 + side * 1.5, y0); x.lineTo(x0 + side, y0 + hgt); }
+        x.closePath();
+        const v = rnd(); x.fillStyle = v > 0.5 ? `rgba(255,255,255,${(v - 0.5) * 0.12})` : `rgba(0,0,0,${(0.5 - v) * 0.16})`; x.fill();
+        x.strokeStyle = 'rgba(255,255,255,.045)'; x.lineWidth = 1.5; x.stroke();
+      }
+    }
+    const b = document.createElement('canvas'); b.width = W; b.height = H; const y = b.getContext('2d');
+    y.fillStyle = '#000'; y.fillRect(0, 0, W, H);
+    y.lineCap = 'round'; y.shadowColor = '#fff'; y.shadowBlur = 6;
+    for (let gx = 60; gx < W * 0.42; gx += 84) for (let gy = 60; gy < H - 40; gy += 84) {
+      const fade = Math.pow(Math.max(0, 1 - gx / (W * 0.42)), 1.3) * (0.45 + 0.55 * (1 - gy / H));
+      if (fade < 0.06) continue;
+      y.strokeStyle = `rgba(255,255,255,${fade.toFixed(2)})`; y.lineWidth = 2.2;
+      y.beginPath(); y.moveTo(gx - 8, gy); y.lineTo(gx + 8, gy); y.moveTo(gx, gy - 8); y.lineTo(gx, gy + 8); y.stroke();
+    }
+    const t1 = new THREE.CanvasTexture(a), t2 = new THREE.CanvasTexture(b);
+    t1.colorSpace = THREE.SRGBColorSpace; t2.colorSpace = THREE.SRGBColorSpace; t1.anisotropy = t2.anisotropy = 4;
+    return { facets: t1, pluses: t2 };
   }
-  function glowTexture(THREE, kind) {
-    const cv = document.createElement('canvas'); cv.width = 128; cv.height = kind === 'ray' ? 512 : 128; const x = cv.getContext('2d');
-    if (kind === 'ray') { const g = x.createLinearGradient(0, 0, 0, 512); g.addColorStop(0, 'rgba(255,255,255,.9)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 128, 512); const h = x.createLinearGradient(0, 0, 128, 0); h.addColorStop(0, 'rgba(0,0,0,1)'); h.addColorStop(0.5, 'rgba(0,0,0,0)'); h.addColorStop(1, 'rgba(0,0,0,1)'); x.globalCompositeOperation = 'destination-out'; x.fillStyle = h; x.fillRect(0, 0, 128, 512); }
-    else { const g = x.createRadialGradient(64, 64, 0, 64, 64, 64); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,240,210,.55)'); g.addColorStop(1, 'rgba(255,220,180,0)'); x.fillStyle = g; x.fillRect(0, 0, 128, 128); }
+  function glowTexture(THREE) {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 128; const x = cv.getContext('2d');
+    const g = x.createRadialGradient(64, 64, 0, 64, 64, 64); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.3, 'rgba(200,220,255,.45)'); g.addColorStop(1, 'rgba(160,190,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 128, 128);
     const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
   }
 
   function buildStage(L3, mats) {
     const { THREE } = L3;
     const FLOOR = -1.15;
-    const stage = new THREE.Group();     // walls, frames, bulbs (reflected in the floor)
-    const stripe = stripeTexture(THREE);
+    const stage = new THREE.Group(); // the walls (reflected in the floor)
+    const tx = wallTextures(THREE);
     const walls = [];
-    const wallGeo = new THREE.PlaneGeometry(6.4, 4.0);
-    const frameGeoV = new THREE.BoxGeometry(0.1, 4.1, 0.1), frameGeoH = new THREE.BoxGeometry(6.5, 0.1, 0.1);
-    const bulbGeo = new THREE.SphereGeometry(0.045, 10, 8);
-    const bulbMats = [new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.4, 1.0) }), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.6, 0.5, 0.35) })];
+    const wallGeo = new THREE.PlaneGeometry(7.2, 4.4);
     for (const side of [-1, 1]) {
       const th = side < 0 ? 0.62 : -0.62; // the two walls form a V, meeting at the back
-      const holder = new THREE.Group(); holder.position.set(side * 2.9, FLOOR + 2.0, -2.6); holder.rotation.y = th;
-      const mat = new THREE.MeshStandardMaterial({ map: stripe, emissiveMap: stripe, color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.4, roughness: 0.55, metalness: 0.15 });
+      const holder = new THREE.Group(); holder.position.set(side * 2.75, FLOOR + 2.2, -2.7); holder.rotation.y = th;
+      const mat = new THREE.MeshStandardMaterial({ map: tx.facets, emissiveMap: tx.pluses, color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.75, roughness: 0.6, metalness: 0.1 });
+      if (side > 0) { mat.map = tx.facets.clone(); mat.map.repeat.x = -1; mat.map.wrapS = THREE.RepeatWrapping; mat.emissiveMap = tx.pluses.clone(); mat.emissiveMap.repeat.x = -1; mat.emissiveMap.wrapS = THREE.RepeatWrapping; mat.map.needsUpdate = mat.emissiveMap.needsUpdate = true; } // mirrored: plus grids on the outer edges
       const wall = new THREE.Mesh(wallGeo, mat); holder.add(wall); walls.push(wall);
-      for (const fx of [-3.22, 3.22]) { const f = new THREE.Mesh(frameGeoV, mats.chrome); f.position.set(fx, 0, 0.05); holder.add(f); }
-      for (const fy of [-2.02, 2.02]) { const f = new THREE.Mesh(frameGeoH, mats.chrome); f.position.set(0, fy, 0.05); holder.add(f); }
-      // Two rows of marquee bulbs along the top; every other bulb lights in turn (a chase).
-      const n = 13, sets = bulbMats.map((mt) => new THREE.InstancedMesh(bulbGeo, mt, n * 2)), m = new THREE.Matrix4();
-      for (let row = 0; row < 2; row++) for (let k = 0; k < n * 2; k++) { m.setPosition(-3.0 + k * 0.233, 1.5 + row * 0.24, 0.1); sets[(k + row) % 2].setMatrixAt(row * n + (k >> 1), m); }
-      holder.add(...sets);
       stage.add(holder);
     }
-    // Center seam: a glowing pillar where the walls meet.
-    const seam = new THREE.Mesh(new THREE.BoxGeometry(0.14, 4.0, 0.14), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.3, 1.25, 1.2) })); seam.position.set(0, FLOOR + 2.0, -4.5); stage.add(seam);
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x02040c, 0.05);
-    { const bg = document.createElement('canvas'); bg.width = 2; bg.height = 256; const bx = bg.getContext('2d'); const gr = bx.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, '#16244a'); gr.addColorStop(0.5, '#060b1c'); gr.addColorStop(1, '#010208'); bx.fillStyle = gr; bx.fillRect(0, 0, 2, 256); const bt = new THREE.CanvasTexture(bg); bt.colorSpace = THREE.SRGBColorSpace; scene.background = bt; }
+    scene.fog = new THREE.FogExp2(0x030714, 0.045);
+    { const bg = document.createElement('canvas'); bg.width = 2; bg.height = 256; const bx = bg.getContext('2d'); const gr = bx.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, '#1a2c5c'); gr.addColorStop(0.5, '#08112a'); gr.addColorStop(1, '#02040c'); bx.fillStyle = gr; bx.fillRect(0, 0, 2, 256); const bt = new THREE.CanvasTexture(bg); bt.colorSpace = THREE.SRGBColorSpace; scene.background = bt; }
     scene.add(stage);
     const emblems = new THREE.Group(); scene.add(emblems);
-    // The floor reflection: a mirrored copy of the set under a glossy, partly see-through floor.
+    // The floor reflection: a mirrored copy of the walls under a glossy, partly see-through floor.
     const mirror = new THREE.Group(); mirror.scale.y = -1; mirror.position.y = 2 * FLOOR; scene.add(mirror);
     mirror.add(stage.clone());
     const mirrorEmblems = new THREE.Group(); mirror.add(mirrorEmblems);
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x04060d, metalness: 0.4, roughness: 0.35, transparent: true, opacity: 0.8, envMapIntensity: 0.4 }));
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x03050c, metalness: 0.5, roughness: 0.3, transparent: true, opacity: 0.86, envMapIntensity: 0.35 }));
     floor.rotation.x = -Math.PI / 2; floor.position.y = FLOOR; scene.add(floor);
-    const grid = new THREE.GridHelper(60, 90, 0x2b56b8, 0x14306e); grid.material.transparent = true; grid.material.opacity = 0.28; grid.material.depthWrite = false; grid.position.y = FLOOR + 0.004; scene.add(grid);
-    // Light streaks swirling on the floor (team colors) and rays from above.
-    const streaks = [];
-    for (let i = 0; i < 6; i++) {
-      const s = new THREE.Mesh(new THREE.TorusGeometry(2.2 + i * 0.55, 0.012, 6, 90, 1.1 + (i % 3) * 0.35), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
-      s.rotation.x = -Math.PI / 2; s.position.y = FLOOR + 0.01; s.userData = { side: i % 2 ? 1 : -1, sp: 0.12 + i * 0.03, ph: i * 1.3 }; scene.add(s); streaks.push(s);
-    }
-    const rayTex = glowTexture(THREE, 'ray'), rays = [];
-    for (let i = 0; i < 7; i++) {
-      const r = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 9), new THREE.MeshBasicMaterial({ map: rayTex, color: new THREE.Color(0.55, 0.5, 0.45), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-      r.geometry.translate(0, -4.5, 0); r.position.set(0, FLOOR + 5.0, -4.3); r.rotation.z = (i - 3) * 0.2; r.userData = { base: (i - 3) * 0.2, ph: i * 0.9 }; scene.add(r); rays.push(r);
-    }
-    const flare = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(THREE, 'flare'), color: 0xfff2dd, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); flare.scale.set(2.6, 2.6, 1); flare.position.set(0, FLOOR + 4.4, -4.4); scene.add(flare);
-    // Lights: a soft key light that glides across, team-colored fills on each side.
-    const key = new THREE.SpotLight(0xffffff, 12, 30, 0.55, 0.85); key.position.set(-4, 4, 6); scene.add(key, key.target);
-    const fills = [-1, 1].map((s) => { const l = new THREE.PointLight(0xffffff, 10, 9); l.position.set(s * 2.4, 1.2, 1.2); scene.add(l); return l; });
-    scene.add(new THREE.HemisphereLight(0x5a6c9a, 0x0a0a14, 0.5));
-    return { scene, stage, emblems, mirrorEmblems, walls, bulbMats, streaks, rays, flare, key, fills, seam };
+    const grid = new THREE.GridHelper(60, 90, 0x2b56b8, 0x14306e); grid.material.transparent = true; grid.material.opacity = 0.1; grid.material.depthWrite = false; grid.position.y = FLOOR + 0.004; scene.add(grid);
+    // A soft glow up in the top left, where the key light comes from.
+    const flare = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(THREE), color: 0xcfe0ff, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false }));
+    flare.scale.set(6, 6, 1); flare.position.set(-3.6, FLOOR + 4.8, -4.2); scene.add(flare);
+    // Lights: a soft key from the top left that drifts a little, team-colored fills.
+    const key = new THREE.SpotLight(0xffffff, 6, 30, 0.6, 0.95); key.position.set(-5, 5, 6); scene.add(key, key.target);
+    const fills = [-1, 1].map((sd) => { const l = new THREE.PointLight(0xffffff, 9, 9); l.position.set(sd * 2.6, 1.0, 1.4); scene.add(l); return l; });
+    // A soft wash on the walls so their color reads, from up front.
+    const wash = new THREE.DirectionalLight(0xdfe8ff, 1.1); wash.position.set(0, 3, 8); scene.add(wash);
+    scene.add(new THREE.HemisphereLight(0x8090c0, 0x0a0a14, 0.8));
+    return { scene, stage, emblems, mirrorEmblems, walls, flare, key, fills };
   }
 
   async function warm() {
@@ -210,12 +388,13 @@
       const L3 = await loadLibs();
       const { THREE, RoomEnvironment, EffectComposer, RenderPass, UnrealBloomPass, OutputPass } = L3;
       await idle();
-      const W = 1920, H = 1080;
-      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+      const Q = T(), W = Q.W, H = Q.H;
+      setBusy(true);
+      const renderer = new THREE.WebGLRenderer({ antialias: Q.aa, alpha: false, powerPreference: Q.bloom ? 'high-performance' : 'default' });
       renderer.setPixelRatio(1); renderer.setSize(W, H, false);
       renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.85; renderer.outputColorSpace = THREE.SRGBColorSpace;
       const cv = renderer.domElement; cv.className = 'logo3d-canvas';
-      cv.addEventListener('webglcontextlost', () => { E = null; warming = null; cache.clear(); });
+      cv.addEventListener('webglcontextlost', (ev) => { ev.preventDefault(); E = null; warming = null; cache.clear(); downgrade('graphics context lost'); });
       await idle();
       const pmrem = new THREE.PMREMGenerator(renderer);
       const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; pmrem.dispose();
@@ -223,23 +402,30 @@
       const mats = makeMaterials(THREE);
       const S = buildStage(L3, mats); S.scene.environment = env;
       const camera = new THREE.PerspectiveCamera(36, W / H, 0.1, 100); camera.position.set(0, 1, 8); camera.lookAt(0, 0.3, -0.5);
-      const composer = new EffectComposer(renderer);
-      composer.addPass(new RenderPass(S.scene, camera));
-      const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 0.24, 0.4, 0.92); composer.addPass(bloom);
-      composer.addPass(new OutputPass());
+      // Full: render -> bloom -> output. Lite: straight to the screen (no
+      // extra full-size buffers); a brighter flare makes up for the glow.
+      let composer = null, bloom = null;
+      if (Q.bloom) {
+        composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(S.scene, camera));
+        bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 0.2, 0.35, 0.96); composer.addPass(bloom);
+        composer.addPass(new OutputPass());
+      } else { S.flare.material.opacity = 0.6; }
+      const draw = composer ? () => composer.render() : () => renderer.render(S.scene, camera);
       // Compile every shader now (a stand-in emblem carries the emblem materials).
       const dummyTex = new THREE.CanvasTexture(document.createElement('canvas'));
       const box = new THREE.BoxGeometry(0.01, 0.01, 0.01);
-      const stand = [mats.chrome, mats.gold, faceMat(THREE, dummyTex), glassMat(THREE, '#3366ff')].map((m) => new THREE.Mesh(box, m));
+      const stand = [mats.chrome, mats.gold, faceMat(THREE, dummyTex, dummyTex)].map((m) => new THREE.Mesh(box, m));
       S.emblems.add(...stand);
       await idle();
       if (renderer.compileAsync) await renderer.compileAsync(S.scene, camera); else renderer.compile(S.scene, camera);
       await idle();
-      composer.render(); // first frame also sets up the glow passes
+      draw(); // first frame also sets up the glow passes
       S.emblems.remove(...stand);
-      E = { L3, renderer, composer, camera, bloom, mats, cv, ...S };
+      E = { L3, renderer, composer, draw, camera, bloom, mats, cv, ...S };
+      setBusy(false);
       return E;
-    })().catch((e) => { console.warn('3D logos unavailable', e); warming = null; return null; });
+    })().catch((e) => { console.warn('3D logos unavailable', e); warming = null; setBusy(false); return null; });
     return warming;
   }
 
@@ -248,32 +434,88 @@
   const keyOf = (t, gold) => [t.id || t.name, t.logoUrl || t.emoji || '', t.color || '', gold ? 'g' : ''].join('|');
   async function emblem(team, gold) {
     const k = keyOf(team, gold);
-    if (cache.has(k)) return cache.get(k);
+    if (cache.has(k)) { const p = cache.get(k); cache.delete(k); cache.set(k, p); return p; }
     const p = (async () => {
       const { THREE } = E.L3;
       const cv = await logoCanvas(team);
       await idle();
+      const look = lookFor(team, cv);
       const mk = mask(cv);
       const pts = mk.square ? null : contour(mk.m);
+      const bandPts = mk.square ? null : contour(dilate(mk.m, 3)); // a team-color enamel ring around the logo
+      const rimPts = mk.square ? null : contour(dilate(mk.m, 8)); // the chrome rim: the outline grown evenly
       await idle();
-      const shape = new THREE.Shape();
-      if (pts) { pts.forEach(([x, y], i) => { const u = x / N, v = 1 - y / N; if (i) shape.lineTo(u, v); else shape.moveTo(u, v); }); }
-      else { const r = 0.12; shape.moveTo(r, 0); shape.lineTo(1 - r, 0); shape.quadraticCurveTo(1, 0, 1, r); shape.lineTo(1, 1 - r); shape.quadraticCurveTo(1, 1, 1 - r, 1); shape.lineTo(r, 1); shape.quadraticCurveTo(0, 1, 0, 1 - r); shape.lineTo(0, r); shape.quadraticCurveTo(0, 0, r, 0); }
-      const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+      const toShape = (p, grow) => {
+        const sh = new THREE.Shape();
+        if (p) p.forEach(([x, y], i) => { const u = x / N, v = 1 - y / N; if (i) sh.lineTo(u, v); else sh.moveTo(u, v); });
+        else { const a = -grow, b = 1 + grow, r = 0.12 + grow; sh.moveTo(a + r, a); sh.lineTo(b - r, a); sh.quadraticCurveTo(b, a, b, a + r); sh.lineTo(b, b - r); sh.quadraticCurveTo(b, b, b - r, b); sh.lineTo(a + r, b); sh.quadraticCurveTo(a, b, a, b - r); sh.lineTo(a, a + r); sh.quadraticCurveTo(a, a, a + r, a); }
+        return sh;
+      };
+      let faceShape = toShape(pts, 0), bandShape = toShape(bandPts, bandPts ? 0 : 0.016), rimShape = toShape(rimPts, rimPts ? 0 : 0.045);
+      // Round logos (photos, the Tina badge): a true circle reads cleaner than a traced one.
+      if (look.circle && mk.m) {
+        let x0 = N, y0 = N, x1 = 0, y1 = 0; for (let i = 0; i < N * N; i++) if (mk.m[i]) { const px = i % N, py = (i / N) | 0; x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py); }
+        const cx = (x0 + x1 + 1) / 2 / N, cy = 1 - (y0 + y1 + 1) / 2 / N, r = Math.max(x1 - x0 + 1, y1 - y0 + 1) / 2 / N - 0.006;
+        const circ = (rr) => { const sh = new THREE.Shape(); sh.absarc(cx, cy, rr, 0, Math.PI * 2, false); return sh; };
+        faceShape = circ(r); bandShape = circ(r + 0.022); rimShape = circ(r + 0.055);
+      }
+      const size = T().tex;
+      let texCv = cv;
+      if (size < cv.width) { texCv = document.createElement('canvas'); texCv.width = texCv.height = size; const tx2 = texCv.getContext('2d'); tx2.imageSmoothingQuality = 'high'; tx2.drawImage(cv, 0, 0, size, size); }
+      const tex = new THREE.CanvasTexture(texCv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = T().bloom ? 4 : 1;
+      // Logos are stored at 200px, so the relief is worked out near that size and
+      // the graphics card smooths it -- working it out on a stretched copy is
+      // what made edges look messy.
+      const nrm = new THREE.CanvasTexture(reliefNormal(cv, 256, look)); nrm.anisotropy = tex.anisotropy; // linear data, not a color
+      await idle();
       const metal = gold ? E.mats.gold : E.mats.chrome;
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.02, bevelSegments: 4, curveSegments: 6 }); geo.center();
-      await idle();
-      const geo2 = new THREE.ExtrudeGeometry(shape, { depth: 0.14, bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.032, bevelSegments: 4, curveSegments: 6 }); geo2.center();
-      const front = new THREE.Mesh(geo, [faceMat(THREE, tex), metal]);
-      const back = new THREE.Mesh(geo2, metal); back.scale.set(1.08, 1.08, 1); back.position.z = -0.17;
-      const glass = new THREE.Mesh(geo2, glassMat(THREE, team.color)); glass.scale.set(1.04, 1.04, 0.7); glass.position.z = -0.07;
-      const g = new THREE.Group(); g.add(back, glass, front);
+      const seg = { bevelSegments: T().bevel, curveSegments: look.circle && mk.m ? (T().bloom ? 64 : 40) : T().curve }; // circles need many segments to stay round
+      const geo = new THREE.ExtrudeGeometry(faceShape, Object.assign({ depth: 0.06, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.006 }, seg));
+      const geo2 = new THREE.ExtrudeGeometry(rimShape, Object.assign({ depth: 0.12, bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.024 }, seg, { bevelSegments: T().bevel + 2 }));
+      const geo3 = new THREE.ExtrudeGeometry(bandShape, Object.assign({ depth: 0.06, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.008 }, seg));
+      // Same centering for all three (each layer grows evenly, so they share a center).
+      geo2.computeBoundingBox(); const c0 = new THREE.Vector3(); geo2.boundingBox.getCenter(c0);
+      // Stepped layers, front to back: enamel face (0.072) > team-color ring (0.058) > chrome rim (0.045).
+      geo.translate(-c0.x, -c0.y, 0); geo3.translate(-c0.x, -c0.y, -0.012); geo2.translate(-c0.x, -c0.y, -0.11);
+      // Outer rim: polished metal in the team's color (anodized look), with a
+      // lighter shade of it on the inner ring. The champion's rim is gold.
+      const teamCol = new THREE.Color(team.color || '#2f6bff');
+      { const hsl = {}; teamCol.getHSL(hsl); if (hsl.l < 0.36) teamCol.setHSL(hsl.h, hsl.s < 0.08 ? 0 : Math.max(hsl.s, 0.35), 0.36); } // dark colors (navy, black, brown) lifted just enough to read as colored metal
+      teamCol.lerp(new THREE.Color('#ffffff'), 0.12);
+      const rimMat = gold ? null : (T().physical
+        ? new THREE.MeshPhysicalMaterial({ color: teamCol, metalness: 0.9, roughness: 0.28, clearcoat: 0.6, clearcoatRoughness: 0.12, envMapIntensity: 1.1 })
+        : new THREE.MeshStandardMaterial({ color: teamCol, metalness: 0.9, roughness: 0.26, envMapIntensity: 1.1 }));
+      const front = new THREE.Mesh(geo, [faceMat(THREE, tex, nrm, look), E.mats.chrome]);
+      // Inner ring: a lighter, brighter shade of the same team color, so the
+      // two rings read as two tones of one color.
+      const ringCol = new THREE.Color(team.color || '#2f6bff');
+      { const hsl = {}; ringCol.getHSL(hsl); ringCol.setHSL(hsl.h, hsl.s < 0.08 ? 0 : Math.min(1, Math.max(hsl.s, 0.45) * 1.1), Math.min(0.72, Math.max(hsl.l, 0.36) + 0.16)); }
+      const ringMat = T().physical
+        ? new THREE.MeshPhysicalMaterial({ color: ringCol, metalness: 0.85, roughness: 0.24, clearcoat: 0.7, clearcoatRoughness: 0.1, envMapIntensity: 1.15 })
+        : new THREE.MeshStandardMaterial({ color: ringCol, metalness: 0.85, roughness: 0.22, envMapIntensity: 1.15 });
+      const band = new THREE.Mesh(geo3, ringMat);
+      const rim = new THREE.Mesh(geo2, rimMat || metal);
+      const g = new THREE.Group(); g.add(rim, band, front);
+      g.userData.look = look.name;
+      // Free this emblem's own GPU memory (the shared metal stays).
+      g.userData.dispose = () => { geo.dispose(); geo2.dispose(); geo3.dispose(); tex.dispose(); nrm.dispose(); front.material[0].dispose(); if (rimMat) rimMat.dispose(); ringMat.dispose(); };
       if (E.renderer.initTexture) E.renderer.initTexture(tex); // upload now, not on the first frame
       return g;
     })();
-    cache.set(k, p);
+    cache.delete(k); cache.set(k, p); // most recently used last
     p.catch(() => cache.delete(k));
+    trimCache();
     return p;
+  }
+  // Lite keeps only the last few emblems; older ones are freed.
+  function trimCache() {
+    const keep = T().keep;
+    if (cache.size <= keep) return;
+    for (const [k, p] of cache) {
+      if (cache.size <= keep) break;
+      cache.delete(k);
+      p.then((g) => { if (!g.parent && g.userData.dispose) g.userData.dispose(); }).catch(() => {});
+    }
   }
   // Build emblems for these teams in the background (one at a time, when idle).
   async function prepare(teams, gold) {
@@ -294,13 +536,14 @@
     const groups = [];
     for (const t of list) groups.push(await emblem(t, gold));
     playing = true;
+    setBusy(true);
     // Team colors on the set.
     const col = (i) => new THREE.Color(gold ? '#e0a93a' : ((list[i] || list[0] || {}).color || '#2f6bff'));
     const cL = col(0), cR = mode === 'versus' ? col(1) : gold ? new THREE.Color((list[0] || {}).color || '#e0a93a') : col(0);
-    e.walls[0].material.color.copy(cL); e.walls[0].material.emissive.copy(cL);
-    e.walls[1].material.color.copy(cR); e.walls[1].material.emissive.copy(cR);
-    e.fills[0].color.copy(cL); e.fills[1].color.copy(cR);
-    e.streaks.forEach((s) => s.material.color.copy(s.userData.side < 0 ? cL : cR));
+    // Walls: the team color deepened toward navy; the plus grid glows a light tint of it.
+    const navy = new THREE.Color('#0b1430'), white = new THREE.Color('#ffffff');
+    [[e.walls[0], cL], [e.walls[1], cR]].forEach(([w, c]) => { w.material.color.copy(c).lerp(navy, 0.2); w.material.emissive.copy(c).lerp(white, 0.6); });
+    e.fills[0].color.copy(cL).lerp(white, 0.12); e.fills[1].color.copy(cR).lerp(white, 0.12); // the chrome picks up each team's color
     // Place the emblems (and their reflections).
     e.emblems.clear(); e.mirrorEmblems.clear();
     if (mode === 'versus' && groups.length === 2) {
@@ -310,39 +553,69 @@
     groups.forEach((g) => g.rotation.set(0, 0, 0));
     e.emblems.add(...groups); // (the set is reflected in the floor; the floating emblems aren't, which reads cleaner)
 
-    const { renderer, composer, camera, cv } = e;
+    const { camera, cv } = e;
     cv.style.opacity = 0; host.appendChild(cv);
     const t0 = performance.now();
+    let frames = 0, last = 0, slow = 0; // frame-time watch: too slow -> lite next time
     const ease = (u) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
+    const lerp = (a, b, t) => a + (b - a) * t, V = (x, y, z) => new THREE.Vector3(x, y, z);
+    // A few camera shots, cut together like a broadcast open. Each shot gives
+    // the camera position and aim over its own 0..1, and a light sweep runs
+    // across the metal in every shot.
+    const shots = [];
+    if (mode === 'versus' && groups.length === 2) {
+      const close = (g, side) => (t) => { const p = g.position, e2 = ease(t);
+        return { pos: V(p.x - side * lerp(1.3, -0.5, e2), p.y + lerp(-0.15, 0.35, e2), p.z + lerp(3.9, 3.4, e2)), at: V(p.x + side * 0.15, p.y + 0.05, p.z) }; };
+      shots.push({ len: 0.27, cam: close(groups[0], 1), caption: 0 }, { len: 0.27, cam: close(groups[1], -1), caption: 1 });
+    } else if (groups[0]) {
+      const p = groups[0].position;
+      shots.push(
+        { len: 0.28, cam: (t) => { const e2 = ease(t); return { pos: V(lerp(-1.4, 0.8, e2), p.y + lerp(0.75, 0.55, e2), p.z + 2.7), at: V(lerp(-0.45, 0.35, e2), p.y + 0.45, p.z) }; }, caption: 0 }, // macro sweep across the top
+        { len: 0.26, cam: (t) => { const e2 = ease(t); return { pos: V(lerp(1.1, 0.5, e2), p.y + lerp(-1.25, -0.9, e2), p.z + lerp(4.4, 3.8, e2)), at: V(0, p.y + 0.4, p.z) }; }, caption: 0 }); // low hero angle
+    }
+    const wideLen = 1 - shots.reduce((t, x) => t + x.len, 0);
+    shots.push({ len: wideLen, caption: 2, cam: (t) => { const e2 = ease(t), ang = -0.22 + e2 * 0.44, dist = mode === 'versus' ? 10.2 - e2 * 2.0 : 8.2 - e2 * 1.6; /* one emblem: a closer wide */ return { pos: V(Math.sin(ang) * dist, 0.7 + 0.7 * (1 - e2), Math.cos(ang) * dist), at: V(0, 0.55, -1.2) }; } });
+    let shotIdx = -1, cutAt = 0;
+    const baseExposure = e.renderer.toneMappingExposure;
     await new Promise((resolve) => {
       const frame = (now) => {
         const el = Math.max(0, now - t0), u = Math.min(1, el / ms), k = ease(u), s = el / 1000;
-        // Camera: a slow push-in from low and wide, drifting across the set.
-        const ang = -0.22 + k * 0.44, dist = 10.2 - k * 2.0;
-        camera.position.set(Math.sin(ang) * dist, 0.7 + 0.7 * (1 - k), Math.cos(ang) * dist); camera.lookAt(0, 0.55, -1.2);
+        // Which shot, and how far through it.
+        let acc = 0, si = 0;
+        while (si < shots.length - 1 && u >= acc + shots[si].len) { acc += shots[si].len; si++; }
+        const su = Math.min(1, (u - acc) / shots[si].len);
+        if (si !== shotIdx) { if (shotIdx >= 0) cutAt = now; shotIdx = si; if (opts.onShot) opts.onShot(si, shots[si].caption); }
+        const c = shots[si].cam(su);
+        camera.position.copy(c.pos); camera.lookAt(c.at);
+        // A quick flash on each cut.
+        const fl = cutAt ? Math.exp(-(now - cutAt) / 110) : 0;
+        e.renderer.toneMappingExposure = baseExposure * (1 + 1.6 * fl);
         groups.forEach((g, i) => {
           const base = mode === 'versus' ? (i ? -0.32 : 0.32) : -0.45 + k * 0.9;
           g.rotation.y = base + Math.sin(s * 0.7 + i * 2) * 0.06; g.rotation.x = -0.05 + Math.sin(s * 0.5 + i) * 0.03;
           g.position.y = (mode === 'versus' ? 0.3 : 0.45) + 0.05 * Math.sin(s * 1.1 + i);
         });
-        e.key.position.set(-6 + k * 12, 4, 6);
-        e.streaks.forEach((st) => { st.rotation.z = st.userData.ph + s * st.userData.sp * st.userData.side; });
-        e.rays.forEach((r) => { r.rotation.z = r.userData.base + Math.sin(s * 0.4 + r.userData.ph) * 0.05; r.material.opacity = 0.55 + 0.3 * Math.sin(s * 0.9 + r.userData.ph); });
-        e.flare.material.opacity = 0.8 + 0.2 * Math.sin(s * 2.1);
-        const chase = Math.floor(s * 4) % 2; // marquee bulbs chase
-        e.bulbMats[chase].color.setRGB(1.6, 1.4, 1.0); e.bulbMats[1 - chase].color.setRGB(0.6, 0.5, 0.35);
+        e.key.position.set(-7 + su * 14, 5, 6); // a light sweep across the metal in every shot
+        e.flare.material.opacity = (T().bloom ? 0.42 : 0.55) + 0.06 * Math.sin(s * 1.3);
         const fade = Math.min(1, el / 500, (ms - el) / 600); cv.style.opacity = Math.max(0, fade);
-        composer.render();
+        e.draw();
+        if (last && ++frames > 10) { if (now - last > 45) slow++; }
+        last = now;
         if (opts.onFrame) opts.onFrame(u, cv); // test hook (read the canvas right after rendering)
         if (u < 1) requestAnimationFrame(frame); else resolve();
       };
       requestAnimationFrame(frame);
     });
     cv.remove();
+    e.renderer.toneMappingExposure = baseExposure;
     e.emblems.clear(); e.mirrorEmblems.clear();
     playing = false;
+    setBusy(false);
+    trimCache();
+    // Mostly under ~22 fps on this device: use the lighter version next time.
+    if (tierName === 'full' && frames > 40 && slow / frames > 0.5) downgrade('running slowly');
     return true;
   }
 
-  window.Logo3D = { play, supported, warm, prepare };
+  window.Logo3D = { play, supported, warm, prepare, tier: () => tierName, preloadAll: () => T().preloadAll };
 })();
