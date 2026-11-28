@@ -5937,8 +5937,27 @@ function whatIfWinProbability({ expectedA, expectedB, actualA, actualB, aDone, b
   if (aDone && !bDone && actualA < actualB) return 1;
   if (bDone && !aDone && actualB < actualA) return 99;
   const stddev = whatIfDynamicStddev(expectedA, actualA, expectedB, actualB);
-  const z = (expectedA - expectedB) / (stddev * Math.SQRT2);
-  return Math.max(0, Math.min(100, normalCdf(z) * 100));
+  return whatIfCalibrated(expectedA, expectedB, actualA, actualB, stddev);
+}
+
+// Same calibration as poller/lib/winProb.js calibratedWinProbability (see the
+// long comment there for how it was fitted): early-week projected gaps count
+// about half, the spread is 1.4x wider with a 2-point floor, and a
+// heavier-tailed Student-t curve (10 dof) replaces the normal one.
+function whatIfTCdf(t, dof) {
+  const lg = (x) => { const c = [76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5]; let y = x, tt = x + 5.5; tt -= (x + 0.5) * Math.log(tt); let ser = 1.000000000190015; for (const k of c) ser += k / ++y; return -tt + Math.log((2.5066282746310005 * ser) / x); };
+  const cf = (a, b, x) => { const qab = a + b, qap = a + 1, qam = a - 1; let c = 1, d = 1 / (1 - (qab * x) / qap), h = d; for (let m = 1; m <= 200; m++) { const m2 = 2 * m; let aa = (m * (b - m) * x) / ((qam + m2) * (a + m2)); d = 1 / (1 + aa * d); c = 1 + aa / c; h *= d * c; aa = (-(a + m) * (qab + m) * x) / ((a + m2) * (qap + m2)); d = 1 / (1 + aa * d); c = 1 + aa / c; const del = d * c; h *= del; if (Math.abs(del - 1) < 3e-12) break; } return h; };
+  const ib = (a, b, x) => { if (x <= 0) return 0; if (x >= 1) return 1; const bt = Math.exp(lg(a + b) - lg(a) - lg(b) + a * Math.log(x) + b * Math.log(1 - x)); return x < (a + 1) / (a + b + 2) ? (bt * cf(a, b, x)) / a : 1 - (bt * cf(b, a, 1 - x)) / b; };
+  const p = 0.5 * ib(dof / 2, 0.5, dof / (dof + t * t));
+  return t > 0 ? 1 - p : p;
+}
+function whatIfCalibrated(expectedA, expectedB, actualA, actualB, stddev) {
+  const share = Math.min(1, Math.max(0, (stddev / WHATIF_DEFAULT_STDDEV) ** 2));
+  const trust = 1 - 0.5 * share;
+  const actualGap = (actualA || 0) - (actualB || 0);
+  const gap = actualGap + trust * ((expectedA - expectedB) - actualGap);
+  const spread = Math.sqrt((1.4 * stddev * Math.SQRT2) ** 2 + 4);
+  return Math.max(0, Math.min(100, whatIfTCdf((gap / spread) * Math.sqrt(10 / 8), 10) * 100));
 }
 
 // Mirrors computeChartPoints exactly (same nearestByTs + withCrossings
