@@ -256,7 +256,7 @@ function rowsAreSettled(rows) {
 // A settled season (all games final, nothing new for 48h) never changes, so
 // its full poll history is saved in this browser after the first download.
 async function fetchSeasonRows(leagueId, year) {
-  const idbKey = `season:v1:${leagueId}|${year}`;
+  const idbKey = `season:v2:${leagueId}|${year}`; // v2: win % recalibrated (v1 copies hold the old numbers)
   const saved = await idbGet(idbKey);
   if (saved && saved.rows && saved.rows.length) return saved.rows;
   const rows = await fetchAllRows((from, to) =>

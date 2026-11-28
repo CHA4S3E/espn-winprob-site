@@ -107,6 +107,19 @@
   </div>
 
   <div class="setting-group">
+    <div class="setting-title">Original model line</div>
+    <div class="setting-desc">The win % is now calibrated against how this season's games actually finished: less sure early in the week, and no more 99% on games that can still slip away. This adds a faint dotted line to each matchup chart showing what the original model said at the same moments, for comparison. The numbers and the main line always use the calibrated model.</div>
+
+    <label class="option-row">
+      <input type="checkbox" id="showLegacyLine">
+      <span>
+        <div class="option-label">Show the original model as a dotted line (default: off)</div>
+        <div class="option-example">Takes effect the next time the matchups page loads</div>
+      </span>
+    </label>
+  </div>
+
+  <div class="setting-group">
     <div class="setting-title">Legacy views</div>
     <div class="setting-desc">Timeline and Postcard are being phased out in favor of ESPN and Forecast, and are hidden from the view switcher by default. Turn this on to bring them back.</div>
 
@@ -316,6 +329,13 @@
   });
 
   // Defaults OFF -- only 'true' brings the deprecated views back.
+  const LEGACY_LINE_KEY = 'winProbShowLegacyLine';
+  const legacyLineCheckbox = document.getElementById('showLegacyLine');
+  legacyLineCheckbox.checked = localStorage.getItem(LEGACY_LINE_KEY) === 'true';
+  legacyLineCheckbox.addEventListener('change', () => {
+    localStorage.setItem(LEGACY_LINE_KEY, legacyLineCheckbox.checked ? 'true' : 'false');
+  });
+
   const LEGACY_VIEWS_KEY = 'winProbShowLegacyViews';
   const legacyViewsCheckbox = document.getElementById('showLegacyViews');
   legacyViewsCheckbox.checked = localStorage.getItem(LEGACY_VIEWS_KEY) === 'true';

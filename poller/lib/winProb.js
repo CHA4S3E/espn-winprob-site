@@ -347,7 +347,22 @@ function matchupWinProbability({
   return calibratedWinProbability({ homeExpected, awayExpected, homeActual, awayActual, stddev });
 }
 
+// The original (pre-calibration) model, kept so the site can still show the
+// legacy numbers (a preference) and future refits have the raw output:
+// stored alongside each new snapshot as win_prob_raw.
+function legacyMatchupWinProbability({ homeExpected, awayExpected, homeActual, awayActual, allDone, homeAllDone, awayAllDone, stddev }) {
+  if (allDone) {
+    if (homeActual > awayActual) return 100;
+    if (homeActual < awayActual) return 0;
+    return 50;
+  }
+  if (homeAllDone && !awayAllDone && homeActual < awayActual) return 1;
+  if (awayAllDone && !homeAllDone && awayActual < homeActual) return 99;
+  return winProbability(homeExpected, awayExpected, stddev);
+}
+
 module.exports = {
+  legacyMatchupWinProbability,
   normalCdf,
   playerExpected,
   teamExpected,

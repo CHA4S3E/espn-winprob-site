@@ -44,6 +44,16 @@ function calibratedSince() {
   return new Date();
 }
 
+function legacyFromCalibrated(hE, aE, hA, aA, cal) {
+  if (Math.abs(hE - hA) < 0.01 && hA < aA && Math.abs(aE - aA) >= 0.01) return 1; // home finished and behind
+  if (Math.abs(aE - aA) < 0.01 && aA < hA && Math.abs(hE - hA) >= 0.01) return 99;
+  const f = (s) => W.calibratedWinProbability({ homeExpected: hE, awayExpected: aE, homeActual: hA, awayActual: aA, stddev: s }) - cal;
+  let lo = W.MIN_STDDEV, hi = W.DEFAULT_STDDEV, s;
+  if (f(lo) * f(hi) > 0) s = Math.abs(f(lo)) < Math.abs(f(hi)) ? lo : hi;
+  else { for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (f(lo) * f(m) <= 0) hi = m; else lo = m; } s = (lo + hi) / 2; }
+  return W.winProbability(hE, aE, s);
+}
+
 function invNormal(p) { let lo = -9, hi = 9; for (let i = 0; i < 80; i++) { const m = (lo + hi) / 2; if (W.normalCdf(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; }
 
 async function fetchAll() {
@@ -62,7 +72,7 @@ async function fetchAll() {
 function recalibrate(rows, cutoff) {
   const games = new Map();
   for (const r of rows) { const k = [r.league_id, r.year, r.week, r.matchup_id].join('|'); if (!games.has(k)) games.set(k, []); games.get(k).push(r); }
-  const updates = [], stats = { moments: 0, rows: 0, skippedNew: 0, finals: 0, locks: 0, recovered: 0, carried: 0, noOpponentYet: 0 };
+  const updates = [], rawUpdates = [], stats = { rawFilled: 0, moments: 0, rows: 0, skippedNew: 0, finals: 0, locks: 0, recovered: 0, carried: 0, noOpponentYet: 0 };
   const oldOf = (r) => Number(r.win_prob_raw != null ? r.win_prob_raw : r.win_prob);
   for (const rs of games.values()) {
     // The poller only writes a team's row when its numbers change, so at any
@@ -76,8 +86,20 @@ function recalibrate(rows, cutoff) {
       for (const r of now) { if (r.is_home) home = r; else away = r; }
       stats.moments++;
       if (!home || !away) { stats.noOpponentYet += now.length; continue; }
-      const fresh = now.filter((r) => !(new Date(ts) >= cutoff && r.win_prob_raw == null));
+      const isNew = (r) => new Date(ts) >= cutoff && r.win_prob_raw == null;
+      const fresh = now.filter((r) => !isNew(r));
       stats.skippedNew += now.length - fresh.length;
+      // Rows already written by the calibrated poller but before it saved the
+      // original number: work the original out from the calibrated one (find
+      // the spread that gives the stored value, then apply the old formula),
+      // so the "legacy win %" preference has it too.
+      if (fresh.length < now.length && !(home.all_starters_done && away.all_starters_done)) {
+        const hE0 = Number(home.expected_score), aE0 = Number(away.expected_score), hA0 = Number(home.actual_score), aA0 = Number(away.actual_score);
+        const ref0 = now.find((r) => r.is_home) || now[0];
+        const cal = ref0.is_home ? Number(ref0.win_prob) : 100 - Number(ref0.win_prob);
+        const raw = legacyFromCalibrated(hE0, aE0, hA0, aA0, cal);
+        for (const r of now.filter(isNew)) { stats.rawFilled++; rawUpdates.push({ id: r.id, raw: r.is_home ? raw : 100 - raw }); }
+      }
       // the old home win % at this moment, from a row written now (its own stored value)
       const ref = now.find((r) => r.is_home) || now[0];
       const oldHome = ref.is_home ? oldOf(ref) : 100 - oldOf(ref);
@@ -100,7 +122,7 @@ function recalibrate(rows, cutoff) {
       }
     }
   }
-  return { updates, stats };
+  return { updates, rawUpdates, stats };
 }
 
 module.exports = { recalibrate };
@@ -112,7 +134,7 @@ if (require.main === module) (async () => {
   const rows = await fetchAll();
   console.log(`Read ${rows.length} snapshot rows.`);
   if (!rows.length || !('win_prob_raw' in rows[0])) throw new Error('snapshots.win_prob_raw is missing: run db/migrations/004_recalibrate_win_prob.sql first');
-  const { updates, stats } = recalibrate(rows, cutoff);
+  const { updates, rawUpdates, stats } = recalibrate(rows, cutoff);
   console.log('Matchup moments:', stats);
   const changed = updates.filter((u) => Math.abs(u.wp - u.old) > 0.05);
   console.log(`${changed.length} rows would change (of ${updates.length} recalculated).`);
@@ -132,6 +154,13 @@ if (require.main === module) (async () => {
     if ((i / 1000) % 10 === 0) console.log(`  written ${done}`);
   }
   console.log(`Wrote ${done} rows.`);
+  let rawDone = 0;
+  for (let i = 0; i < rawUpdates.length; i += 1000) {
+    const { data, error } = await supabase.rpc('set_raw_win_probs', { p_rows: rawUpdates.slice(i, i + 1000).map((u) => ({ id: u.id, wp: Math.round(u.raw * 1e8) / 1e8 })) });
+    if (error) throw error;
+    rawDone += data || 0;
+  }
+  if (rawUpdates.length) console.log(`Saved the original (legacy) win % on ${rawDone} newer rows.`);
   const { data: msg, error: e2 } = await supabase.rpc('sync_snapshot_summary_win_probs', { p_revert: false });
   if (e2) throw e2;
   console.log('Summary:', msg);

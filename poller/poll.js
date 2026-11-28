@@ -15,7 +15,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { fetchLeagueWeek, fetchNflGameStatusMap, fetchTransactions, fetchAthlete, fetchMatchupPeriods } = require('./lib/espnClient');
 const { periodForWeek, carryIn, rostersPresent } = require('./lib/multiweek');
 const { parseTransactions } = require('./lib/transactions');
-const { teamExpected, computeDynamicStddev, matchupWinProbability, DEFAULT_STDDEV } = require('./lib/winProb');
+const { teamExpected, computeDynamicStddev, matchupWinProbability, legacyMatchupWinProbability, DEFAULT_STDDEV } = require('./lib/winProb');
 const PRO_TEAM_MAP = require('./lib/proTeamMap');
 const { buildPlayers, diffEvents } = require('./lib/lineups');
 
@@ -28,6 +28,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+let rawColumnOk = true; // flips off if migration 004 (snapshots.win_prob_raw) has not been run yet
 
 // Figures out the current NFL week number from ESPN's own scoreboard
 // response so we don't have to hardcode a schedule.
@@ -401,6 +402,7 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
 
   let insertedCount = 0;
   let skippedCount = 0;
+  const pollStartedAt = new Date(Date.now() - 60 * 1000).toISOString(); // rows this poll writes are newer than this
   let rejectedCount = 0;
   const lineupByTeam = new Map(); // team uuid -> buildPlayers() output, for the News Desk
 
@@ -484,6 +486,10 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
 
     const [homeC, awayC] = computed;
     const allStartersDone = homeC.allDone && awayC.allDone;
+    const legacyHomeWinProb = legacyMatchupWinProbability({
+      homeExpected: homeC.expected, awayExpected: awayC.expected, homeActual: homeC.actual, awayActual: awayC.actual,
+      allDone: allStartersDone, homeAllDone: homeC.allDone, awayAllDone: awayC.allDone, stddev,
+    });
     const homeWinProb = matchupWinProbability({
       homeExpected: homeC.expected,
       awayExpected: awayC.expected,
@@ -562,6 +568,22 @@ async function pollLeagueWeek(league, year, week, teamIdByEspnId, { plottingOpen
     }
     if (result.home_inserted) insertedCount++; else skippedCount++;
     if (result.away_inserted) insertedCount++; else skippedCount++;
+    // Also keep the original model's number on the rows just written
+    // (win_prob_raw, migration 004): the site's "legacy win %" preference
+    // shows it, and future refits of the calibration need it. Best effort:
+    // never allowed to affect the snapshot itself.
+    if (rawColumnOk && (result.home_inserted || result.away_inserted)) {
+      for (const [inserted, teamId, raw] of [[result.home_inserted, homeTeamId, legacyHomeWinProb], [result.away_inserted, awayTeamId, 100 - legacyHomeWinProb]]) {
+        if (!inserted) continue;
+        const { error: rawErr } = await supabase.from('snapshots').update({ win_prob_raw: raw })
+          .eq('league_id', league.id).eq('year', year).eq('week', week).eq('matchup_id', matchup.id).eq('team_id', teamId)
+          .is('win_prob_raw', null).gte('ts', pollStartedAt);
+        if (rawErr) {
+          if (/win_prob_raw/.test(rawErr.message || '')) { rawColumnOk = false; console.warn('win_prob_raw column not found (run db/migrations/004): not saving legacy win % yet'); }
+          else console.warn(`[${league.slug}] matchup ${matchup.id}: legacy win % not saved: ${rawErr.message || rawErr}`);
+        }
+      }
+    }
   }
 
   // Player lineups + player events for the News Desk. Current week only (not

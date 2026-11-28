@@ -13,6 +13,8 @@
 --     afterwards. It checks what snapshot_summary is first: a plain view needs
 --     nothing, a materialized view is refreshed, a table gets its win_prob and
 --     pregame_win_prob copied over from the matching snapshot rows.
+--   * set_raw_win_probs(rows): saves the original value on rows the calibrated
+--     poller wrote before it started saving it itself.
 --   * revert_calibrated_win_probs(): puts every original value back.
 --
 -- None of these are callable from the public website key.
@@ -31,6 +33,22 @@ begin
          win_prob = (r->>'wp')::double precision
     from jsonb_array_elements(p_rows) r
    where s.id = (r->>'id')::uuid;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- For rows the calibrated poller wrote before it saved the original number:
+-- sets win_prob_raw only (win_prob is already calibrated), never overwriting one.
+create or replace function public.set_raw_win_probs(p_rows jsonb)
+returns integer
+language plpgsql
+as $$
+declare n integer;
+begin
+  update public.snapshots s
+     set win_prob_raw = (r->>'wp')::double precision
+    from jsonb_array_elements(p_rows) r
+   where s.id = (r->>'id')::uuid and s.win_prob_raw is null;
   get diagnostics n = row_count;
   return n;
 end $$;
@@ -95,4 +113,5 @@ end $$;
 
 revoke all on function public.apply_calibrated_win_probs(jsonb) from public, anon, authenticated;
 revoke all on function public.sync_snapshot_summary_win_probs(boolean) from public, anon, authenticated;
+revoke all on function public.set_raw_win_probs(jsonb) from public, anon, authenticated;
 revoke all on function public.revert_calibrated_win_probs() from public, anon, authenticated;
