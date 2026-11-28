@@ -743,6 +743,7 @@
     if (!seg) return nextSegment();
     if ((key === 'spotlight' || key === 'champLive') && seg.matchup && Date.now() - lastBumper > 6 * 60 * 1000) { lastBumper = Date.now(); await logoBumper(cur, seg.matchup, key === 'champLive'); }
     showSegment(seg, true);
+    prepareUpcoming3D();
     segStarted = Date.now(); segDur = seg.dur;
     segTimer = setTimeout(nextSegment, seg.dur);
   }
@@ -770,6 +771,17 @@
     currentSeg = prevSeg;
     busy = false;
     return true;
+  }
+
+  // Lite 3D (phones): build just the emblems the next cinematic could use --
+  // the two games the spotlight rotates between, or the two finalists.
+  function prepareUpcoming3D() {
+    if (!window.Logo3D || !Logo3D.supported() || Logo3D.preloadAll()) return;
+    const L = cur; if (!L) return;
+    const br = phaseOf(L) === 'championship' ? bracketOf(L) : null;
+    const ids = br && br.final && br.final.a ? [br.final.a, br.final.b]
+      : L.matchups.slice().sort((a, b) => drama(b) - drama(a)).slice(0, 2).flatMap((m) => [m.home, m.away]);
+    Logo3D.prepare(ids.filter(Boolean).map((id) => T3(L, id))).catch(() => {});
   }
 
   // ------------------------------------------------------------------ 3D logo bumper
@@ -1382,8 +1394,10 @@
     checkPlayoffs(true);
     // 3D logos: build the renderer and every team's emblem ahead of time, a
     // piece at a time while the page is idle, so a cinematic never stalls the show.
+    // On phones (Logo3D's lite tier) only the next few are built, to save memory.
     if (window.Logo3D && Logo3D.supported()) setTimeout(async () => {
       if (!(await Logo3D.warm())) return;
+      if (!Logo3D.preloadAll()) return prepareUpcoming3D();
       for (const L of leagues) await Logo3D.prepare(Object.keys(L.teams).map((id) => T3(L, id)));
       for (const L of leagues) { const b = bracketOf(L); if (b && b.champion) await Logo3D.prepare([T3(L, b.champion)], true); }
     }, 9000);
