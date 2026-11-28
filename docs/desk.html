@@ -154,13 +154,15 @@ html[data-studio="casual"] #breaking .hd { font-family: 'Baloo 2', sans-serif; f
 #wipe .w2 { font: 600 36px 'Inter', sans-serif; color: rgba(255,255,255,.9); margin-top: 20px; text-align: center; }
 
 /* ---- shared pieces inside segments ---- */
-.ic { display: inline-grid; place-items: center; width: 1em; height: 1em; border-radius: 50%; overflow: hidden; vertical-align: -.12em; font-size: 1em; flex: none; }
-.ic img { width: 100%; height: 100%; object-fit: cover; }
-.ic.ini { color: #fff; font: 800 .45em var(--font-body); }
+/* Team logos / emoji are shown as they are -- no circle crop, no ring. Only the
+   initials fallback (a team with no logo or emoji) gets a small colored badge. */
+.ic { display: inline-grid; place-items: center; width: 1em; height: 1em; vertical-align: -.12em; font-size: 1em; flex: none; }
+.ic img { width: 100%; height: 100%; object-fit: contain; }
+.ic.ini { color: #fff; font: 800 .45em var(--font-body); border-radius: 50%; overflow: hidden; }
 .big-vs { display: grid; grid-template-columns: 1fr 200px 1fr; align-items: center; gap: 20px; }
 .tm-big { display: flex; align-items: center; gap: 22px; min-width: 0; }
 .tm-big.r { flex-direction: row-reverse; text-align: right; }
-.tm-big .ic { font-size: 92px; box-shadow: 0 0 0 5px var(--c); }
+.tm-big .ic { font-size: 92px; }
 .tm-big .nm { font: var(--head-style) var(--head-weight) 50px/1 var(--font-head); color: var(--c); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .tm-big .sc { font: 800 82px/1 var(--font-head); font-variant-numeric: tabular-nums; margin-top: 6px; }
 .tm-big .px { font: 600 18px var(--font-body); color: var(--muted); margin-top: 4px; }
@@ -316,7 +318,7 @@ table.rec td { padding: 9px 10px; font-size: 20px; } table.rec td small { font-s
 <script src="desk-data.js?v=2"></script>
 <script src="desk-records.js?v=1"></script>
 <script src="wp-chart.js?v=1"></script>
-<script src="recap-video.js?v=3"></script>
-<script src="desk.js?v=3"></script>
+<script src="recap-video.js?v=4"></script>
+<script src="desk.js?v=4"></script>
 </body>
 </html>
