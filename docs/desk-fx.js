@@ -23,8 +23,9 @@
   // ---------------------------------------------------------------- holiday particles
   let cv = null, raf = 0, parts = [], kind = null;
   const LEAF = ['#c65d1e', '#d98324', '#8a3b12', '#e0a940', '#9c4a1a', '#b8461f'];
+  let W = 1920, H = 1080;
+  function resize(w, h) { W = Math.round(w); H = Math.round(h); if (cv) { cv.width = W; cv.height = H; } }
   function mk(init) {
-    const W = 1920, H = 1080;
     if (kind === 'bat') return { x: init ? Math.random() * W : -40, y: 60 + Math.random() * 500, v: 1 + Math.random() * 1.6, s: 18 + Math.random() * 16, ph: Math.random() * 6 };
     return { x: Math.random() * W, y: init ? Math.random() * H : -20, v: kind === 'leaf' ? 0.7 + Math.random() * 0.9 : 0.5 + Math.random() * 1.2, s: kind === 'leaf' ? 9 + Math.random() * 9 : kind === 'ice' ? 5 + Math.random() * 6 : 2 + Math.random() * 3.5,
       sw: 10 + Math.random() * 30, ph: Math.random() * 6, r: Math.random() * 360, vr: (Math.random() - 0.5) * 2, c: LEAF[Math.floor(Math.random() * LEAF.length)], a: 0.5 + Math.random() * 0.5 };
@@ -32,10 +33,10 @@
   function frame(ts) {
     raf = requestAnimationFrame(frame);
     const x = cv.getContext('2d'), t = ts / 1000, light = root.dataset.daypart !== 'night';
-    x.clearRect(0, 0, 1920, 1080);
+    x.clearRect(0, 0, W, H);
     for (const p of parts) {
       if (kind === 'bat') {
-        p.x += p.v; p.y += Math.sin(t * 1.3 + p.ph) * 0.6; if (p.x > 1980) Object.assign(p, mk(false));
+        p.x += p.v; p.y += Math.sin(t * 1.3 + p.ph) * 0.6; if (p.x > W + 60) Object.assign(p, mk(false));
         const f = 0.5 + 0.5 * Math.sin(t * 9 + p.ph), w = p.s * (0.8 + f * 0.6);
         x.save(); x.translate(p.x, p.y); x.globalAlpha = 0.6; x.fillStyle = light ? '#2a2238' : '#5b4a80';
         x.beginPath(); x.moveTo(0, 0); x.quadraticCurveTo(-w * 0.5, -p.s * 0.6, -w, 0); x.quadraticCurveTo(-w * 0.5, p.s * 0.15, 0, 0);
@@ -43,7 +44,7 @@
         continue;
       }
       p.y += p.v; p.x += Math.sin(t * 0.6 + p.ph) * p.sw * 0.012; p.r += p.vr;
-      if (p.y > 1100) Object.assign(p, mk(false));
+      if (p.y > H + 20) Object.assign(p, mk(false));
       x.save(); x.globalAlpha = p.a * 0.75; x.translate(p.x, p.y); x.rotate(p.r * Math.PI / 180);
       if (kind === 'leaf') { const s = p.s; x.fillStyle = p.c; x.beginPath(); x.moveTo(0, -s); x.bezierCurveTo(s * 0.8, -s * 0.4, s * 0.6, s * 0.6, 0, s); x.bezierCurveTo(-s * 0.6, s * 0.6, -s * 0.8, -s * 0.4, 0, -s); x.fill(); }
       else if (kind === 'ice') { x.strokeStyle = light ? '#5b9bd5' : '#cfe8ff'; x.lineWidth = 1.4; for (let i = 0; i < 3; i++) { x.rotate(Math.PI / 3); x.beginPath(); x.moveTo(0, -p.s); x.lineTo(0, p.s); x.stroke(); } }
@@ -58,7 +59,7 @@
     if (cv) cv.style.display = 'none';
     const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (!h || reduce) return;
-    if (!cv) { cv = document.createElement('canvas'); cv.id = 'holidayFx'; cv.width = 1920; cv.height = 1080; const tv = document.getElementById('tv'); tv.insertBefore(cv, tv.firstChild); }
+    if (!cv) { cv = document.createElement('canvas'); cv.id = 'holidayFx'; cv.width = W; cv.height = H; const tv = document.getElementById('tv'); tv.insertBefore(cv, tv.firstChild); }
     cv.style.display = '';
     kind = h.kind; parts = Array.from({ length: h.n }, () => mk(true));
     raf = requestAnimationFrame(frame);
@@ -95,7 +96,7 @@
 
   window.DeskFx = {
     holidayTag: (studio) => { const h = HOLIDAY[theme()]; return h ? h.tag[studio === 'casual' ? 'casual' : 'pro'] : ''; },
-    holiday: theme, applyHoliday, wake, refreshResult, onOnline: null, onHoliday: null,
+    holiday: theme, applyHoliday, wake, resize, refreshResult, onOnline: null, onHoliday: null,
   };
   applyHoliday(); wake();
 })();

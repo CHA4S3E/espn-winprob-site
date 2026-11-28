@@ -42,8 +42,7 @@
       const { data } = await sb.from('teams').select('id, espn_team_name, team_settings(color, display_name, emoji, logo_url)').eq('league_id', o.leagueId);
       for (const t of data || []) { const s = t.team_settings || {}; teams[t.id] = { id: t.id, name: s.display_name || t.espn_team_name, color: s.color || '#3b6ef5', emoji: s.emoji || '', logoUrl: s.logo_url || '' }; }
     }
-    const summary = await fetchAll((a, b) => sb.from('snapshot_summary').select('week, matchup_id, team_id, is_home, actual_score, all_starters_done, ts, pregame_win_prob').eq('league_id', o.leagueId).eq('year', o.year).lte('week', o.week).range(a, b));
-    // Latest row per team per matchup per week.
+    const summary = await fetchAll((a, b) => sb.from('snapshot_summary').select('week, matchup_id, team_id, is_home, actual_score, all_starters_done, ts, pregame_win_prob, pregame_expected_score').eq('league_id', o.leagueId).eq('year', o.year).lte('week', o.week).range(a, b));
     const latest = new Map();
     for (const r of summary) { const k = r.week + '|' + r.matchup_id + '|' + r.team_id; const ex = latest.get(k); if (!ex || r.ts > ex.ts) latest.set(k, r); }
     const games = new Map();
@@ -55,24 +54,42 @@
       const [h, a] = g[0].is_home ? g : [g[1], g[0]];
       const wk = Number(k.split('|')[0]);
       const hs = Number(h.actual_score), as = Number(a.actual_score);
-      for (const [x, s, os] of [[h.team_id, hs, as], [a.team_id, as, hs]]) {
+      for (const [x, sc, os] of [[h.team_id, hs, as], [a.team_id, as, hs]]) {
         const R = record.get(x); if (!R) continue;
-        const win = s > os ? 1 : 0, loss = s < os ? 1 : 0;
-        R.w += win; R.l += loss; R.t += s === os ? 1 : 0; R.pf += s;
-        if (wk < o.week) { R.prevW += win; R.prevL += loss; R.prevPf += s; }
+        const win = sc > os ? 1 : 0, loss = sc < os ? 1 : 0;
+        R.w += win; R.l += loss; R.t += sc === os ? 1 : 0; R.pf += sc;
+        if (wk < o.week) { R.prevW += win; R.prevL += loss; R.prevPf += sc; }
       }
-      if (wk === o.week) finals.push({ id: h.matchup_id, home: h.team_id, away: a.team_id, hs, as, pre: h.pregame_win_prob != null ? Number(h.pregame_win_prob) : 50 });
+      if (wk === o.week) finals.push({ id: h.matchup_id, home: h.team_id, away: a.team_id, hs, as, pre: h.pregame_win_prob != null ? Number(h.pregame_win_prob) : 50,
+        hPreX: h.pregame_expected_score != null ? Number(h.pregame_expected_score) : null, aPreX: a.pregame_expected_score != null ? Number(a.pregame_expected_score) : null });
     }
     if (!finals.length) return null;
+    // Every game's win-% history (home side), evenly spaced by update like the real charts.
+    const rows = await fetchAll((a, b) => sb.from('snapshots').select('matchup_id, is_home, ts, win_prob').eq('league_id', o.leagueId).eq('year', o.year).eq('week', o.week).eq('is_home', true).order('ts').range(a, b)).catch(() => []);
+    const seriesBy = new Map();
+    for (const r of rows) { if (!seriesBy.has(r.matchup_id)) seriesBy.set(r.matchup_id, []); seriesBy.get(r.matchup_id).push(Number(r.win_prob)); }
+    for (const m of finals) m.series = seriesBy.get(m.id) || [m.pre, m.hs >= m.as ? 100 : 0];
     const winner = (m) => (m.hs >= m.as ? m.home : m.away), loser = (m) => (m.hs >= m.as ? m.away : m.home);
-    const gotw = finals.slice().sort((x, y) => Math.abs(x.hs - x.as) - Math.abs(y.hs - y.as))[0];
-    const blow = finals.slice().sort((x, y) => Math.abs(y.hs - y.as) - Math.abs(x.hs - x.as))[0];
-    const upsets = finals.map((m) => ({ m, p: m.hs >= m.as ? m.pre : 100 - m.pre })).filter((x) => x.p <= 40).sort((a, b) => a.p - b.p);
-    const top = finals.flatMap((m) => [[m.home, m.hs], [m.away, m.as]]).sort((a, b) => b[1] - a[1])[0];
-    // The game of the week's full win-% history for the chart.
-    const rows = await fetchAll((a, b) => sb.from('snapshots').select('team_id, is_home, ts, actual_score, win_prob').eq('league_id', o.leagueId).eq('year', o.year).eq('week', o.week).eq('matchup_id', gotw.id).order('ts').range(a, b)).catch(() => []);
-    const series = rows.filter((r) => r.is_home).map((r) => ({ t: Date.parse(r.ts), wp: Number(r.win_prob) }));
-    // Player of the week / bench of shame (needs the News Desk lineups table).
+    const margin = (m) => Math.abs(m.hs - m.as);
+    const by = (arr, f) => arr.slice().sort((x, y) => f(y) - f(x))[0];
+    // The same superlatives as the Matchups page's recap card.
+    const teamScores = finals.flatMap((m) => [{ id: m.home, s: m.hs, px: m.hPreX, m }, { id: m.away, s: m.as, px: m.aPreX, m }]);
+    const withProj = teamScores.filter((x) => x.px != null);
+    // Upset: the winner's lowest in-game win %; a pregame underdog that won counts most.
+    const upsetPick = finals.map((m) => { const wHome = m.hs >= m.as; const low = Math.min(...m.series.map((v) => (wHome ? v : 100 - v))); const pre = wHome ? m.pre : 100 - m.pre; return { m, low, pre }; })
+      .filter((x) => x.low <= 35 || x.pre <= 40).sort((a, b) => Math.min(a.low, a.pre) - Math.min(b.low, b.pre))[0] || null;
+    const sup = {
+      closest: by(finals, (m) => -margin(m)),
+      blowout: by(finals, margin),
+      high: by(teamScores, (x) => x.s),
+      low: by(teamScores, (x) => -x.s),
+      hiMatch: by(finals, (m) => m.hs + m.as),
+      loMatch: by(finals, (m) => -(m.hs + m.as)),
+      over: withProj.length ? by(withProj, (x) => x.s - x.px) : null,
+      under: withProj.length ? by(withProj, (x) => x.px - x.s) : null,
+      upset: upsetPick,
+      total: finals.reduce((s, m) => s + m.hs + m.as, 0),
+    };
     let potw = null, bench = null;
     try {
       const { data, error } = await sb.from('lineups').select('team_id, players').eq('league_id', o.leagueId).eq('year', o.year).eq('week', o.week);
@@ -82,15 +99,14 @@
         bench = all.filter((p) => p.bench).sort((a, b) => b.pts - a.pts)[0] || null;
         if (bench && bench.pts < 12) bench = null;
       }
-    } catch (e) { /* table not there yet */ }
+    } catch (e) { /* lineups table not there yet */ }
     const order = (arr, w, l, pf) => arr.sort((x, y) => (y[w] - y[l]) - (x[w] - x[l]) || y[pf] - x[pf]);
     const prevRank = new Map(order([...record.values()], 'prevW', 'prevL', 'prevPf').map((r, i) => [r.id, i + 1]));
     const standings = order([...record.values()], 'w', 'l', 'pf').map((r, i) => ({ ...r, rank: i + 1, move: prevRank.get(r.id) - (i + 1) }));
-    // Images (CORS-enabled so the canvas can still be recorded).
     const imgs = {};
     await Promise.all(Object.values(teams).map(async (t) => { imgs[t.id] = await loadImage(t.logoUrl); }));
     if (potw) imgs.potw = await loadImage(Number(potw.id) < 0 ? `https://a.espncdn.com/i/teamlogos/nfl/500/${String(potw.tm || '').toLowerCase()}.png` : `https://a.espncdn.com/i/headshots/nfl/players/full/${potw.id}.png`);
-    const show = { o, teams, finals, gotw, blow, upset: upsets[0] || null, top, series, potw, bench, standings, imgs, winner, loser, playoffSpots: o.playoffSpots || 0 };
+    const show = { o, teams, finals, sup, potw, bench, standings, imgs, winner, loser, margin };
     show.scenes = scenes(show);
     show.duration = show.scenes.reduce((s, x) => s + x.dur, 0);
     return show;
@@ -105,15 +121,7 @@
   const F = (tpl, size) => tpl.replace('{S}', size);
   const ease = (u) => 1 - Math.pow(1 - Math.min(1, Math.max(0, u)), 3);
   const fmt = (x) => Number(x || 0).toFixed(1);
-  function readable(hex, dark) {
-    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '')); if (!m) return dark ? '#9ab0ff' : '#3355aa';
-    const n = parseInt(m[1], 16); let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
-    const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-    const mix = (k, to) => { r = Math.round(r + (to - r) * k); g = Math.round(g + (to - g) * k); b = Math.round(b + (to - b) * k); };
-    if (dark && lum < 0.42) mix((0.42 - lum) / (1 - lum) + 0.18, 255);
-    if (!dark && lum > 0.62) mix((lum - 0.62) / lum + 0.2, 0);
-    return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
-  }
+  const readable = (hex, dark) => (window.WPChart ? WPChart.teamColor(hex, dark) : hex);
 
   function bg(x, P, t) {
     const g = x.createRadialGradient(W * 0.3, -200, 100, W * 0.5, H * 0.4, 1500);
@@ -146,6 +154,8 @@
   }
 
   // ---------------------------------------------------------------- scenes
+  // ~35-40 seconds: title, finals, game of the week, two quick pages of
+  // superlatives, player of the week (when lineups exist), standings, sign-off.
   function scenes(S) {
     const o = S.o, P = palette(o.studio), pro = o.studio !== 'casual', dark = pro;
     const N = (id) => (S.teams[id] || {}).name || 'Unknown';
@@ -154,119 +164,109 @@
     const scene = (dur, line, draw) => list.push({ dur, line, draw });
 
     // 1. Title
-    scene(4800, pro ? `This is the ${o.name} week ${o.week} recap.` : `Hey family! Here's everything that happened in week ${o.week}.`, (x, t, u) => {
+    scene(3000, pro ? `${o.name}, week ${o.week}.` : `Week ${o.week}, here we go!`, (x, t, u) => {
       bg(x, P, t);
-      x.save(); x.textAlign = 'center'; x.fillStyle = P.muted; x.font = F(P.body, 40); x.globalAlpha = ease(u * 3);
-      x.fillText(`${o.name.toUpperCase()} · ${o.year}`, W / 2, 380);
-      x.globalAlpha = 1; x.fillStyle = P.fg; const s = 1 + (1 - ease(u * 2)) * 0.6;
-      x.translate(W / 2, 540); x.scale(s, s); x.font = F(P.head, 190); x.fillText(`WEEK ${o.week}`, 0, 0);
-      x.restore();
-      x.save(); x.textAlign = 'center'; x.fillStyle = P.accent; x.font = F(P.head, 96); x.globalAlpha = ease((u - 0.25) * 3);
-      x.fillText(pro ? 'THE RECAP' : 'The Recap!', W / 2, 680); x.restore();
-      x.fillStyle = P.accent2; x.fillRect(W / 2 - 300 * ease(u * 2), 720, 600 * ease(u * 2), 8);
+      x.save(); x.textAlign = 'center'; x.textBaseline = 'alphabetic';
+      x.globalAlpha = ease(u * 4); x.fillStyle = P.muted; x.font = F(P.body, 40); x.fillText(`${o.name.toUpperCase()} · ${o.year}`, W / 2, 390);
+      x.globalAlpha = 1; x.fillStyle = P.fg; const sc = 1 + (1 - ease(u * 3)) * 0.5;
+      x.translate(W / 2, 560); x.scale(sc, sc); x.font = F(P.head, 200); x.fillText(`WEEK ${o.week}`, 0, 0); x.restore();
+      x.save(); x.textAlign = 'center'; x.globalAlpha = ease((u - 0.25) * 4); x.fillStyle = P.accent; x.font = F(P.head, 96); x.fillText(pro ? 'THE RECAP' : 'The Recap!', W / 2, 690); x.restore();
+      x.fillStyle = P.accent2; x.fillRect(W / 2 - 300 * ease(u * 3), 730, 600 * ease(u * 3), 8);
     });
 
-    // 2. Finals
+    // 2. Finals (all at once, quick stagger)
     const fs = S.finals.slice(0, 8);
-    scene(2400 + fs.length * 900, pro ? `Final scores from around the league.` : `Here's how everybody did.`, (x, t, u, ms) => {
+    scene(5200, pro ? 'Final scores.' : 'Here’s how everybody did.', (x, t, u, ms) => {
       bg(x, P, t); bar(x, P, pro ? 'Final scores' : 'All the scores', u);
       const cols = fs.length > 4 ? 2 : 1, rowsN = Math.ceil(fs.length / cols), cw = cols === 2 ? 850 : 1300, ch = Math.min(190, 800 / rowsN);
       fs.forEach((m, i) => {
-        const appear = ease((ms - 500 - i * 600) / 500); if (appear <= 0) return;
+        const appear = ease((ms - 250 - i * 180) / 400); if (appear <= 0) return;
         const col = i % cols, row = Math.floor(i / cols), x0 = (W - cols * cw - (cols - 1) * 40) / 2 + col * (cw + 40), y0 = 200 + row * (ch + 20);
         x.save(); x.globalAlpha = appear; x.translate((1 - appear) * 80, 0);
         x.fillStyle = P.panel; x.beginPath(); x.roundRect(x0, y0, cw, ch, 18); x.fill();
-        const w = S.winner(m), l = S.loser(m), ws = Math.max(m.hs, m.as), ls = Math.min(m.hs, m.as);
-        [[w, ws, true], [l, ls, false]].forEach(([id, sc, win], k) => {
+        const w = S.winner(m), l = S.loser(m);
+        [[w, Math.max(m.hs, m.as), true], [l, Math.min(m.hs, m.as), false]].forEach(([id, sc, win], k) => {
           const yy = y0 + ch * (k ? 0.72 : 0.32);
           teamBadge(x, S, id, x0 + 50, yy, ch * 0.17);
-          x.fillStyle = win ? C(id) : P.muted; const sz = fitText(x, N(id), cw - 320, P.head, Math.round(ch * 0.27)); x.textBaseline = 'middle'; x.textAlign = 'left'; x.fillText(N(id), x0 + 90, yy);
+          x.fillStyle = win ? C(id) : P.muted; fitText(x, N(id), cw - 320, P.head, Math.round(ch * 0.27)); x.textBaseline = 'middle'; x.textAlign = 'left'; x.fillText(N(id), x0 + 90, yy);
           x.fillStyle = win ? P.fg : P.muted; x.font = F(P.head, Math.round(ch * 0.3)); x.textAlign = 'right'; x.fillText(fmt(sc), x0 + cw - 30, yy);
-          void sz;
         });
         x.restore();
       });
     });
 
-    // 3. Game of the week (chart draws in)
-    const g = S.gotw, gw = S.winner(g), gl = S.loser(g);
-    scene(11000, pro ? `Game of the week: ${N(gw)} edged ${N(gl)} by ${Math.abs(g.hs - g.as).toFixed(1)} points.` : `Game of the week! ${N(gw)} beat ${N(gl)} by just ${Math.abs(g.hs - g.as).toFixed(1)}. So close!`, (x, t, u, ms) => {
+    // 3. Game of the week: the closest game, with its real-style chart drawing in
+    const g = S.sup.closest, gw = S.winner(g), gl = S.loser(g);
+    scene(6500, pro ? `Game of the week: ${N(gw)} by ${S.margin(g).toFixed(1)} over ${N(gl)}.` : `Closest game: ${N(gw)} beat ${N(gl)} by just ${S.margin(g).toFixed(1)}!`, (x, t, u, ms) => {
       bg(x, P, t); bar(x, P, pro ? 'Game of the week' : 'Closest game', u);
       [[g.home, g.hs, 120], [g.away, g.as, W - 120]].forEach(([id, sc, cx], k) => {
-        teamBadge(x, S, id, cx + (k ? -60 : 60), 260, 60);
-        x.textAlign = k ? 'right' : 'left'; x.fillStyle = C(id); fitText(x, N(id), 700, P.head, 64); x.textBaseline = 'middle'; x.fillText(N(id), cx + (k ? -140 : 140), 240);
-        x.fillStyle = P.fg; x.font = F(P.head, 110); x.fillText(fmt(sc * ease((ms - 400) / 2500)), cx + (k ? -140 : 140), 330);
+        teamBadge(x, S, id, cx + (k ? -60 : 60), 250, 56);
+        x.textAlign = k ? 'right' : 'left'; x.textBaseline = 'middle'; x.fillStyle = C(id); fitText(x, N(id), 700, P.head, 60); x.fillText(N(id), cx + (k ? -136 : 136), 232);
+        x.fillStyle = P.fg; x.font = F(P.head, 96); x.fillText(fmt(sc * ease((ms - 200) / 1800)), cx + (k ? -136 : 136), 312);
       });
-      const pts = S.series.length > 1 ? S.series : [{ t: 0, wp: g.pre }, { t: 1, wp: g.hs > g.as ? 100 : 0 }];
-      const X0 = 120, X1 = W - 120, Y0 = 430, Y1 = 980, t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1;
-      const X = (tt) => X0 + (tt - t0) / ((t1 - t0) || 1) * (X1 - X0), Y = (wp) => Y0 + (1 - wp / 100) * (Y1 - Y0);
-      x.strokeStyle = P.muted; x.globalAlpha = 0.5; x.setLineDash([10, 10]); x.lineWidth = 2; x.beginPath(); x.moveTo(X0, Y(50)); x.lineTo(X1, Y(50)); x.stroke(); x.setLineDash([]); x.globalAlpha = 1;
-      const prog = ease((ms - 1200) / 8000), tc = t0 + (t1 - t0) * prog;
-      let last = pts[0];
-      for (let i = 1; i < pts.length && pts[i - 1].t <= tc; i++) {
-        const p = pts[i - 1], q = pts[i].t <= tc ? pts[i] : { t: tc, wp: p.wp };
-        const col = (p.wp + q.wp) / 2 >= 50 ? C(g.home) : C(g.away);
-        x.globalAlpha = 0.18; x.fillStyle = col; x.fillRect(X(p.t), Math.min(Y(p.wp), Y(50)), X(q.t) - X(p.t), Math.abs(Y(p.wp) - Y(50))); x.globalAlpha = 1;
-        x.strokeStyle = col; x.lineWidth = 7; x.lineJoin = 'round'; x.beginPath(); x.moveTo(X(p.t), Y(p.wp)); x.lineTo(X(q.t), Y(p.wp)); x.lineTo(X(q.t), Y(q.wp)); x.stroke();
-        last = q;
-      }
-      x.fillStyle = last.wp >= 50 ? C(g.home) : C(g.away); x.shadowColor = x.fillStyle; x.shadowBlur = 30; x.beginPath(); x.arc(X(last.t), Y(last.wp), 14, 0, 7); x.fill(); x.shadowBlur = 0;
+      WPChart.draw(x, { x: 100, y: 400, w: W - 200, h: 590 }, g.series, C(g.home), C(g.away), { dark, lineWidth: 6, font: 26, progress: ease((ms - 500) / 5000) });
     });
 
-    // 4. Upset of the week
-    if (S.upset) {
-      const m = S.upset.m, w = S.winner(m), l = S.loser(m), p = Math.round(S.upset.p);
-      scene(7500, pro ? `Upset of the week: ${N(w)} were given just ${p} percent at kickoff, and beat ${N(l)}.` : `Upset alert! ${N(w)} only had a ${p} percent chance and they beat ${N(l)} anyway!`, (x, t, u, ms) => {
-        bg(x, P, t); bar(x, P, pro ? 'Upset of the week' : 'Biggest upset', u);
-        const s = 1 + (1 - ease((ms - 300) / 700)) * 1.5;
-        x.save(); x.translate(W / 2, 330); x.scale(s, s); x.rotate(-0.05); x.textAlign = 'center'; x.textBaseline = 'middle';
-        x.strokeStyle = '#ff4757'; x.lineWidth = 10; x.globalAlpha = ease((ms - 300) / 500); x.strokeRect(-330, -80, 660, 160);
-        x.fillStyle = '#ff4757'; x.font = F(P.head, 130); x.fillText('UPSET', 0, 8); x.restore();
-        teamBadge(x, S, w, W / 2, 590, 90);
-        x.textAlign = 'center'; x.fillStyle = C(w); fitText(x, N(w), 1500, P.head, 100); x.fillText(N(w), W / 2, 760);
-        x.fillStyle = P.fg; x.font = F(P.body, 46); x.fillText(`${p}% to win at kickoff → beat ${N(l)}, ${fmt(Math.max(m.hs, m.as))}–${fmt(Math.min(m.hs, m.as))}`, W / 2, 860);
+    // 4-5. Superlatives, four cards per page (same set as the recap card)
+    const cards = [];
+    const sp = S.sup;
+    if (sp.blowout && S.margin(sp.blowout) > 0) cards.push({ k: pro ? 'Biggest blowout' : 'Biggest beatdown', team: S.winner(sp.blowout), big: '+' + S.margin(sp.blowout).toFixed(1), sub: `over ${N(S.loser(sp.blowout))}` });
+    if (sp.upset) { const m = sp.upset.m, w = S.winner(m); cards.push({ k: sp.upset.pre <= 40 ? (pro ? 'Biggest upset' : 'Upset!') : (pro ? 'Biggest comeback' : 'Comeback kids'), team: w, big: Math.round(Math.min(sp.upset.low, sp.upset.pre)) + '%', sub: `${sp.upset.pre <= 40 ? 'at kickoff' : 'at their lowest'} — beat ${N(S.loser(m))}` }); }
+    if (sp.high) cards.push({ k: pro ? 'Highest score' : 'Top score', team: sp.high.id, big: fmt(sp.high.s), sub: 'points' });
+    if (sp.low) cards.push({ k: pro ? 'Lowest score' : 'Rough week', team: sp.low.id, big: fmt(sp.low.s), sub: 'points' });
+    if (sp.over && sp.over.s - sp.over.px > 0) cards.push({ k: pro ? 'Biggest overperformer' : 'Overachiever', team: sp.over.id, big: '+' + (sp.over.s - sp.over.px).toFixed(1), sub: `vs ${fmt(sp.over.px)} projected` });
+    if (sp.under && sp.under.px - sp.under.s > 0) cards.push({ k: pro ? 'Biggest underperformer' : 'Underachiever', team: sp.under.id, big: '−' + (sp.under.px - sp.under.s).toFixed(1), sub: `vs ${fmt(sp.under.px)} projected` });
+    if (sp.hiMatch) cards.push({ k: pro ? 'Highest-scoring matchup' : 'Shootout', team: S.winner(sp.hiMatch), team2: S.loser(sp.hiMatch), big: fmt(sp.hiMatch.hs + sp.hiMatch.as), sub: 'combined' });
+    if (sp.loMatch && sp.loMatch !== sp.hiMatch) cards.push({ k: pro ? 'Lowest-scoring matchup' : 'Snoozer', team: S.winner(sp.loMatch), team2: S.loser(sp.loMatch), big: fmt(sp.loMatch.hs + sp.loMatch.as), sub: 'combined' });
+    const pages = [cards.slice(0, 4), cards.slice(4, 8)].filter((p) => p.length);
+    pages.forEach((page, pi) => {
+      const first = page[0];
+      scene(5600, pi === 0 ? (pro ? `The superlatives. ${first.k}: ${N(first.team)}.` : `Awards time! ${first.k}: ${N(first.team)}.`) : (pro ? `More from week ${o.week}.` : 'And there’s more!'), (x, t, u, ms) => {
+        bg(x, P, t); bar(x, P, pi === 0 ? (pro ? 'Superlatives' : 'The awards') : (pro ? 'Superlatives, cont.' : 'More awards'), u);
+        const cw = 820, chh = 380;
+        page.forEach((c, i) => {
+          const a = ease((ms - 200 - i * 350) / 450); if (a <= 0) return;
+          const x0 = W / 2 - cw - 20 + (i % 2) * (cw + 40), y0 = 190 + Math.floor(i / 2) * (chh + 30);
+          x.save(); x.globalAlpha = a; x.translate(0, (1 - a) * 40);
+          x.fillStyle = P.panel; x.beginPath(); x.roundRect(x0, y0, cw, chh, 22); x.fill();
+          x.fillStyle = C(c.team); x.fillRect(x0, y0, 12, chh);
+          x.textAlign = 'left'; x.textBaseline = 'alphabetic';
+          x.fillStyle = P.muted; x.font = F(P.body, 28); x.fillText(c.k.toUpperCase(), x0 + 50, y0 + 62);
+          teamBadge(x, S, c.team, x0 + 95, y0 + 140, 42);
+          x.fillStyle = C(c.team); fitText(x, N(c.team), cw - 200, P.head, 54); x.textBaseline = 'middle'; x.fillText(N(c.team), x0 + 155, y0 + 140);
+          if (c.team2) { x.fillStyle = P.muted; fitText(x, '& ' + N(c.team2), cw - 200, P.body, 30); x.fillText('& ' + N(c.team2), x0 + 155, y0 + 188); }
+          x.textBaseline = 'alphabetic'; x.fillStyle = P.fg; x.font = F(P.head, 120); x.fillText(c.big, x0 + 50, y0 + chh - 50);
+          const bw = x.measureText(c.big).width;
+          x.fillStyle = P.muted; x.font = F(P.body, 28); x.fillText(c.sub, x0 + 70 + bw, y0 + chh - 58);
+          x.restore();
+        });
       });
-    }
-
-    // 5. Top score + blowout
-    const [tid, tsc] = S.top, b = S.blow;
-    scene(7000, pro ? `High score of the week: ${N(tid)} with ${fmt(tsc)}.` : `${N(tid)} had the top score: ${fmt(tsc)} points! Wow.`, (x, t, u, ms) => {
-      bg(x, P, t); bar(x, P, pro ? 'High score' : 'Top score', u);
-      teamBadge(x, S, tid, W / 2, 330, 110);
-      x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = C(tid); fitText(x, N(tid), 1500, P.head, 90); x.fillText(N(tid), W / 2, 510);
-      x.fillStyle = P.fg; x.font = F(P.head, 220); x.fillText(fmt(tsc * ease((ms - 300) / 2200)), W / 2, 690);
-      if (b && Math.abs(b.hs - b.as) >= 20) {
-        x.globalAlpha = ease((ms - 3000) / 600); x.fillStyle = P.muted; x.font = F(P.body, 40);
-        x.fillText(`${pro ? 'Biggest blowout' : 'Biggest beatdown'}: ${N(S.winner(b))} by ${Math.abs(b.hs - b.as).toFixed(1)} over ${N(S.loser(b))}`, W / 2, 880); x.globalAlpha = 1;
-      }
     });
 
-    // 6. Player of the week
+    // 6. Player of the week (+ bench of shame), when the poller saved lineups
     if (S.potw) {
       const p = S.potw;
-      scene(7000, pro ? `Player of the week: ${p.n}, ${fmt(p.pts)} points for ${N(p.team)}.` : `Player of the week is ${p.n}! ${fmt(p.pts)} points for ${N(p.team)}!`, (x, t, u, ms) => {
+      scene(4800, pro ? `Player of the week: ${p.n}, ${fmt(p.pts)} for ${N(p.team)}.` : `MVP of the week: ${p.n}! ${fmt(p.pts)} points!`, (x, t, u, ms) => {
         bg(x, P, t); bar(x, P, pro ? 'Player of the week' : 'MVP of the week', u);
-        const img = S.imgs.potw, a = ease((ms - 200) / 700);
-        x.save(); x.globalAlpha = a;
-        if (img) x.drawImage(img, 180, 230, 760, 760 * (img.height / img.width || 0.73));
-        x.restore();
-        x.textAlign = 'left'; x.textBaseline = 'alphabetic'; x.fillStyle = P.fg; fitText(x, p.n, 860, P.head, 120); x.fillText(p.n, 980, 480);
-        x.fillStyle = P.muted; x.font = F(P.body, 40); x.fillText(`${p.pos} · ${p.tm || ''} · ${N(p.team)}`, 980, 550);
-        x.fillStyle = P.accent; x.font = F(P.head, 220); x.fillText(fmt(p.pts * ease((ms - 400) / 2000)), 980, 800);
-        if (S.bench) { x.globalAlpha = ease((ms - 3500) / 500); x.fillStyle = P.muted; x.font = F(P.body, 34); x.fillText(`${pro ? 'Bench of shame' : 'Oops'}: ${S.bench.n} scored ${fmt(S.bench.pts)} on ${N(S.bench.team)}’s bench`, 980, 900); x.globalAlpha = 1; }
+        const img = S.imgs.potw;
+        if (img) { x.save(); x.globalAlpha = ease((ms - 150) / 500); x.drawImage(img, 180, 250, 720, 720 * (img.height / img.width || 0.73)); x.restore(); }
+        x.textAlign = 'left'; x.textBaseline = 'alphabetic'; x.fillStyle = P.fg; fitText(x, p.n, 860, P.head, 116); x.fillText(p.n, 960, 470);
+        x.fillStyle = P.muted; x.font = F(P.body, 38); x.fillText(`${p.pos} · ${p.tm || ''} · ${N(p.team)}`, 960, 540);
+        x.fillStyle = C(p.team); x.font = F(P.head, 210); x.fillText(fmt(p.pts * ease((ms - 300) / 1500)), 960, 780);
+        if (S.bench) { x.globalAlpha = ease((ms - 2200) / 400); x.fillStyle = P.muted; x.font = F(P.body, 32); x.fillText(`${pro ? 'Bench of shame' : 'Oops'}: ${S.bench.n}, ${fmt(S.bench.pts)} on ${N(S.bench.team)}’s bench`, 960, 890); x.globalAlpha = 1; }
       });
     }
 
     // 7. Standings
     const st = S.standings.slice(0, 12);
-    scene(8500, pro ? `And here's how the standings look after week ${o.week}.` : `And here's the standings now!`, (x, t, u, ms) => {
+    scene(5600, pro ? `The standings after week ${o.week}.` : 'And the standings!', (x, t, u, ms) => {
       bg(x, P, t); bar(x, P, pro ? 'Standings' : 'The standings', u);
       const rowH = Math.min(68, 820 / st.length);
       st.forEach((r, i) => {
-        const a = ease((ms - 300 - i * 120) / 400); if (a <= 0) return;
+        const a = ease((ms - 150 - i * 70) / 350); if (a <= 0) return;
         const y = 190 + i * rowH;
         x.save(); x.globalAlpha = a; x.translate((1 - a) * -60, 0);
-        x.fillStyle = i % 2 ? 'transparent' : P.panel; x.fillRect(220, y, W - 440, rowH - 6);
+        if (i % 2 === 0) { x.fillStyle = P.panel; x.fillRect(220, y, W - 440, rowH - 6); }
         x.textBaseline = 'middle'; x.textAlign = 'left'; x.fillStyle = P.muted; x.font = F(P.head, rowH * 0.55); x.fillText(String(r.rank), 250, y + rowH / 2);
         teamBadge(x, S, r.id, 340, y + rowH / 2 - 3, rowH * 0.34);
         x.fillStyle = C(r.id); fitText(x, N(r.id), 900, P.head, Math.round(rowH * 0.55)); x.fillText(N(r.id), 390, y + rowH / 2);
@@ -278,11 +278,11 @@
     });
 
     // 8. Sign-off
-    scene(4200, pro ? `That's the week. We'll see you next Sunday.` : `That's all for this week! See you next Sunday, family!`, (x, t, u) => {
+    scene(2600, pro ? 'That’s the week.' : 'That’s the week, family!', (x, t, u) => {
       bg(x, P, t);
-      x.textAlign = 'center'; x.textBaseline = 'middle'; x.globalAlpha = ease(u * 3);
+      x.textAlign = 'center'; x.textBaseline = 'middle'; x.globalAlpha = ease(u * 4);
       x.fillStyle = P.fg; x.font = F(P.head, 150); x.fillText(pro ? "THAT'S THE WEEK" : "That's the week!", W / 2, 470);
-      x.fillStyle = P.accent; x.font = F(P.body, 48); x.fillText(`${o.name} · see you next Sunday`, W / 2, 610);
+      x.fillStyle = P.accent; x.font = F(P.body, 46); x.fillText(`${o.name} · ${fmt(S.sup.total)} points scored`, W / 2, 610);
       x.globalAlpha = 1;
     });
     return list;
@@ -329,7 +329,7 @@
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
     const stream = cv.captureStream(30);
     let musicStarted = false;
-    if (!window.DeskMusic) await new Promise((res) => { const s = document.createElement('script'); s.src = 'desk-music.js?v=2'; s.onload = res; s.onerror = res; document.head.appendChild(s); });
+    if (!window.DeskMusic) await new Promise((res) => { const s = document.createElement('script'); s.src = 'desk-music.js?v=4'; s.onload = res; s.onerror = res; document.head.appendChild(s); });
     if (window.DeskMusic) {
       if (!DeskMusic.running) { DeskMusic.setStyle(show.o.studio, 'night'); DeskMusic.start(); musicStarted = true; }
       try { for (const tr of DeskMusic.tap().getAudioTracks()) stream.addTrack(tr); } catch (e) { /* no audio */ }

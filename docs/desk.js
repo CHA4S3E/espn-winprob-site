@@ -29,15 +29,8 @@
   const voice = (L) => (L ? L.studio : (cur ? cur.studio : 'pro'));
   // Team colors, adjusted so they stay readable on the current look: very dark
   // colors are lifted on the night sets, very light ones deepened on the day sets.
-  function vis(hex) {
-    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim()); if (!m) return '#7f8fa6';
-    const n = parseInt(m[1], 16); let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
-    const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255, dark = document.documentElement.dataset.daypart === 'night';
-    const mix = (k, to) => { r = Math.round(r + (to - r) * k); g = Math.round(g + (to - g) * k); b = Math.round(b + (to - b) * k); };
-    if (dark && lum < 0.42) mix((0.42 - lum) / (1 - lum) + 0.18, 255);
-    if (!dark && lum > 0.62) mix((lum - 0.62) / lum + 0.2, 0);
-    return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
-  }
+  const isDark = () => document.documentElement.dataset.daypart === 'night';
+  const vis = (hex) => WPChart.teamColor(hex, isDark());
   const T = (L, id) => { const t = D.team(L, id); return Object.assign({}, t, { color: vis(t.color) }); };
   const fmt = (x) => Number(x || 0).toFixed(1);
   const nameSize = (s) => (String(s).length > 22 ? 34 : String(s).length > 16 ? 40 : 50);
@@ -57,13 +50,16 @@
   const leftToPlay = (L, teamId) => { const p = L.lineups.get(teamId); return p ? p.filter((x) => !x.bench && (x.g === 'pre' || x.g === 'in')).length : null; };
 
   // ------------------------------------------------------------------ scaling
+  // The layout is 1920x1080; it's scaled to fit the window, and the TV itself
+  // grows to fill whatever is left over (wider or taller screens), so there are
+  // never bars at the edges.
   function fit() {
     const s = Math.min(innerWidth / 1920, innerHeight / 1080);
-    $('tv').style.transform = `scale(${s}) translate(-50%, -50%)`;
-    $('tv').style.transformOrigin = '0 0';
-    $('tv').style.left = '50%'; $('tv').style.top = '50%';
-    $('tv').style.transform = `translate(-50%, -50%) scale(${s})`;
-    $('tv').style.transformOrigin = 'center center';
+    const w = innerWidth / s, h = innerHeight / s;
+    const tv = $('tv'), fr = $('frame');
+    tv.style.width = w + 'px'; tv.style.height = h + 'px'; tv.style.transform = `scale(${s})`;
+    fr.style.left = (w - 1920) / 2 + 'px'; fr.style.top = (h - 1080) / 2 + 'px';
+    if (window.DeskFx && DeskFx.resize) DeskFx.resize(w, h);
   }
 
   // ------------------------------------------------------------------ studio
@@ -307,20 +303,8 @@
     const W = cv.clientWidth, H = cv.clientHeight, dpr = 2;
     cv.width = W * dpr; cv.height = H * dpr;
     const x = cv.getContext('2d'); x.scale(dpr, dpr);
-    const pts = m.series.length > 1 ? m.series : [{ t: 0, wp: m.pre }, { t: 1, wp: m.wp }];
-    const t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1;
-    const X = (t) => 8 + (t - t0) / ((t1 - t0) || 1) * (W - 16), Y = (wp) => 8 + (1 - wp / 100) * (H - 16), y50 = Y(50);
-    const css = getComputedStyle(document.documentElement);
-    x.strokeStyle = css.getPropertyValue('--line'); x.setLineDash([6, 6]); x.beginPath(); x.moveTo(0, y50); x.lineTo(W, y50); x.stroke(); x.setLineDash([]);
-    for (let i = 1; i < pts.length; i++) {
-      const p = pts[i - 1], q = pts[i], col = (p.wp + q.wp) / 2 >= 50 ? h.color : a.color;
-      x.fillStyle = col + '33'; x.beginPath(); x.moveTo(X(p.t), y50); x.lineTo(X(p.t), Y(p.wp)); x.lineTo(X(q.t), Y(p.wp)); x.lineTo(X(q.t), y50); x.fill();
-      x.strokeStyle = col; x.lineWidth = 4; x.lineJoin = 'round'; x.beginPath(); x.moveTo(X(p.t), Y(p.wp)); x.lineTo(X(q.t), Y(p.wp)); x.lineTo(X(q.t), Y(q.wp)); x.stroke();
-    }
-    const lp = pts[pts.length - 1];
-    x.fillStyle = lp.wp >= 50 ? h.color : a.color; x.beginPath(); x.arc(X(lp.t), Y(lp.wp), 8, 0, 7); x.fill();
-    x.font = '700 15px Inter, sans-serif'; x.fillStyle = css.getPropertyValue('--muted');
-    x.fillText(h.name + ' ↑', 12, 24); x.fillText(a.name + ' ↓', 12, H - 14);
+    const vals = m.series.length > 1 ? m.series.map((p) => p.wp) : [m.pre, m.wp];
+    WPChart.draw(x, { x: 0, y: 0, w: W, h: H }, vals, h.color, a.color, { dark: isDark(), lineWidth: 3.5, font: 15 });
   }
 
   function planFor(L) {
@@ -398,26 +382,16 @@
     const cv = wrap.querySelector('canvas'), W = 1150, H = 470, dpr = 2;
     cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px';
     const x = cv.getContext('2d'); x.scale(dpr, dpr);
-    const t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1, X = (t) => 10 + (t - t0) / ((t1 - t0) || 1) * (W - 20), Y = (wp) => 10 + (1 - wp / 100) * (H - 20);
-    const css = getComputedStyle(document.documentElement);
+    const vals = pts.map((p) => p.wp);
     const DUR = 7500, start = performance.now();
     await new Promise((resolve) => {
       const f = (now) => {
-        const u = Math.min(1, (now - start) / DUR), e = u < 0.6 ? u / 0.6 * 0.75 : 0.75 + (u - 0.6) / 0.4 * 0.25; // the last quarter of time in slow motion
-        const tc = t0 + (t1 - t0) * e;
+        const u = Math.min(1, (now - start) / DUR), e = u < 0.6 ? u / 0.6 * 0.75 : 0.75 + (u - 0.6) / 0.4 * 0.25; // the last stretch in slow motion
         x.clearRect(0, 0, W, H);
-        x.strokeStyle = css.getPropertyValue('--line'); x.setLineDash([6, 6]); x.beginPath(); x.moveTo(0, Y(50)); x.lineTo(W, Y(50)); x.stroke(); x.setLineDash([]);
-        let last = pts[0];
-        for (let i = 1; i < pts.length && pts[i - 1].t <= tc; i++) {
-          const p = pts[i - 1], q = pts[i].t <= tc ? pts[i] : { t: tc, wp: p.wp, hs: p.hs, as: p.as };
-          const col = (p.wp + q.wp) / 2 >= 50 ? h.color : a.color;
-          x.strokeStyle = col; x.lineWidth = 5; x.lineJoin = 'round'; x.beginPath(); x.moveTo(X(p.t), Y(p.wp)); x.lineTo(X(q.t), Y(p.wp)); x.lineTo(X(q.t), Y(q.wp)); x.stroke();
-          last = q;
-        }
-        const glow = 10 + 6 * Math.sin(now / 90);
-        x.fillStyle = last.wp >= 50 ? h.color : a.color; x.shadowColor = x.fillStyle; x.shadowBlur = glow * 2; x.beginPath(); x.arc(X(last.t), Y(last.wp), 10, 0, 7); x.fill(); x.shadowBlur = 0;
-        wrap.querySelector('#rpHs').textContent = fmt(last.hs); wrap.querySelector('#rpAs').textContent = fmt(last.as);
-        wrap.querySelector('#rpPct').textContent = Math.round(Math.max(last.wp, 100 - last.wp)) + '% ' + (last.wp >= 50 ? h.name : a.name);
+        WPChart.draw(x, { x: 0, y: 0, w: W, h: H }, vals, h.color, a.color, { dark: isDark(), lineWidth: 4.5, font: 16, progress: e });
+        const p = pts[Math.min(pts.length - 1, Math.round(e * (pts.length - 1)))];
+        wrap.querySelector('#rpHs').textContent = fmt(p.hs); wrap.querySelector('#rpAs').textContent = fmt(p.as);
+        wrap.querySelector('#rpPct').textContent = Math.round(Math.max(p.wp, 100 - p.wp)) + '% ' + (p.wp >= 50 ? h.name : a.name);
         if (u < 1) requestAnimationFrame(f); else resolve();
       };
       requestAnimationFrame(f);
