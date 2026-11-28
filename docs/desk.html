@@ -7,6 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📺</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,700;0,800;1,800&family=Inter:wght@400;600;700&family=Baloo+2:wght@500;700;800&family=Nunito:wght@500;700;800&display=swap" rel="stylesheet">
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 /* ======================================================================
@@ -427,6 +428,16 @@ html[data-champ="on"] #tv::after { content: ''; position: absolute; inset: -30%;
 .rc-g { font: var(--head-style) 800 46px/1 var(--font-head); text-align: center; }
 .rc-A { color: var(--good); } .rc-B { color: var(--accent); } .rc-C { color: #f5a524; } .rc-D, .rc-F { color: var(--hot); }
 
+/* ---- 3D metallic logos (desk-logo3d.js) ---- */
+.logo3d-canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; z-index: 1; pointer-events: none; transition: opacity .3s; }
+#logo3d { position: absolute; inset: 0; z-index: 24; display: none; background: radial-gradient(ellipse at 50% 30%, #0b1a3d 0%, #02040c 70%); }
+#logo3d.show { display: block; }
+#logo3d .l3-text { position: absolute; left: 0; right: 0; bottom: 120px; z-index: 2; text-align: center; color: #fff; text-shadow: 0 6px 30px rgba(0,0,0,.8); }
+#logo3d .l3-k { font: 700 24px 'Inter', sans-serif; letter-spacing: .4em; color: #9fc0ff; text-transform: uppercase; animation: hd .8s .6s both; }
+#logo3d .l3-t { font: italic 800 84px/1 'Barlow Condensed', sans-serif; letter-spacing: .02em; text-transform: uppercase; margin-top: 10px; animation: hd .8s .9s both; }
+#champFx.has3d .cf-t .ic, #champFx.has3d .cf-logo { visibility: hidden; }
+#champFx.has3d .cf-beams { opacity: .35; }
+
 /* ---- connection banner ---- */
 #netBanner { position: fixed; left: 50%; top: 14px; transform: translate(-50%, -300%); z-index: 80; padding: 10px 22px; border-radius: 999px; background: #c2410c; color: #fff; font: 700 16px 'Inter', sans-serif; transition: transform .4s; }
 #netBanner.show { transform: translate(-50%, 0); }
@@ -454,6 +465,7 @@ html[data-champ="on"] #tv::after { content: ''; position: absolute; inset: -30%;
   <div id="breaking"><div class="bg"></div><div class="stripes"></div><div class="box"><div class="kick"></div><div class="hd"></div><div class="bd"></div><div class="teams"></div><div class="meter"></div></div></div>
   <div id="wipe"><div><div class="w1"></div><div class="w2"></div></div></div>
   <div id="champFx"></div>
+  <div id="logo3d"><div class="l3-text"><div class="l3-k"></div><div class="l3-t"></div></div></div>
 </div>
 <button id="soundGate" type="button" hidden>🔊 Sound on</button>
 <div id="controls">
@@ -474,7 +486,8 @@ html[data-champ="on"] #tv::after { content: ''; position: absolute; inset: -30%;
 <script src="wp-chart.js?v=1"></script>
 <script src="desk-playoffs.js?v=2"></script>
 <script src="desk-analytics.js?v=4"></script>
+<script src="desk-logo3d.js?v=1"></script>
 <script src="recap-video.js?v=4"></script>
-<script src="desk.js?v=9"></script>
+<script src="desk.js?v=10"></script>
 </body>
 </html>

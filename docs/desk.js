@@ -187,7 +187,7 @@
         `This one started ${Math.round(m.pre >= 50 ? m.pre : 100 - m.pre)}% ${m.pre >= 50 ? h.name : a.name}. Now it’s ${ldr.name} at ${P}%. Drama!`,
         `Only ${gap} points between ${h.name} and ${a.name}. Somebody pass the chips.`,
       ];
-      return { key: 'spotlight', title: Lines.segmentTitle('spotlight', voice(L)), html, dur: 20000, line: lines[Math.floor(Math.random() * lines.length)],
+      return { key: 'spotlight', matchup: m, title: Lines.segmentTitle('spotlight', voice(L)), html, dur: 20000, line: lines[Math.floor(Math.random() * lines.length)],
         after() { drawChart($('spotChart'), m, h, a); } };
     },
     scoreboard(L) {
@@ -716,6 +716,7 @@
     const key = segPlan[segIdx++];
     const seg = SEGMENTS[key](cur);
     if (!seg) return nextSegment();
+    if ((key === 'spotlight' || key === 'champLive') && seg.matchup && Date.now() - lastBumper > 6 * 60 * 1000) { lastBumper = Date.now(); await logoBumper(cur, seg.matchup, key === 'champLive'); }
     showSegment(seg, true);
     segStarted = Date.now(); segDur = seg.dur;
     segTimer = setTimeout(nextSegment, seg.dur);
@@ -745,6 +746,22 @@
     busy = false;
   }
 
+  // ------------------------------------------------------------------ 3D logo bumper
+  // A few seconds of the two teams' logos as 3D chrome emblems before a spotlight game.
+  let lastBumper = 0;
+  async function logoBumper(L, m, title) {
+    if (!window.Logo3D || !Logo3D.supported() || busy) return;
+    busy = true;
+    const h = T(L, m.home), a = T(L, m.away), el = $('logo3d'), pro = L.studio === 'pro';
+    el.querySelector('.l3-k').textContent = title ? (pro ? 'The Championship' : 'The Big Game') : (pro ? 'Spotlight game' : 'The big one');
+    el.querySelector('.l3-t').textContent = `${h.name}  vs  ${a.name}`;
+    el.classList.add('show');
+    M.sting('handoff');
+    try { await Logo3D.play(el, { mode: 'versus', teams: [D.team(L, m.home), D.team(L, m.away)], ms: 5200 }); } catch (e) { /* flat look */ }
+    el.classList.remove('show');
+    busy = false;
+  }
+
   // ------------------------------------------------------------------ championship takeovers
   const champIntroAt = new Map();
   async function champIntro(L) {
@@ -758,6 +775,7 @@
       <div class="cf-teams"><div class="cf-t l" style="--c:${esc(a.color)}">${icon(a)}<b>${esc(a.name)}</b><small>#${br.seedOf.get(br.final.a)} seed</small></div><div class="cf-vs">VS</div><div class="cf-t r" style="--c:${esc(b.color)}">${icon(b)}<b>${esc(b.name)}</b><small>#${br.seedOf.get(br.final.b)} seed</small></div></div>
       <div class="cf-sub">${br.final.weeks.length > 1 ? `Weeks ${br.final.weeks.join(' + ')} · scores combined` : `Week ${br.final.weeks[0]}`} · ${pro ? 'one trophy' : 'winner takes all'}</div>`;
     fx.className = 'show intro';
+    if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'versus', teams: [a, b], ms: 10200 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
     M.sting('champIntro');
     say(pro ? `This is it. ${a.name} and ${b.name}, for the ${L.year} ${L.name} championship.` : `It all comes down to this: ${a.name} vs ${b.name} for the title!`);
     await sleep(10500);
@@ -777,6 +795,7 @@
       <div class="cf-champ" style="color:${esc(t.color)}">${esc(t.name)}</div><div class="cf-title small">${L.year} ${esc(L.name.toUpperCase())} ${pro ? 'CHAMPIONS' : 'CHAMPS!'}</div>
       ${opp && ws != null ? `<div class="cf-sub">${fmt(ws)} – ${fmt(ls)} over ${esc(opp.name)}</div>` : ''}`;
     fx.className = 'show finale';
+    if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'champion', teams: [t], ms: quiet ? 8800 : 14800 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
     if (!quiet) M.sting('champion');
     say(pro ? `${t.name} are your ${L.year} ${L.name} champions!` : `${t.name} won the whole thing! Champs!`);
     const cv = fx.querySelector('canvas'), W = cv.width = 1920, H = cv.height = 1080, x = cv.getContext('2d');
@@ -1052,7 +1071,7 @@
     addEventListener('mousemove', () => { document.body.classList.add('ui'); clearTimeout(hideUi); hideUi = setTimeout(() => document.body.classList.remove('ui'), 2500); });
     D.on(onEvent);
     D.__emit = onEvent;
-    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), commercial: () => commercialBreak(), champIntro: () => { champIntroAt.clear(); return champIntro(cur); }, champFinale: (id) => champFinale(cur, id || (bracketOf(cur) || {}).champion), bracket: () => bracketOf(cur), restudio: () => applyStudio(cur), checkPlayoffs: (q) => checkPlayoffs(q), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
+    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), commercial: () => commercialBreak(), bumper: (i) => logoBumper(cur, cur.matchups[i || 0]), logo3d: (mode, i) => { const m = cur.matchups[i || 0]; const el = $('logo3d'); el.classList.add('show'); return Logo3D.play(el, { mode, teams: [D.team(cur, m.home), D.team(cur, m.away)], ms: 6000 }).then((ok) => { el.classList.remove('show'); return ok; }); }, champIntro: () => { champIntroAt.clear(); return champIntro(cur); }, champFinale: (id) => champFinale(cur, id || (bracketOf(cur) || {}).champion), bracket: () => bracketOf(cur), restudio: () => applyStudio(cur), checkPlayoffs: (q) => checkPlayoffs(q), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
     try {
       leagues = (await D.init()).filter((L) => L.year);
       await D.refreshNfl();
