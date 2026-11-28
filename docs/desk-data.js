@@ -31,12 +31,12 @@
   function studioFor(name) { return /family/i.test(name || '') ? 'casual' : 'pro'; }
 
   async function init() {
-    const { data, error } = await sb.from('leagues').select('id, slug, name, playoff_spots').order('name');
+    const { data, error } = await sb.from('leagues').select('id, slug, name, playoff_spots, reseed_weeks').order('name');
     if (error) throw error;
     for (const l of data || []) {
       leagues.push({
         id: l.id, slug: l.slug, name: l.name, studio: studioFor(l.name),
-        playoffSpots: Number(l.playoff_spots) || 6,
+        playoffSpots: Number(l.playoff_spots) || 6, reseedWeeks: (l.reseed_weeks || []).map(Number),
         teams: {}, year: null, week: null, regEnd: 14,
         summary: [], schedule: [], matchups: [], series: new Map(), lastTs: null,
         lineups: new Map(), events: [], lastEventId: 0, lineupsOk: true,
@@ -69,8 +69,12 @@
     L.summary = summary; L.schedule = schedule || [];
     // ESPN's saved schedule only covers the regular season, so its last week is
     // the real cutoff (leagues differ); fall back to the bracket-size default.
+    // The regular season runs through the later of the last pre-scheduled week
+    // and the last reseed week (reseed weeks are paired by the standings, so
+    // ESPN has no schedule for them yet -- e.g. Branford's weeks 12-14).
     const lastSched = L.schedule.reduce((mx, s) => Math.max(mx, s.week), 0);
-    if (lastSched >= L.week) L.regEnd = lastSched;
+    const lastReseed = L.reseedWeeks.reduce((mx, w) => Math.max(mx, w), 0);
+    if (lastSched) L.regEnd = Math.max(lastSched, lastReseed);
     await refreshLeague(L);
   }
 
@@ -199,6 +203,12 @@
     }
     const order = (arr) => arr.sort((x, y) => (y.w + y.t / 2) - (x.w + x.t / 2) || y.pf - x.pf);
     const base = order([...rec.values()]);
+    // Actual records: finished games only (before this week + this week's finals).
+    L.actualRec = new Map(base.map((r) => [r.id, { w: r.w, l: r.l, t: r.t }]));
+    for (const m of L.matchups) if (m.done) {
+      const H = L.actualRec.get(m.home), A = L.actualRec.get(m.away); if (!H || !A) continue;
+      if (m.hs > m.as) { H.w++; A.l++; } else if (m.as > m.hs) { A.w++; H.l++; } else { H.t++; A.t++; }
+    }
     // "If it ended right now": this week's current leaders get the win.
     const now = [...rec.values()].map((r) => ({ ...r }));
     const byId = new Map(now.map((r) => [r.id, r]));
@@ -222,7 +232,11 @@
   function simulateOdds(L, rec) {
     const ids = Object.keys(L.teams); if (!ids.length) return new Map();
     const mean = new Map(ids.map((id) => { const r = rec.get(id); const g = r && r.games.length ? r.games : [110]; return [id, g.reduce((s, x) => s + x, 0) / g.length]; }));
-    const future = L.schedule.filter((s) => s.week > L.week && s.week <= L.regEnd);
+    const futureWeeks = [];
+    for (let wk = L.week + 1; wk <= L.regEnd; wk++) {
+      const sched = L.schedule.filter((x) => x.week === wk && !L.reseedWeeks.includes(wk)).map((x) => [x.home_team_id, x.away_team_id]);
+      futureWeeks.push(sched.length ? sched : null); // null = paired by the standings that week
+    }
     const P = L.playoffSpots;
     const run = (usePregame, force, N = 1500) => {
       const made = new Map(ids.map((id) => [id, 0]));
@@ -239,11 +253,15 @@
           w.set(homeWins ? m.home : m.away, w.get(homeWins ? m.home : m.away) + 1);
           pf.set(m.home, pf.get(m.home) + m.hx); pf.set(m.away, pf.get(m.away) + m.ax);
         }
-        for (const s of future) {
-          const a = mean.get(s.home_team_id) + gauss() * 22, b = mean.get(s.away_team_id) + gauss() * 22;
-          if (!w.has(s.home_team_id) || !w.has(s.away_team_id)) continue;
-          w.set(a >= b ? s.home_team_id : s.away_team_id, w.get(a >= b ? s.home_team_id : s.away_team_id) + 1);
-          pf.set(s.home_team_id, pf.get(s.home_team_id) + a); pf.set(s.away_team_id, pf.get(s.away_team_id) + b);
+        for (const fixed of futureWeeks) {
+          let pairs = fixed;
+          if (!pairs) { const ord = ids.slice().sort((x, y) => w.get(y) - w.get(x) || pf.get(y) - pf.get(x)); pairs = []; for (let k = 0; k + 1 < ord.length; k += 2) pairs.push([ord[k], ord[k + 1]]); }
+          for (const [h, aw] of pairs) {
+            if (!w.has(h) || !w.has(aw)) continue;
+            const a = mean.get(h) + gauss() * 22, b = mean.get(aw) + gauss() * 22;
+            w.set(a >= b ? h : aw, w.get(a >= b ? h : aw) + 1);
+            pf.set(h, pf.get(h) + a); pf.set(aw, pf.get(aw) + b);
+          }
         }
         const ranked = ids.slice().sort((x, y) => w.get(y) - w.get(x) || pf.get(y) - pf.get(x));
         for (let i = 0; i < P && i < ranked.length; i++) made.set(ranked[i], made.get(ranked[i]) + 1);
@@ -252,17 +270,36 @@
     };
     const live = run(false), pre = run(true);
     const odds = new Map(ids.map((id) => [id, { now: live.get(id), pre: pre.get(id) }]));
-    // Clinch / elimination watch for the last few regular-season weeks: rerun
-    // with each team's game this week forced to a win and to a loss.
+    // Clinch / elimination watch (last 3 weeks of the regular season), by the
+    // math, not the simulation: count what every team can still reach.
+    //   clinched        -- even losing out, fewer than P other teams could finish with as many wins
+    //   eliminated      -- even winning out, at least P teams are already sure to finish with more
+    //   clinch_with_win -- winning this week's game would clinch it
+    //   win_or_out      -- losing this week's game would eliminate it
+    // A possible tie in wins counts as "not settled" (tiebreakers aren't decided yet).
     if (L.regEnd - L.week <= 3) {
+      const after = L.regEnd - L.week; // regular-season weeks after this one
+      const cur = new Map(ids.map((id) => [id, (rec.get(id) || { w: 0 }).w + (rec.get(id) || { t: 0 }).t / 2]));
+      const gm = new Map(L.matchups.map((m) => [m.home, m]).concat(L.matchups.map((m) => [m.away, m])));
+      const state = (force) => { // wins so far (incl. finished games this week) and games left, optionally forcing one result
+        const wNow = new Map(cur), left = new Map(ids.map((id) => [id, after]));
+        for (const m of L.matchups) {
+          let winner = m.done ? (m.hs > m.as ? m.home : m.as > m.hs ? m.away : null) : null;
+          if (!m.done && force && (m.home === force.id || m.away === force.id)) winner = force.win ? force.id : (m.home === force.id ? m.away : m.home);
+          if (winner) wNow.set(winner, wNow.get(winner) + 1);
+          else if (!m.done) { left.set(m.home, left.get(m.home) + 1); left.set(m.away, left.get(m.away) + 1); }
+        }
+        return { wNow, left };
+      };
+      const clinched = (id, st) => { const worst = st.wNow.get(id); let threats = 0; for (const o of ids) if (o !== id && st.wNow.get(o) + st.left.get(o) >= worst) threats++; return threats < P; };
+      const eliminated = (id, st) => { const best = st.wNow.get(id) + st.left.get(id); let ahead = 0; for (const o of ids) if (o !== id && st.wNow.get(o) > best) ahead++; return ahead >= P; };
+      const base = state(null);
       for (const id of ids) {
-        const o = odds.get(id), playing = L.matchups.some((m) => (m.home === id || m.away === id) && !m.done);
-        let status = o.now >= 0.999 ? 'clinched' : o.now <= 0.001 ? 'eliminated' : 'alive';
+        const o = odds.get(id), m = gm.get(id), playing = m && !m.done;
+        let status = clinched(id, base) ? 'clinched' : eliminated(id, base) ? 'eliminated' : 'alive';
         if (status === 'alive' && playing) {
-          const ifWin = run(false, { id, win: true }, 500).get(id), ifLoss = run(false, { id, win: false }, 500).get(id);
-          if (ifWin >= 0.999) status = 'clinch_with_win';
-          else if (ifLoss <= 0.001) status = ifWin <= 0.001 ? 'eliminated' : 'win_or_out';
-          o.ifWin = ifWin; o.ifLoss = ifLoss;
+          if (clinched(id, state({ id, win: true }))) status = 'clinch_with_win';
+          else if (eliminated(id, state({ id, win: false }))) status = 'win_or_out';
         }
         o.status = status;
       }

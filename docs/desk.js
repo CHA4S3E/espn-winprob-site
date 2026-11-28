@@ -46,6 +46,8 @@
     const src = Number(id) < 0 || id == null ? (tm ? `https://a.espncdn.com/i/teamlogos/nfl/500/${String(tm).toLowerCase()}.png` : '') : `https://a.espncdn.com/i/headshots/nfl/players/full/${id}.png`;
     return src ? `<img class="${cls || 'hs'}" src="${src}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : '';
   }
+  // Playoff odds as text: only a mathematical clinch/elimination shows as 100% / 0%.
+  const oddsText = (o) => o.status === 'clinched' ? '100%' : o.status === 'eliminated' ? '0%' : o.now >= 0.995 ? '>99%' : o.now < 0.005 ? '<1%' : Math.round(o.now * 100) + '%';
   const ago = (ts) => { const s = Math.max(0, (Date.now() - ts) / 1000); return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago'; };
   const leftToPlay = (L, teamId) => { const p = L.lineups.get(teamId); return p ? p.filter((x) => !x.bench && (x.g === 'pre' || x.g === 'in')).length : null; };
 
@@ -206,7 +208,7 @@
         const dd = o ? Math.round((o.now - o.pre) * 100) : 0;
         return `<tr class="${i === L.playoffSpots ? 'cut' : ''}"><td>${r.rank}</td><td><span style="color:${esc(t.color)};font-weight:800">${icon(t)} ${esc(t.name)}</span></td><td class="num">${r.w}-${r.l}${r.t ? '-' + r.t : ''}</td>
           <td class="num ${mv > 0 ? 'mv-up' : mv < 0 ? 'mv-dn' : ''}">${mv > 0 ? '▲' + mv : mv < 0 ? '▼' + -mv : '–'}</td><td class="num">${Math.round(r.pf)}</td>
-          ${L.inSeason ? `<td class="num">${o ? Math.round(o.now * 100) + '%' : '–'}</td><td class="num ${dd > 0 ? 'mv-up' : dd < 0 ? 'mv-dn' : ''}">${dd > 0 ? '+' + dd : dd < 0 ? dd : '–'}</td>` : ''}</tr>`;
+          ${L.inSeason ? `<td class="num">${o ? oddsText(o) : '–'}</td><td class="num ${dd > 0 ? 'mv-up' : dd < 0 ? 'mv-dn' : ''}">${dd > 0 ? '+' + dd : dd < 0 ? dd : '–'}</td>` : ''}</tr>`;
       }).join('')}</tbody></table>`;
       const movers = [...odds.entries()].map(([id, o]) => [id, o.now - o.pre]).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
       const mv = movers[0];
@@ -323,7 +325,8 @@
       const LABEL = { clinched: ['Clinched', 'ok'], clinch_with_win: ['Clinches with a win', 'go'], win_or_out: ['Must win', 'warn'], alive: ['Alive', 'mid'], eliminated: ['Eliminated', 'out'] };
       const html = `<div class="cl-grid">${rows.map((r) => {
         const o = L.odds.get(r.id), t = T(L, r.id), [lab, cls] = LABEL[o.status] || ['', 'mid'];
-        return `<div class="cl ${cls}"><span class="cl-t">${icon(t)} <b style="color:${esc(t.color)}">${esc(t.name)}</b> <em>${r.w}-${r.l}</em></span><span class="cl-s">${esc(lab)}</span><span class="cl-o">${o.status === 'alive' || o.status === 'clinch_with_win' || o.status === 'win_or_out' ? Math.round(o.now * 100) + '%' : ''}</span></div>`;
+        const ar = (L.actualRec && L.actualRec.get(r.id)) || r; // real record from finished games, not "if it ended now"
+        return `<div class="cl ${cls}"><span class="cl-t">${icon(t)} <b style="color:${esc(t.color)}">${esc(t.name)}</b> <em>${ar.w}-${ar.l}${ar.t ? '-' + ar.t : ''}</em></span><span class="cl-s">${esc(lab)}</span><span class="cl-o">${o.status === 'alive' || o.status === 'clinch_with_win' || o.status === 'win_or_out' ? oddsText(o) : ''}</span></div>`;
       }).join('')}</div>`;
       const cw = rows.filter((r) => L.odds.get(r.id).status === 'clinch_with_win').map((r) => T(L, r.id).name);
       const mw = rows.filter((r) => L.odds.get(r.id).status === 'win_or_out').map((r) => T(L, r.id).name);
