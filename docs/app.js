@@ -56,6 +56,10 @@ let showUpsetHistory = localStorage.getItem('winProbShowUpsetHistory') !== 'fals
 // than just extra info on an already-opt-in hover.
 let showChartFx = localStorage.getItem('winProbShowChartFx') !== 'false'; // set on preferences.html
 let showConfidenceBand = localStorage.getItem('winProbShowConfidenceBand') === 'true'; // set on preferences.html
+// Defaults OFF: a faint dotted line on each chart showing what the original
+// (pre-calibration) model said, from each snapshot's saved win_prob_raw
+// (migration 004). The numbers and the main line always use the calibrated model.
+const showLegacyLine = localStorage.getItem('winProbShowLegacyLine') === 'true'; // set on preferences.html
 // Defaults on (only off if explicitly set to 'false') -- the NYT-style
 // "+X.X%"/"-X.X%" popup that appears next to a team's percentage ~500ms
 // after a poll actually moves it. See scheduleDeltaBadge below.
@@ -2415,7 +2419,56 @@ function intensity(y) {
 // only downloads rows newer than what's already held.
 // Only the columns the page reads (instead of '*', which also dragged along
 // bookkeeping columns like lineup_fingerprint on every row of every poll).
-const WEEK_SNAPSHOT_COLUMNS = 'id, league_id, year, week, matchup_id, team_id, is_home, ts, actual_score, expected_score, win_prob, all_starters_done';
+const WEEK_SNAPSHOT_COLUMNS_BASE = 'id, league_id, year, week, matchup_id, team_id, is_home, ts, actual_score, expected_score, win_prob, all_starters_done';
+// win_prob_raw only exists once migration 004 has been run; until then the
+// legacy preference has nothing to show and the column is left out.
+let rawColumnOk = showLegacyLine;
+function weekSnapshotColumns() { return rawColumnOk ? WEEK_SNAPSHOT_COLUMNS_BASE + ', win_prob_raw' : WEEK_SNAPSHOT_COLUMNS_BASE; }
+async function fetchSnapshotRows(build) {
+  try { return await fetchAllRows((from, to) => build(weekSnapshotColumns(), from, to)); }
+  catch (e) {
+    if (!rawColumnOk || !/win_prob_raw/.test((e && e.message) || '')) throw e;
+    rawColumnOk = false;
+    return fetchAllRows((from, to) => build(weekSnapshotColumns(), from, to));
+  }
+}
+
+// The legacy line: the original model's home win % at the same x positions
+// computeChartPoints uses (one per timestamp), skipping moments with no saved
+// value. Drawn by legacyLinePlugin over the chart, so the chart's own
+// datasets (and every index into them) are untouched.
+function computeLegacyPoints(homeRows, awayRows) {
+  if (!showLegacyLine) return null;
+  const allTimestamps = Array.from(new Set([...homeRows.map((r) => r.ts), ...awayRows.map((r) => r.ts)])).sort((a, b) => new Date(a) - new Date(b));
+  const pts = [];
+  allTimestamps.forEach((ts, i) => {
+    const h = nearestByTs(homeRows, ts);
+    if (h && h.win_prob_raw != null) pts.push({ x: i, y: Number(h.win_prob_raw) });
+  });
+  return pts.length > 1 ? pts : null;
+}
+function setLegacyLine(chart, homeRows, awayRows) {
+  if (!showLegacyLine || !chart) return;
+  chart._legacyPoints = computeLegacyPoints(homeRows, awayRows);
+  chart.draw();
+}
+const legacyLinePlugin = {
+  id: 'legacyLine',
+  afterDatasetsDraw(chart) {
+    const pts = chart._legacyPoints;
+    if (!pts || !chart.scales.x || !chart.scales.y) return;
+    const { ctx, chartArea: a, scales: { x, y } } = chart;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(a.left, a.top, a.right - a.left, a.bottom - a.top); ctx.clip();
+    ctx.setLineDash([2, 4]); ctx.lineWidth = 1.5; ctx.lineCap = 'round';
+    ctx.strokeStyle = themeVar('rgba(40,40,40,0.45)', 'rgba(235,235,235,0.42)');
+    ctx.beginPath();
+    pts.forEach((p, i) => { const px = x.getPixelForValue(p.x), py = y.getPixelForValue(p.y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
+    ctx.stroke();
+    ctx.restore();
+  },
+};
+if (typeof Chart !== 'undefined' && showLegacyLine) Chart.register(legacyLinePlugin);
 // True when every matchup on screen is final -- the auto-refresh then backs
 // off to IDLE_REFRESH_MS instead of the normal 30s.
 let weekIsIdle = false;
@@ -2473,14 +2526,15 @@ async function fetchWeekSnapshotsInner(leagueId, year, week) {
   if (c.key !== key) {
     // A finished, settled week never changes -- serve it from this
     // browser's saved copy instead of downloading it again.
-    const idbKey = `week:v1:${key}`;
+    // v2: win % recalibrated (v1 copies hold the old numbers); one copy per model
+    const idbKey = `week:v2:${showLegacyLine ? 'raw' : 'std'}:${key}`; // the raw copy also carries win_prob_raw
     const saved = await idbGet(idbKey);
     if (saved && saved.rows && saved.rows.length) {
       weekRowsCache = { key, rows: saved.rows, ids: new Set(saved.rows.map((r) => r.id)), lastTs: saved.rows[saved.rows.length - 1].ts };
       return weekRowsCache.rows;
     }
-    const rows = await fetchAllRows((from, to) =>
-      sb.from('snapshots').select(WEEK_SNAPSHOT_COLUMNS).eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
+    const rows = await fetchSnapshotRows((cols, from, to) =>
+      sb.from('snapshots').select(cols).eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
     );
     weekRowsCache = { key, rows, ids: new Set(rows.map((r) => r.id)), lastTs: rows.length ? rows[rows.length - 1].ts : null };
     if (rowsAreSettled(rows)) idbSet(idbKey, { rows, savedAt: Date.now() });
@@ -2489,14 +2543,14 @@ async function fetchWeekSnapshotsInner(leagueId, year, week) {
   // Same week as last time: only rows at/after the newest ts we hold
   // (>= so equal-ts rows aren't missed; ids dedupe the overlap).
   if (!c.lastTs) {
-    const rows = await fetchAllRows((from, to) =>
-      sb.from('snapshots').select(WEEK_SNAPSHOT_COLUMNS).eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
+    const rows = await fetchSnapshotRows((cols, from, to) =>
+      sb.from('snapshots').select(cols).eq('league_id', leagueId).eq('year', year).eq('week', week).order('ts').order('id').range(from, to)
     );
     weekRowsCache = { key, rows, ids: new Set(rows.map((r) => r.id)), lastTs: rows.length ? rows[rows.length - 1].ts : null };
     return weekRowsCache.rows;
   }
-  const fresh = await fetchAllRows((from, to) =>
-    sb.from('snapshots').select(WEEK_SNAPSHOT_COLUMNS).eq('league_id', leagueId).eq('year', year).eq('week', week).gte('ts', c.lastTs).order('ts').order('id').range(from, to)
+  const fresh = await fetchSnapshotRows((cols, from, to) =>
+    sb.from('snapshots').select(cols).eq('league_id', leagueId).eq('year', year).eq('week', week).gte('ts', c.lastTs).order('ts').order('id').range(from, to)
   );
   const added = [];
   for (const r of fresh) {
@@ -4031,6 +4085,7 @@ function renderLineChartCard(rows, home, away, allDone, compact) {
   });
   chart._state = state;
 
+  setLegacyLine(chart, homeRows, awayRows);
   return { card, entry: { mode: compact ? 'postcard' : 'timeline', chart, titleClass } };
 }
 
@@ -4050,6 +4105,7 @@ function updateLineChartCard(entry, rows, home, away, allDone) {
     entry.chart.data.datasets[1].data = band.lower;
   }
   entry.chart.options.scales.x.max = maxX; // keep the pinned axis in sync as new points arrive
+  if (showLegacyLine) entry.chart._legacyPoints = computeLegacyPoints(homeRows, awayRows);
   entry.chart.update('none');
 
   const badge = entry.chart.canvas.closest('.matchup-card, .postcard')?.querySelector(`.${entry.titleClass} span:last-child`);
@@ -5425,6 +5481,7 @@ function renderEspnCard(rows, home, away, allDone) {
   applySeasonalUpsetState(card, currentSeasonalTheme, !!upsetInfo);
   setPersistentDelta(card, rows, home, away, allDone);
 
+  setLegacyLine(chart, homeRows, awayRows);
   return { card, entry: { mode: 'espn', chart } };
 }
 
@@ -5446,6 +5503,7 @@ function updateEspnCard(entry, rows, home, away, allDone) {
   const newHomePct = latestPct(rows);
   chart._state.currentHomePct = newHomePct;
   chart.options.scales.x.max = maxX;
+  if (showLegacyLine) chart._legacyPoints = computeLegacyPoints(homeRows, awayRows);
   chart.update('none');
   chart._state.homeColor = home.color;
   chart._state.awayColor = away.color;
@@ -5934,11 +5992,31 @@ function whatIfWinProbability({ expectedA, expectedB, actualA, actualB, aDone, b
     if (actualA < actualB) return 0;
     return 50;
   }
-  if (aDone && !bDone && actualA < actualB) return 1;
-  if (bDone && !aDone && actualB < actualA) return 99;
   const stddev = whatIfDynamicStddev(expectedA, actualA, expectedB, actualB);
-  const z = (expectedA - expectedB) / (stddev * Math.SQRT2);
-  return Math.max(0, Math.min(100, normalCdf(z) * 100));
+  // One side finished and behind: the other is a strong favorite, not a lock (see winProb.js).
+  if (aDone && !bDone && actualA < actualB) return Math.min(50, whatIfCalibrated(actualA, Math.max(expectedB, actualB), actualA, actualB, stddev));
+  if (bDone && !aDone && actualB < actualA) return Math.max(50, whatIfCalibrated(Math.max(expectedA, actualA), actualB, actualA, actualB, stddev));
+  return whatIfCalibrated(expectedA, expectedB, actualA, actualB, stddev);
+}
+
+// Same calibration as poller/lib/winProb.js calibratedWinProbability (see the
+// long comment there for how it was fitted): early-week projected gaps count
+// about half, the spread is 1.4x wider with a 2-point floor, and a
+// heavier-tailed Student-t curve (10 dof) replaces the normal one.
+function whatIfTCdf(t, dof) {
+  const lg = (x) => { const c = [76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5]; let y = x, tt = x + 5.5; tt -= (x + 0.5) * Math.log(tt); let ser = 1.000000000190015; for (const k of c) ser += k / ++y; return -tt + Math.log((2.5066282746310005 * ser) / x); };
+  const cf = (a, b, x) => { const qab = a + b, qap = a + 1, qam = a - 1; let c = 1, d = 1 / (1 - (qab * x) / qap), h = d; for (let m = 1; m <= 200; m++) { const m2 = 2 * m; let aa = (m * (b - m) * x) / ((qam + m2) * (a + m2)); d = 1 / (1 + aa * d); c = 1 + aa / c; h *= d * c; aa = (-(a + m) * (qab + m) * x) / ((a + m2) * (qap + m2)); d = 1 / (1 + aa * d); c = 1 + aa / c; const del = d * c; h *= del; if (Math.abs(del - 1) < 3e-12) break; } return h; };
+  const ib = (a, b, x) => { if (x <= 0) return 0; if (x >= 1) return 1; const bt = Math.exp(lg(a + b) - lg(a) - lg(b) + a * Math.log(x) + b * Math.log(1 - x)); return x < (a + 1) / (a + b + 2) ? (bt * cf(a, b, x)) / a : 1 - (bt * cf(b, a, 1 - x)) / b; };
+  const p = 0.5 * ib(dof / 2, 0.5, dof / (dof + t * t));
+  return t > 0 ? 1 - p : p;
+}
+function whatIfCalibrated(expectedA, expectedB, actualA, actualB, stddev) {
+  const share = Math.min(1, Math.max(0, (stddev / WHATIF_DEFAULT_STDDEV) ** 2));
+  const trust = 1 - 0.5 * share;
+  const actualGap = (actualA || 0) - (actualB || 0);
+  const gap = actualGap + trust * ((expectedA - expectedB) - actualGap);
+  const spread = Math.sqrt((1.4 * stddev * Math.SQRT2) ** 2 + 4);
+  return Math.max(0, Math.min(100, whatIfTCdf((gap / spread) * Math.sqrt(10 / 8), 10) * 100));
 }
 
 // Mirrors computeChartPoints exactly (same nearestByTs + withCrossings

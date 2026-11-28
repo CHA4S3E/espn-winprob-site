@@ -384,6 +384,50 @@
       ['{T}: SPOILER SEASON', '{T} can\u2019t make the playoffs, but they can still ruin someone else\u2019s week.'],
     ] },
     // ----- injuries + transactions ({S2} injury status, {PL} player, {A} add, {DR} drop, {T2} trade partner, {GET} received)
+    // Stories that hit several teams at once (same player on more than one roster,
+    // both ends of one play, news about a player owned in both leagues).
+    // {PL} player(s), {N} team count, {WHERE} "both leagues" / "the Branford league",
+    // {WHO} short list of the teams, {PRO} NFL team.
+    multi_score: { mood: 'hype', pro: [
+      ['ONE PLAY, {N} TEAMS', '{PL} finds the end zone, and it counts for {N} teams across {WHERE}: {WHO}.'],
+      ['RIPPLE EFFECT: {PL}', 'A single {PRO} touchdown moves {N} fantasy teams in {WHERE}. On the board: {WHO}.'],
+      ['SIX POINTS, {N} TEAMS', '{PL} puts up six, and {WHO} all feel it.'],
+      ['SHARED SPOILS', '{PL} is on {N} rosters in {WHERE}. That touchdown pays out for {WHO}.'],
+      ['THE SAME TOUCHDOWN, {N} WAYS', 'One play, {N} teams touched in {WHERE}: {WHO}.'],
+      ['{PRO} SCORE SHAKES {WHERE}', '{PL} delivers, and the effect reaches {WHO}.'],
+    ], casual: [
+      ['ONE TD, {N} HAPPY CAMPERS', '{PL} scored and like {N} teams in {WHERE} are celebrating: {WHO}!'],
+      ['EVERYBODY GETS A PIECE', '{PL} touchdown! Good news for {WHO}.'],
+      ['{PL} IS EVERYWHERE', '{PL} is on {N} teams and just scored. {WHO}, say thank you!'],
+      ['TWO FOR ONE DEAL', 'One {PRO} touchdown, {N} teams cheering across {WHERE}: {WHO}.'],
+    ] },
+    multi_play: { mood: 'hype', pro: [
+      ['{PL}: {N} TEAMS AFFECTED', 'The latest from {PL} touches {N} rosters in {WHERE}: {WHO}.'],
+      ['ONE PLAYER, {N} STORYLINES', '{PL} is owned by {WHO}. Here is what it means for each.'],
+      ['RIPPLES ACROSS {WHERE}', 'A {PRO} moment with fantasy consequences for {WHO}.'],
+    ], casual: [
+      ['{PL} STRIKES AGAIN', '{PL} did a thing, and {N} teams in {WHERE} care: {WHO}.'],
+      ['WHO OWNS {PL}? LOTS OF YOU', 'This one hits {WHO}. Here\u2019s the damage.'],
+      ['{N} TEAMS, ONE PLAYER', '{PL} is on {WHO}. Buckle up.'],
+    ] },
+    multi_injury: { mood: 'bad', pro: [
+      ['INJURY HITS {N} TEAMS', '{PL} is {S2}, and that affects {WHO} in {WHERE}.'],
+      ['{PL} {S2}: WIDESPREAD IMPACT', 'Owned by {N} teams across {WHERE}. Lineup decisions ahead for {WHO}.'],
+      ['LINEUP ALERT ACROSS {WHERE}', '{PL} is {S2}. {WHO} need to check their lineups.'],
+    ], casual: [
+      ['UH OH, {N} TEAMS', '{PL} is {S2}! That\u2019s bad news for {WHO}.'],
+      ['EVERYBODY CHECK YOUR LINEUPS', '{PL} is {S2}. {WHO}, you\u2019ve been warned!'],
+      ['{PL} INJURY, LOTS OF SAD FACES', '{PL} is {S2}, and {N} teams in {WHERE} feel it.'],
+    ] },
+    multi_news: { mood: 'calm', pro: [
+      ['NEWS ACROSS {WHERE}', '{HEAD}. Owned by {WHO}.'],
+      ['{PL} UPDATE: {N} TEAMS', '{HEAD}. Rostered by {WHO}.'],
+      ['WIRE REPORT: {PL}', '{HEAD}. That matters to {WHO}.'],
+    ], casual: [
+      ['NEWS FOR {N} TEAMS', '{HEAD}. Heads up, {WHO}!'],
+      ['{PL} NEWS', '{HEAD}. This one\u2019s for {WHO}.'],
+      ['PSST, {WHERE}', '{HEAD}. {WHO}, you\u2019ll want to know.'],
+    ] },
     player_injury: { mood: 'bad', pro: [
       ['INJURY: {PL} {S2}', '{PL} is listed {S2} \u2014 a starter for {T}, projected for {PROJ}.'],
       ['{T} LINEUP ALERT', '{T} starter {PL} is now {S2}.'],

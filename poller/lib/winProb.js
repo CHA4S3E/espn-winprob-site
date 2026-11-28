@@ -211,6 +211,90 @@ function winProbability(expectedA, expectedB, stddev = DEFAULT_STDDEV) {
   return Math.max(0, Math.min(100, pct));
 }
 
+// ---------------------------------------------------------------------------
+// Calibration (fitted on the 2026 season, weeks 1-11: 119 finished matchups,
+// each sampled once at ten fixed moments of the week -- before TNF, after TNF,
+// Sunday 2/4/6/8/10pm, Monday 7/10/11:30pm -- so no single game counts more
+// than once per moment). What the raw model got wrong, measured against
+// how far final margins actually landed from the expected margin:
+//   1. Early in the week the projected GAP between two teams was overstated:
+//      before Thursday night, favorites finished ~14 points worse than the
+//      expected margin on average. Points already scored are real; it's only
+//      the not-yet-played projected part that's too spread out.
+//   2. The spread was too tight (e.g. 29.7 modeled vs 35.1 real at the start
+//      of the week), and
+//   3. big surprises happened far more often than a normal curve allows
+//      (2.1% of results beyond 3 spreads, vs 0.3%) -- the source of most
+//      "99% and lost" games.
+// Fix, fitted by maximum likelihood and checked by leaving each week out in
+// turn (the fit was stable across all ten folds; held-out log loss improved
+// 0.4752 -> 0.4620):
+//   - the not-yet-played projected gap counts PROJECTION_TRUST_EARLY (0.5)
+//     at the start of the week, rising linearly to 1.0 as the remaining
+//     share of the week goes to zero;
+//   - the spread is SPREAD_SCALE (1.4) times wider, with a SPREAD_FLOOR
+//     (2 points) for the last few minutes;
+//   - a Student-t curve with TAIL_DOF (10) degrees of freedom instead of a
+//     normal one, so lopsided games aren't treated as near-certain.
+// To refit as the season goes on, rerun the same sampling (one reading per
+// matchup per fixed moment) and refit these five numbers.
+const PROJECTION_TRUST_EARLY = 0.5;
+const PROJECTION_TRUST_LATE = 1.0;
+const SPREAD_SCALE = 1.4;
+const SPREAD_FLOOR = 2;
+const TAIL_DOF = 10;
+
+// Student-t CDF via the regularized incomplete beta function (Numerical
+// Recipes' continued fraction). Accurate to ~1e-10 for the values used here.
+function logGamma(x) {
+  const c = [76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5];
+  let y = x;
+  let t = x + 5.5;
+  t -= (x + 0.5) * Math.log(t);
+  let ser = 1.000000000190015;
+  for (const k of c) ser += k / ++y;
+  return -t + Math.log((2.5066282746310005 * ser) / x);
+}
+function betaContinuedFraction(a, b, x) {
+  const qab = a + b, qap = a + 1, qam = a - 1;
+  let c = 1;
+  let d = 1 / (1 - (qab * x) / qap);
+  let h = d;
+  for (let m = 1; m <= 200; m++) {
+    const m2 = 2 * m;
+    let aa = (m * (b - m) * x) / ((qam + m2) * (a + m2));
+    d = 1 / (1 + aa * d); c = 1 + aa / c; h *= d * c;
+    aa = (-(a + m) * (qab + m) * x) / ((a + m2) * (qap + m2));
+    d = 1 / (1 + aa * d); c = 1 + aa / c;
+    const del = d * c; h *= del;
+    if (Math.abs(del - 1) < 3e-12) break;
+  }
+  return h;
+}
+function incompleteBeta(a, b, x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const bt = Math.exp(logGamma(a + b) - logGamma(a) - logGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  return x < (a + 1) / (a + b + 2) ? (bt * betaContinuedFraction(a, b, x)) / a : 1 - (bt * betaContinuedFraction(b, a, 1 - x)) / b;
+}
+function studentTCdf(t, dof) {
+  const p = 0.5 * incompleteBeta(dof / 2, 0.5, dof / (dof + t * t));
+  return t > 0 ? 1 - p : p;
+}
+
+// Home win probability (0-100) from the raw model's inputs, with the
+// calibration above applied. `stddev` is computeDynamicStddev's output.
+function calibratedWinProbability({ homeExpected, awayExpected, homeActual, awayActual, stddev }) {
+  const remainingShare = Math.min(1, Math.max(0, (stddev / DEFAULT_STDDEV) ** 2));
+  const trust = PROJECTION_TRUST_LATE + (PROJECTION_TRUST_EARLY - PROJECTION_TRUST_LATE) * remainingShare;
+  const actualGap = (homeActual || 0) - (awayActual || 0);
+  const projectedGap = homeExpected - awayExpected;
+  const gap = actualGap + trust * (projectedGap - actualGap);
+  const spread = Math.sqrt((SPREAD_SCALE * stddev * Math.SQRT2) ** 2 + SPREAD_FLOOR ** 2);
+  const t = (gap / spread) * Math.sqrt(TAIL_DOF / (TAIL_DOF - 2)); // unit-variance t
+  return Math.max(0, Math.min(100, studentTCdf(t, TAIL_DOF) * 100));
+}
+
 // The entry point poll.js should actually call.
 //
 // If BOTH teams are locked in, the outcome is a known fact, not a random
@@ -220,9 +304,10 @@ function winProbability(expectedA, expectedB, stddev = DEFAULT_STDDEV) {
 // wrong: a concluded matchup should show the actual winner at (essentially)
 // 100%, not "very likely."
 //
-// A subtler case: if only ONE team is locked in and that team's actual
-// score is already BELOW the other (still-playing) team's current actual,
-// the still-playing team can't be caught -- the locked team has no players
+// A subtler case (now handled by the calibrated formula, see below): if only
+// ONE team is locked in and that team's actual score is already BELOW the
+// other (still-playing) team's current actual, the still-playing team can
+// usually not be caught -- the locked team has no players
 // left to add any points, and a team's own actual score essentially never
 // decreases (see the DB-level guard on implausible decreases for why).
 // Without this check, that situation still runs through the same
@@ -248,13 +333,36 @@ function matchupWinProbability({
     return 50; // exact tie, no more randomness left, and no rule to break it here
   }
 
-  if (homeAllDone && !awayAllDone && homeActual < awayActual) return 1; // home locked & already behind -> away can't be caught
-  if (awayAllDone && !homeAllDone && awayActual < homeActual) return 99; // away locked & already behind -> home can't be caught
+  // One side locked in and behind: the side still playing is a strong
+  // favorite, but NOT 99% regardless of the margin -- a team still playing can
+  // lose points (negative D/ST or kicker plays, fumbles, stat corrections).
+  // Week 5 2026: a 0.04-point lead over a finished team was shown at 99% and
+  // ended in a 7-point loss. The calibrated formula already handles this
+  // correctly: the finished side adds nothing, the other side's remaining
+  // projection only widens its lead, and the spread floor keeps a tiny lead
+  // from reading as a sure thing. Never let it favor the team that's behind.
+  if (homeAllDone && !awayAllDone && homeActual < awayActual) return Math.min(50, calibratedWinProbability({ homeExpected: homeActual, awayExpected: Math.max(awayExpected, awayActual), homeActual, awayActual, stddev }));
+  if (awayAllDone && !homeAllDone && awayActual < homeActual) return Math.max(50, calibratedWinProbability({ homeExpected: Math.max(homeExpected, homeActual), awayExpected: awayActual, homeActual, awayActual, stddev }));
 
+  return calibratedWinProbability({ homeExpected, awayExpected, homeActual, awayActual, stddev });
+}
+
+// The original (pre-calibration) model, kept so the site can still show the
+// legacy numbers (a preference) and future refits have the raw output:
+// stored alongside each new snapshot as win_prob_raw.
+function legacyMatchupWinProbability({ homeExpected, awayExpected, homeActual, awayActual, allDone, homeAllDone, awayAllDone, stddev }) {
+  if (allDone) {
+    if (homeActual > awayActual) return 100;
+    if (homeActual < awayActual) return 0;
+    return 50;
+  }
+  if (homeAllDone && !awayAllDone && homeActual < awayActual) return 1;
+  if (awayAllDone && !homeAllDone && awayActual < homeActual) return 99;
   return winProbability(homeExpected, awayExpected, stddev);
 }
 
 module.exports = {
+  legacyMatchupWinProbability,
   normalCdf,
   playerExpected,
   teamExpected,
@@ -262,6 +370,8 @@ module.exports = {
   isPlayerPending,
   computeDynamicStddev,
   winProbability,
+  calibratedWinProbability,
+  studentTCdf,
   matchupWinProbability,
   DEFAULT_STDDEV,
   MIN_STDDEV,

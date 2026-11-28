@@ -14,7 +14,7 @@
 // players), waiver and trade grades, and weekly report cards.
 (function () {
   'use strict';
-  const CACHE_KEY = 'winProbDeskAnalytics:v3'; // v2: in-game rows only (v1 counted post-final stat corrections); v3: one decimal on min/max
+  const CACHE_KEY = 'winProbDeskAnalytics:v4'; // v2: in-game rows only (v1 counted post-final stat corrections); v3: one decimal on min/max; v4: win % recalibrated
   let cache = {};
   try { cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}') || {}; } catch (e) { cache = {}; }
   const saveCache = () => { try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch (e) { /* storage full or blocked: recompute next time */ } };

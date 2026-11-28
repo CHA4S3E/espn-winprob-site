@@ -29,9 +29,28 @@
   const voice = (L) => (L ? L.studio : (cur ? cur.studio : 'pro'));
   // Team colors, adjusted so they stay readable on the current look: very dark
   // colors are lifted on the night sets, very light ones deepened on the day sets.
-  const isDark = () => document.documentElement.dataset.daypart === 'night';
+  // Dark = the studio's actual background is dark (night looks, and any
+  // holiday/championship look that darkens it), read from the page itself.
+  const isDark = () => {
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    const m = /^#?([0-9a-f]{6})$/i.exec(bg);
+    if (!m) return document.documentElement.dataset.daypart === 'night';
+    const n = parseInt(m[1], 16), lum = (0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+    return lum < 0.45;
+  };
   const vis = (hex) => WPChart.teamColor(hex, isDark());
-  const T = (L, id) => { const t = D.team(L, id); return Object.assign({}, t, { color: vis(t.color) }); };
+  // Team colors exactly as the main site shows them: near-black colors lifted
+  // on dark backgrounds, then any that end up looking alike pulled apart,
+  // across the whole league (WPChart.leaguePalette mirrors app.js).
+  const palettes = new Map();
+  const palette = (L, dark) => {
+    const key = L.id + '|' + dark + '|' + Object.keys(L.teams).length;
+    if (!palettes.has(key)) palettes.set(key, WPChart.leaguePalette(Object.values(L.teams), dark));
+    return palettes.get(key);
+  };
+  const teamColorIn = (L, id, dark) => palette(L, dark == null ? isDark() : dark)[id] || vis(D.team(L, id).color);
+  const T3 = (L, id) => Object.assign({}, D.team(L, id), { color: teamColorIn(L, id, true) }); // the 3D stage is always dark
+  const T = (L, id) => { const t = D.team(L, id); return Object.assign({}, t, { color: L ? teamColorIn(L, id) : vis(t.color) }); };
   const fmt = (x) => Number(x || 0).toFixed(1);
   const nameSize = (s) => (String(s).length > 22 ? 34 : String(s).length > 16 ? 40 : 50);
   function icon(t) {
@@ -138,7 +157,7 @@
     clearInterval(typeTimer);
     const el = $('anchorText'); let i = 0;
     const full = String(text || '');
-    el.innerHTML = '<span></span><i class="cur"></i>';
+    el.innerHTML = '<span></span>';
     const span = el.firstChild;
     typeTimer = setInterval(() => {
       i += Math.max(1, Math.round(full.length / 70));
@@ -550,7 +569,7 @@
       const book = window.DeskRecords && DeskRecords.book(L);
       if (!book || !book.records.length) return null;
       const html = `<table class="st rec"><thead><tr><th>Record</th><th class="num">Mark</th><th>Holder</th><th>When</th></tr></thead><tbody>${book.records.map((r) => {
-        const t = L.teams[r.team]; const col = t ? vis(t.color) : 'var(--fg)';
+        const t = L.teams[r.team]; const col = t ? teamColorIn(L, r.team) : 'var(--fg)';
         return `<tr><td><b>${esc(r.label)}</b></td><td class="num"><b>${esc(r.text)}</b></td><td><span style="color:${esc(col)};font-weight:800">${esc(r.who)}</span><br><small style="color:var(--muted)">${esc(r.note)}</small></td><td><small>${esc(r.when)}</small></td></tr>`;
       }).join('')}</tbody></table><div class="rec-foot">${book.games.length} games on record since ${book.games[0].year}</div>`;
       const r = book.records[Math.floor(Math.random() * book.records.length)];
@@ -693,12 +712,14 @@
   function stopRecap() { if (recapPlayer) { recapPlayer.stop(); recapPlayer = null; } }
   function showSegment(seg, animate) {
     if (seg.key !== 'recap' || animate) stopRecap();
+    seg.leagueId = seg.leagueId || cur.id;
     currentSeg = seg;
     $('segLabel').textContent = seg.title;
     const body = $('segBody');
     body.innerHTML = seg.html;
     if (animate) { body.classList.remove('seg-in'); void body.offsetWidth; body.classList.add('seg-in'); say(seg.line); }
-    if (seg.after) requestAnimationFrame(seg.after);
+    // On a refresh, draw charts right away so the old one never blinks out for a frame.
+    if (seg.after) { if (animate) requestAnimationFrame(seg.after); else seg.after(); }
   }
 
   async function nextSegment() {
@@ -757,7 +778,7 @@
     el.querySelector('.l3-t').textContent = `${h.name}  vs  ${a.name}`;
     el.classList.add('show');
     M.sting('handoff');
-    try { await Logo3D.play(el, { mode: 'versus', teams: [D.team(L, m.home), D.team(L, m.away)], ms: 9000 }); } catch (e) { /* flat look */ }
+    try { await Logo3D.play(el, { mode: 'versus', teams: [T3(L, m.home), T3(L, m.away)], ms: 9000 }); } catch (e) { /* flat look */ }
     el.classList.remove('show');
     busy = false;
   }
@@ -775,7 +796,7 @@
       <div class="cf-teams"><div class="cf-t l" style="--c:${esc(a.color)}">${icon(a)}<b>${esc(a.name)}</b><small>#${br.seedOf.get(br.final.a)} seed</small></div><div class="cf-vs">VS</div><div class="cf-t r" style="--c:${esc(b.color)}">${icon(b)}<b>${esc(b.name)}</b><small>#${br.seedOf.get(br.final.b)} seed</small></div></div>
       <div class="cf-sub">${br.final.weeks.length > 1 ? `Weeks ${br.final.weeks.join(' + ')} · scores combined` : `Week ${br.final.weeks[0]}`} · ${pro ? 'one trophy' : 'winner takes all'}</div>`;
     fx.className = 'show intro';
-    if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'versus', teams: [a, b], ms: 10200 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
+    if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'versus', teams: [T3(L, br.final.a), T3(L, br.final.b)], ms: 10200 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
     M.sting('champIntro');
     say(pro ? `This is it. ${a.name} and ${b.name}, for the ${L.year} ${L.name} championship.` : `It all comes down to this: ${a.name} vs ${b.name} for the title!`);
     await sleep(10500);
@@ -795,7 +816,7 @@
       <div class="cf-champ" style="color:${esc(t.color)}">${esc(t.name)}</div><div class="cf-title small">${L.year} ${esc(L.name.toUpperCase())} ${pro ? 'CHAMPIONS' : 'CHAMPS!'}</div>
       ${opp && ws != null ? `<div class="cf-sub">${fmt(ws)} – ${fmt(ls)} over ${esc(opp.name)}</div>` : ''}`;
     fx.className = 'show finale';
-    if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'champion', teams: [t], ms: quiet ? 8800 : 14800 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
+    if (window.Logo3D && Logo3D.supported()) { fx.classList.add('has3d'); Logo3D.play(fx, { mode: 'champion', teams: [T3(L, championId)], ms: quiet ? 8800 : 14800 }).then((ok) => { if (!ok) fx.classList.remove('has3d'); }); }
     if (!quiet) M.sting('champion');
     say(pro ? `${t.name} are your ${L.year} ${L.name} champions!` : `${t.name} won the whole thing! Champs!`);
     const cv = fx.querySelector('canvas'), W = cv.width = 1920, H = cv.height = 1080, x = cv.getContext('2d');
@@ -912,22 +933,205 @@
     return 'breaking';
   }
 
-  function onEvent(ev) {
+  function publishEvent(ev) {
     const L = ev.league;
     const w = ev.kind === 'news'
       ? { head: (voice(L) === 'pro' ? 'NEWS: ' : '') + ev.newsItem.head.toUpperCase().slice(0, 70), body: ev.newsItem.desc || ev.newsItem.head, line: ev.newsItem.desc || ev.newsItem.head }
       : Lines.write(ev.kind, voice(L), varsFor(ev));
     if (ev.kind === 'news') { ev.pid = ev.newsItem.pid; ev.pro = ev.newsItem.pro; }
     if (!w) return;
-    const tc = ev.team && ev.team.color ? vis(ev.team.color) : null; // the story's team color (dots, ticker)
+    const tc = L && ev.team && ev.team.id != null && L.teams[ev.team.id] ? teamColorIn(L, ev.team.id) : ev.team && ev.team.color ? vis(ev.team.color) : null; // the story's team color (dots, ticker)
     const item = { head: w.head, body: w.body, line: w.line, ts: ev.ts || Date.now(), priority: ev.priority, fresh: !ev.old, color: tc };
     const targets = L ? [L] : leagues;
     for (const t of targets) { const arr = rundown.get(t.id) || []; arr.unshift(item); rundown.set(t.id, arr.slice(0, 30)); }
-    if (!ev.old) { tickerHeads.unshift({ lg: L ? shortName(L).toUpperCase() : '', text: w.head, color: ev.team && ev.team.color ? WPChart.teamColor(ev.team.color, true) : null }); tickerHeads.length = Math.min(tickerHeads.length, 12); }
+    if (!ev.old) { tickerHeads.unshift({ lg: L ? shortName(L).toUpperCase() : '', text: w.head, color: L && ev.team && ev.team.id != null ? teamColorIn(L, ev.team.id, true) : ev.team && ev.team.color ? WPChart.teamColor(ev.team.color, true) : null }); tickerHeads.length = Math.min(tickerHeads.length, 12); }
     if (ev.old) { renderSide(); return; }
     if (lock !== 'auto' && L && L.id !== lock) return;
     if (ev.priority >= 2) breakingQ.push({ ev, w }); else if (ev.priority === 1) alertQ.push({ ev, w });
     renderSide();
+  }
+
+  // ------------------------------------------------------------------ story desk
+  // One real-world moment can hit several fantasy teams at once: a player on
+  // rosters in both leagues scores, a QB and his receiver are owned by
+  // different teams, or a news item is about a player half the room owns.
+  // Live events are held for a couple of seconds (the poller writes a whole
+  // round at once) and grouped by what actually happened. When a group
+  // touches two or more teams it becomes ONE story with an impact board
+  // listing every affected team in both leagues, instead of several cut-ins
+  // in a row. Lead changes caused by that same moment ride along on the
+  // board rather than interrupting again.
+  const GATHER_MS = 2500, GATHER_MAX_MS = 6000;
+  let gather = [], gatherTimer = 0, gatherFirst = 0;
+  const storyQ = [];
+  function onEvent(ev) {
+    if (ev.old) return publishEvent(ev);
+    if (!gather.length) gatherFirst = Date.now();
+    gather.push(ev);
+    clearTimeout(gatherTimer);
+    gatherTimer = setTimeout(flushStories, Date.now() - gatherFirst > GATHER_MAX_MS ? 0 : GATHER_MS);
+  }
+  const TD_KINDS = new Set(['player_pass_td', 'player_rush_td', 'player_rec_td']);
+  function storyKey(ev) {
+    if (ev.kind === 'news' && ev.newsItem) return 'news:' + ev.newsItem.id;
+    if (ev.kind === 'player_injury' && ev.pid != null) return 'inj:' + ev.pid;
+    if (TD_KINDS.has(ev.kind)) return 'td:' + (ev.pro || ev.pid); // the passer and his receiver are one play
+    if (/^player_/.test(ev.kind) && ev.pid != null) return 'p:' + ev.pid + ':' + ev.kind;
+    return null;
+  }
+  // The team's win % just before the latest update, from the matchup's history.
+  function wpBefore(m, teamId) {
+    if (!m || !m.series || m.series.length < 2) return null;
+    const p = m.series[m.series.length - 2].wp;
+    return Math.round(m.home === teamId ? p : 100 - p);
+  }
+  function impactsOf(group) {
+    const byTeam = new Map();
+    const add = (L, teamId, pl, extra) => {
+      const k = L.id + '|' + teamId;
+      let im = byTeam.get(k);
+      if (!im) {
+        const m = L.matchups.find((x) => x.home === teamId || x.away === teamId) || null;
+        im = { L, teamId, team: T(L, teamId), opp: m ? T(L, m.home === teamId ? m.away : m.home) : null, m, players: [], delta: 0,
+          wpNow: m ? Math.round(m.home === teamId ? m.wp : 100 - m.wp) : null, wpPrev: wpBefore(m, teamId) };
+        byTeam.set(k, im);
+      }
+      if (pl && !im.players.some((x) => x.pid === pl.pid)) im.players.push(pl);
+      if (extra && extra.delta) im.delta += extra.delta;
+    };
+    for (const ev of group) {
+      if (ev.kind === 'news') { for (const h of ev.newsItem.hits || []) add(h.L, h.teamId, { name: h.p.n, pid: h.p.id, pos: h.p.pos, pro: h.p.tm, starter: h.starter }); continue; }
+      if (!ev.league || !ev.team) continue;
+      const teamId = ev.team.id;
+      if (teamId == null || !ev.league.teams[teamId]) continue;
+      add(ev.league, teamId, { name: ev.player, pid: ev.pid, pos: ev.pos, pro: ev.pro, starter: ev.kind !== 'player_bench_boom', kind: ev.kind, pts: ev.pts }, { delta: Number(ev.delta) || 0 });
+    }
+    return [...byTeam.values()];
+  }
+  function teamList(names) {
+    if (names.length <= 1) return names[0] || '';
+    if (names.length <= 3) return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+    return names.slice(0, 2).join(', ') + ` and ${names.length - 2} more`;
+  }
+  function flushStories() {
+    clearTimeout(gatherTimer);
+    const batch = gather; gather = [];
+    const groups = new Map(), singles = [];
+    for (const ev of batch) { const k = storyKey(ev); if (k) { if (!groups.has(k)) groups.set(k, []); groups.get(k).push(ev); } else singles.push(ev); }
+    const absorbed = new Map(); // league id|matchup id -> story (lead changes caused by the story)
+    for (const group of groups.values()) {
+      const impacts = impactsOf(group);
+      if (impacts.length < 2) { group.forEach(publishEvent); continue; }
+      const story = makeStory(group, impacts);
+      for (const im of impacts) if (im.m) absorbed.set(im.L.id + '|' + im.m.id, story);
+      publishStory(story);
+    }
+    for (const ev of singles) {
+      const st = ev.matchup && ev.league && absorbed.get(ev.league.id + '|' + ev.matchup.id);
+      if (st && /lead_change|big_swing/.test(ev.kind)) {
+        const im = st.impacts.find((x) => x.L === ev.league && x.m && x.m.id === ev.matchup.id && ev.team && x.teamId === ev.team.id);
+        if (im) im.flipped = ev.kind === 'lead_change';
+        publishEvent(Object.assign({}, ev, { old: true })); // rundown only; the story already covers it on air
+        continue;
+      }
+      publishEvent(ev);
+    }
+  }
+  function makeStory(group, impacts) {
+    const lead = group.slice().sort((a, b) => b.priority - a.priority)[0];
+    const type = lead.kind === 'news' ? 'news' : lead.kind === 'player_injury' ? 'injury' : TD_KINDS.has(lead.kind) ? 'score' : 'play';
+    const leaguesHit = [...new Set(impacts.map((x) => x.L))];
+    // Players: "Allen to Cook" for a passing touchdown caught by a different player.
+    const pass = group.find((e) => e.kind === 'player_pass_td'), rec = group.find((e) => e.kind === 'player_rec_td');
+    let PL = pass && rec && pass.player !== rec.player ? `${pass.player} to ${rec.player}` : (lead.player || (lead.newsItem && (lead.newsItem.hits[0] || {}).p && lead.newsItem.hits[0].p.n) || 'A player');
+    const pids = [...new Set(impacts.flatMap((x) => x.players.map((p) => p.pid)))];
+    const anyStarter = impacts.some((x) => x.players.some((p) => p.starter));
+    let pri = Math.max(...group.map((e) => e.priority || 0));
+    if (type === 'news') pri = anyStarter ? 2 : 1;
+    else if (leaguesHit.length > 1 || impacts.length >= 3) pri = Math.min(3, Math.max(2, pri + 1));
+    // Two teams in the same game both helped by one play (QB on one side, receiver on the other).
+    const same = [];
+    for (let i = 0; i < impacts.length; i++) for (let j = i + 1; j < impacts.length; j++) { const a = impacts[i], b = impacts[j]; if (a.m && b.m && a.L === b.L && a.m.id === b.m.id) same.push([a, b]); }
+    return { story: true, type, priority: pri, impacts, leagues: leaguesHit, PL, pids, pro: lead.pro || (lead.newsItem && lead.newsItem.pro), pid: pids.length === 1 ? pids[0] : null,
+      S2: lead.detail && lead.detail.status ? String(lead.detail.status).replace('_', ' ').toLowerCase() : 'questionable', head: lead.newsItem ? lead.newsItem.head : '', same, ts: Date.now() };
+  }
+  function storyWords(st, L, onlyLeague) {
+    const ims = onlyLeague ? st.impacts.filter((x) => x.L === onlyLeague) : st.impacts;
+    const v = voice(L);
+    const WHERE = st.leagues.length > 1 ? 'both leagues' : `the ${st.leagues[0].name}`;
+    const w = Lines.write('multi_' + st.type, v, { PL: st.PL, N: st.impacts.length, WHERE, WHO: teamList(ims.map((x) => x.team.name)), PRO: st.pro || '', S2: st.S2, HEAD: st.head.replace(/\.$/, '') });
+    if (w && st.same.length) {
+      const [a, b] = st.same[0];
+      const extra = v === 'pro' ? ` ${a.team.name} and ${b.team.name} play each other, so this one partly cancels out.` : ` Funny thing: ${a.team.name} and ${b.team.name} are playing each other. Wash!`;
+      w.body += extra; w.line += extra;
+    }
+    return w;
+  }
+  function publishStory(st) {
+    // Rundown: every affected league gets the story, told from its own teams' side.
+    for (const L of st.leagues) {
+      const w = storyWords(st, L, L); if (!w) continue;
+      const arr = rundown.get(L.id) || [];
+      arr.unshift({ head: w.head, body: w.body, line: w.line, ts: st.ts, priority: st.priority, fresh: true, color: st.impacts.find((x) => x.L === L).team.color });
+      rundown.set(L.id, arr.slice(0, 30));
+    }
+    const w0 = storyWords(st, st.leagues.includes(cur) ? cur : st.leagues[0]);
+    if (w0) { tickerHeads.unshift({ lg: st.leagues.length > 1 ? 'BOTH' : shortName(st.leagues[0]).toUpperCase(), text: w0.head, color: teamColorIn(st.impacts[0].L, st.impacts[0].teamId, true) }); tickerHeads.length = Math.min(tickerHeads.length, 12); }
+    renderSide();
+    if (lock !== 'auto' && !st.leagues.some((L) => L.id === lock)) return;
+    if (st.priority >= 2) storyQ.push(st);
+    else if (w0) alertQ.push({ ev: { league: st.leagues.length > 1 ? null : st.leagues[0], kind: st.type === 'news' ? 'news' : 'player_' + st.type, pid: st.pid, pro: st.pro }, w: w0 });
+  }
+  function impactBoard(st, L) {
+    const multi = st.leagues.length > 1;
+    // The presenting studio's teams first, then the other league's.
+    const ims = st.impacts.slice().sort((a, b) => (a.L === L ? 0 : 1) - (b.L === L ? 0 : 1) || Math.abs((b.wpNow || 0) - (b.wpPrev || 0)) - Math.abs((a.wpNow || 0) - (a.wpPrev || 0)));
+    const shown = ims.slice(0, 6);
+    const rows = shown.map((im) => {
+      const p = im.players[0] || {};
+      const role = st.type === 'news' || st.type === 'injury' ? (im.players.some((x) => x.starter) ? (voice(L) === 'pro' ? 'Starter' : 'Starting') : 'Bench') : (p.starter === false ? 'Bench' : '');
+      const d = im.wpNow != null && im.wpPrev != null ? im.wpNow - im.wpPrev : null;
+      const wp = im.wpNow == null ? '' : `<div class="im-wp"><div class="im-bar"><i style="width:${im.wpNow}%;background:${esc(im.team.color)}"></i></div><span>${d != null && Math.abs(d) >= 1 ? `${im.wpPrev}% <b class="${d > 0 ? 'up' : 'dn'}">${d > 0 ? '▲' : '▼'}</b> ` : ''}${im.wpNow}%</span></div>`;
+      return `<div class="im-row" style="--c:${esc(im.team.color)}">
+        ${multi ? `<span class="im-lg">${esc(shortName(im.L).toUpperCase())}</span>` : ''}
+        <span class="im-tm">${icon(im.team)}<b>${esc(im.team.name)}</b>${im.flipped ? `<em class="im-flip">${voice(L) === 'pro' ? 'TAKES LEAD' : 'NOW WINNING'}</em>` : ''}</span>
+        <span class="im-pl">${esc(im.players.map((x) => x.name).join(' + '))}${role ? ` · ${role}` : ''}${im.delta ? ` · <b>+${im.delta.toFixed(1)}</b>` : ''}</span>
+        ${wp}</div>`;
+    }).join('');
+    const more = ims.length > shown.length ? `<div class="im-more">+${ims.length - shown.length} more ${ims.length - shown.length === 1 ? 'team' : 'teams'}</div>` : '';
+    return `<div class="impact">${rows}${more}</div>`;
+  }
+  async function playStory(st) {
+    busy = true;
+    stopRecap();
+    // One league: go to that studio. Both leagues: stay put; the board covers both.
+    if (st.leagues.length === 1 && st.leagues[0] !== cur && lock === 'auto') { busy = false; await handoff(st.leagues[0]); busy = true; }
+    const L = st.leagues.includes(cur) ? cur : st.leagues[0];
+    const w = storyWords(st, L);
+    if (!w) { busy = false; return; }
+    const el = $('breaking'), pro = voice(L) === 'pro';
+    el.style.setProperty('--bt', st.impacts[0].team.color || '#e11d2e');
+    const what = { score: pro ? 'SCORING PLAY' : 'TOUCHDOWN', play: pro ? 'BREAKING' : 'BIG NEWS', injury: 'INJURY UPDATE', news: pro ? 'NEWS ALERT' : 'BIG NEWS' }[st.type];
+    el.querySelector('.kick').textContent = `${what} · ${st.impacts.length} TEAMS${st.leagues.length > 1 ? ' · BOTH LEAGUES' : ''}`;
+    el.querySelector('.hd').textContent = w.head;
+    el.querySelector('.bd').textContent = w.body;
+    const old = el.querySelector('.bk-hs'); if (old) old.remove();
+    if (st.pid != null) { const hs = headshot(st.pid, st.pro, 'bk-hs'); if (hs) el.querySelector('.kick').insertAdjacentHTML('afterend', hs); }
+    el.querySelector('.teams').innerHTML = impactBoard(st, L);
+    el.querySelector('.meter').hidden = true;
+    el.classList.add('board');
+    el.classList.remove('out'); el.classList.add('show');
+    M.sting(st.type === 'injury' ? 'bad' : st.type === 'news' ? 'alert' : stingFor('player_rush_td'));
+    say(w.line);
+    await sleep(9000 + 1300 * Math.min(4, st.impacts.length - 1));
+    el.classList.add('out');
+    await sleep(650);
+    el.classList.remove('show', 'out', 'board');
+    lastBreakingAt = Date.now();
+    // If it flipped a game in this studio, show that game's replay.
+    const flip = st.impacts.find((x) => x.flipped && x.L === cur && x.m);
+    if (flip) await playReplay(cur, cur.matchups.find((x) => x.id === flip.m.id) || flip.m);
+    busy = false;
   }
 
   async function playBreaking({ ev, w }) {
@@ -982,6 +1186,7 @@
   async function pump() {
     if (busy) return;
     if (breakingQ.length > 3) { while (breakingQ.length > 2) alertQ.unshift(breakingQ.shift()); } // too much at once: older ones become alerts
+    if (storyQ.length && Date.now() - lastBreakingAt > 15000) return playStory(storyQ.shift());
     if (breakingQ.length && Date.now() - lastBreakingAt > 15000) return playBreaking(breakingQ.shift());
     if (alertQ.length) { if (alertQ.length > 6) alertQ.splice(0, alertQ.length - 6); return playAlert(alertQ.shift()); }
   }
@@ -992,7 +1197,7 @@
     const out = [];
     for (const L of leagues) {
       for (const m of L.matchups) {
-        const dk = (id) => Object.assign({}, D.team(L, id), { color: WPChart.teamColor(D.team(L, id).color, true) }); // the ticker bar is always dark
+        const dk = (id) => Object.assign({}, D.team(L, id), { color: teamColorIn(L, id, true) }); // the ticker bar is always dark
         const h = dk(m.home), a = dk(m.away), lead = m.wp >= 50 ? h : a;
         // Each team in its own color (the leader bold), the odds in the leader's color.
         const side = (t, s, up, right) => `<span class="tm${up ? ' w' : ''}" style="--c:${esc(t.color)}">${right ? '' : '<i></i>'}${right ? fmt(s) + ' ' + esc(t.name) : esc(t.name) + ' ' + fmt(s)}${right ? '<i></i>' : ''}</span>`;
@@ -1020,6 +1225,7 @@
   const DEMO_KINDS = ['lead_change', 'player_rush_td', 'record_watch', 'upset_watch', 'player_rec_td', 'big_swing', 'player_dud', 'nail_biter', 'final_upset', 'player_big_day', 'final_close', 'player_interception', 'player_bench_boom'];
   let demoI = 0;
   function demoEvent() {
+    if (demoI % 5 === 4) { demoI++; return storyDemo(); } // every so often, a multi-team story
     const L = leagues.filter((x) => x.matchups.length)[demoI % Math.max(1, leagues.filter((x) => x.matchups.length).length)] || cur;
     const kind = DEMO_KINDS[demoI++ % DEMO_KINDS.length];
     const m = L.matchups[Math.floor(Math.random() * L.matchups.length)];
@@ -1030,6 +1236,32 @@
     D.__emit({ league: L, kind, priority: /^player_(dud|interception|bench)/.test(kind) ? 1 : 2, matchup: m, team: tm, opp: op, up: tm, down: op, pct: 68, wp: 68, score: fmt(m.hs), oppScore: fmt(m.as), margin: Math.abs(m.hs - m.as).toFixed(1),
       record: kind === 'record_watch' ? { key: 'high', label: 'Highest score', text: '187.4', who: 'The Oscar Dynasty', when: 'Wk 9, 2025' } : undefined, value: 191.2,
       prePct: 27, swing: 24, gap: '2.4', player: pl[0], pid: pl[1], pos: 'RB', pro: pl[2], pts: '24.6', delta: '6.0', detail: { proj: 16.5, yards: 112, mark: 100 }, ts: Date.now() });
+  }
+
+  // A made-up multi-team story (Demo button / DeskShow.story) for testing the story desk.
+  function storyDemo(type) {
+    const Ls = leagues.filter((x) => x.matchups.length);
+    if (!Ls.length) return;
+    const A = Ls.includes(cur) ? cur : Ls[0], B = Ls.find((x) => x !== A);
+    const m1 = A.matchups[0], m2 = A.matchups[1] || A.matchups[0], m3 = B && B.matchups[0];
+    const base = (L, id, m, extra) => Object.assign({ league: L, team: T(L, id), opp: T(L, m.home === id ? m.away : m.home), matchup: m, pid: 3918298, player: 'Josh Allen', pos: 'QB', pro: 'BUF', pts: '24.6', delta: '6.0', detail: {}, ts: Date.now(), wp: 60 }, extra);
+    type = type || ['score', 'pass', 'news', 'injury'][demoI % 4];
+    const evs = [];
+    if (type === 'pass') { // QB and receiver on opposite sides of one game, plus the receiver in the other league
+      evs.push(base(A, m1.home, m1, { kind: 'player_pass_td', priority: 2, delta: '4.0' }));
+      evs.push(base(A, m1.away, m1, { kind: 'player_rec_td', priority: 2, pid: 4379399, player: 'James Cook', pos: 'RB' }));
+      if (m3) evs.push(base(B, m3.home, m3, { kind: 'player_rec_td', priority: 2, pid: 4379399, player: 'James Cook', pos: 'RB' }));
+    } else if (type === 'news' || type === 'injury') {
+      const hits = [{ L: A, teamId: m1.home, starter: true }, { L: A, teamId: m2.away, starter: false }].concat(m3 ? [{ L: B, teamId: m3.away, starter: true }] : [])
+        .map((h) => Object.assign(h, { p: { n: 'Josh Allen', id: 3918298, pos: 'QB', tm: 'BUF' } }));
+      if (type === 'news') evs.push({ league: A, kind: 'news', priority: 1, newsItem: { id: 'demo' + Date.now(), head: 'Bills say Josh Allen will start Sunday despite ankle soreness', desc: '', hits, pid: 3918298, pro: 'BUF' }, ts: Date.now() });
+      else for (const h of hits) evs.push(base(h.L, h.teamId, h.L.matchups.find((x) => x.home === h.teamId || x.away === h.teamId), { kind: 'player_injury', priority: 2, detail: { status: 'QUESTIONABLE', proj: 21.4 } }));
+    } else {
+      evs.push(base(A, m1.home, m1, { kind: 'player_rush_td', priority: 2 }));
+      evs.push(base(A, m2.away, m2, { kind: 'player_rush_td', priority: 2 }));
+      if (m3) evs.push(base(B, m3.home, m3, { kind: 'player_rush_td', priority: 2 }));
+    }
+    evs.forEach(onEvent);
   }
 
   // ------------------------------------------------------------------ boot
@@ -1058,7 +1290,26 @@
     if (recordsReady) checkRecords(false);
     if (playoffsReady) checkPlayoffs(false);
     renderTop(); renderSide();
-    if (currentSeg && !busy && currentSeg.key !== 'recap' && SEGMENTS[currentSeg.key]) { const s = SEGMENTS[currentSeg.key](cur); if (s) { s.title = currentSeg.title; s.line = currentSeg.line; showSegment(s, false); } }
+    refreshSegment();
+  }
+
+  // Refresh the segment on screen with new numbers, keeping exactly what it's
+  // showing: the same game for game segments (re-running the segment would
+  // pick the next game in its rotation and flip to another chart), and
+  // leaving segments that pick something at random alone.
+  function refreshSegment() {
+    const c = currentSeg;
+    if (!c || busy || c.leagueId !== cur.id || c.key === 'recap' || c.key === 'records' || !SEGMENTS[c.key]) return;
+    let s = null;
+    if (c.matchup) {
+      const m = cur.matchups.find((x) => x.id === c.matchup.id && x.home === c.matchup.home);
+      if (!m) return;
+      if (c.key === 'champLive') s = SEGMENTS.champLive(cur);
+      else { s = SEGMENTS.spotlight(cur, m); if (s) s.key = c.key; }
+    } else s = SEGMENTS[c.key](cur);
+    if (!s) return;
+    s.title = c.title; s.line = c.line; s.dur = c.dur;
+    showSegment(s, false);
   }
 
   // The most recent week where every game is final -> the recap show's week.
@@ -1075,7 +1326,7 @@
     addEventListener('mousemove', () => { document.body.classList.add('ui'); clearTimeout(hideUi); hideUi = setTimeout(() => document.body.classList.remove('ui'), 2500); });
     D.on(onEvent);
     D.__emit = onEvent;
-    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), commercial: () => commercialBreak(), bumper: (i) => logoBumper(cur, cur.matchups[i || 0]), logo3d: (mode, i) => { const m = cur.matchups[i || 0]; const el = $('logo3d'); el.classList.add('show'); return Logo3D.play(el, { mode, teams: [D.team(cur, m.home), D.team(cur, m.away)], ms: 6000 }).then((ok) => { el.classList.remove('show'); return ok; }); }, champIntro: () => { champIntroAt.clear(); return champIntro(cur); }, champFinale: (id) => champFinale(cur, id || (bracketOf(cur) || {}).champion), bracket: () => bracketOf(cur), restudio: () => applyStudio(cur), checkPlayoffs: (q) => checkPlayoffs(q), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
+    window.DeskShow = { segment: (k) => { const seg = SEGMENTS[k] && SEGMENTS[k](cur); if (seg) showSegment(seg, true); return !!seg; }, demo: () => demoEvent(), story: (t) => storyDemo(t), flush: () => flushStories(), commercial: () => commercialBreak(), bumper: (i) => logoBumper(cur, cur.matchups[i || 0]), logo3d: (mode, i) => { const m = cur.matchups[i || 0]; const el = $('logo3d'); el.classList.add('show'); return Logo3D.play(el, { mode, teams: [D.team(cur, m.home), D.team(cur, m.away)], ms: 6000 }).then((ok) => { el.classList.remove('show'); return ok; }); }, champIntro: () => { champIntroAt.clear(); return champIntro(cur); }, champFinale: (id) => champFinale(cur, id || (bracketOf(cur) || {}).champion), bracket: () => bracketOf(cur), restudio: () => applyStudio(cur), checkPlayoffs: (q) => checkPlayoffs(q), replay: (i) => playReplay(cur, cur.matchups[i || 0]), get cur() { return cur; } }; // for testing
     try {
       leagues = (await D.init()).filter((L) => L.year);
       await D.refreshNfl();
@@ -1105,8 +1356,8 @@
     // piece at a time while the page is idle, so a cinematic never stalls the show.
     if (window.Logo3D && Logo3D.supported()) setTimeout(async () => {
       if (!(await Logo3D.warm())) return;
-      for (const L of leagues) await Logo3D.prepare(Object.keys(L.teams).map((id) => D.team(L, id)));
-      for (const L of leagues) { const b = bracketOf(L); if (b && b.champion) await Logo3D.prepare([D.team(L, b.champion)], true); }
+      for (const L of leagues) await Logo3D.prepare(Object.keys(L.teams).map((id) => T3(L, id)));
+      for (const L of leagues) { const b = bracketOf(L); if (b && b.champion) await Logo3D.prepare([T3(L, b.champion)], true); }
     }, 9000);
     // A crowned champion gets the finale once when the channel starts.
     setTimeout(() => { for (const L of leagues) { const b = bracketOf(L); if (b && b.phase === 'champion' && (lock === 'auto' || lock === L.id)) { champFinale(L, b.champion, true); break; } } }, 4000);

@@ -1,0 +1,38 @@
+name: Recalibrate win-probability history
+
+# One-off: rewrites stored win_prob values with the calibrated model.
+# Run db/migrations/004_recalibrate_win_prob.sql in Supabase first.
+# Run once without "apply" (dry run: prints what would change), then again
+# with "apply" checked. Undo anytime in the SQL editor with:
+#   select revert_calibrated_win_probs();
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Write the changes (leave unchecked for a dry run)'
+        type: boolean
+        default: false
+
+jobs:
+  recalibrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # to find when the calibrated model reached main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: poller
+        run: npm ci
+
+      - name: Recalibrate
+        working-directory: poller
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node tools/recalibrate-history.js ${{ inputs.apply && '--apply' || '' }}
